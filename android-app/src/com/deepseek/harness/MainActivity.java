@@ -2264,6 +2264,12 @@ public class MainActivity extends Activity {
         nav.setGravity(Gravity.CENTER_VERTICAL);
         nav.setPadding(dp(20), dp(10), dp(20), dp(16));
 
+        // v1.24（维护者要求）：**去掉「跳过这页」按钮** —— 「下一步」本来就不要求授权、点一下
+        // 就翻页（tip 与按钮文案见各页 desc），这个按钮是重复动作；去掉后底部只剩
+        // 「上一步 / 下一步（最后一页是「开始使用」）」两枚等宽按钮。
+        // 代码原样保留，要恢复就把下面这段的块注释记号去掉（同时可去掉 renderGuidePage()
+        // 里那两处判空，它们留着也不会出错）。
+        /*
         guideSkipBtn = new TextView(this);
         guideSkipBtn.setText("跳过");
         guideSkipBtn.setTextColor(cSub());
@@ -2273,6 +2279,7 @@ public class MainActivity extends Activity {
             guideAdvance();
         }});
         nav.addView(guideSkipBtn);
+        */
 
         guidePrevBtn = cButton("上一步", false);
         LinearLayout.LayoutParams prevLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
@@ -2350,8 +2357,12 @@ public class MainActivity extends Activity {
                 : "第 " + (guideIndex + 1) + " / " + total + " 步");
         guidePrevBtn.setEnabled(guideIndex > 0);
         guideNextBtn.setText(finishPage || lastPage ? "开始使用" : "下一步");
-        guideSkipBtn.setVisibility(finishPage ? View.GONE : View.VISIBLE);
-        guideSkipBtn.setText(lastPage ? "跳过" : "跳过这页");
+        // v1.24（维护者要求）：「跳过这页」按钮已下线（见 showPermissionScreen 里的注释）。
+        // 这里保留判空：按钮恢复时这两行照旧生效，不恢复时也不会 NPE。
+        if (guideSkipBtn != null) {
+            guideSkipBtn.setVisibility(finishPage ? View.GONE : View.VISIBLE);
+            guideSkipBtn.setText(lastPage ? "跳过" : "跳过这页");
+        }
 
         // v1.21（UI 统一）：细进度条跟着步数走（v1.24：最后一项权限页 = 满格）
         if (guideProgressFill != null && guideProgressSpacer != null) {
