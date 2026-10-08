@@ -2152,10 +2152,15 @@ public class MainActivity extends Activity {
 
         GuidePage p9 = new GuidePage();
         p9.title = "无障碍服务"; p9.actionLabel = "去开启";
-        p9.desc = "这是 AI 能「看见并操作手机界面」的前提：读屏、点按、输入、截图理解"
-                + "（工具 android_screen / tap / type / see），不需要 root，也不需要 Shizuku。\n\n"
-                + "系统不允许弹窗授权，只能在系统设置里手动打开本应用的无障碍服务 —— "
-                + "点下面的按钮会直接跳到那个页面。\n\n"
+        // v1.24（维护者要求）：删去原来的"（工具 android_screen / tap / type / see），
+        // 不需要 root，也不需要 Shizuku。"整句；也删去"系统不允许弹窗授权…直接跳到那个页面"
+        // —— 那是所有权限页共有的跳转方式（走 openSystemSetting），不必在这里单独解释。
+        // 只留一句"可能被系统关掉"的短提醒。
+        // 依据：Android 13+ 对侧载应用有「受限设置」；部分 ROM 的后台策略会关掉非应用商店的
+        // 无障碍服务；覆盖安装后系统也会把它关掉（release 说明里已有同一条须知）。
+        p9.desc = "这是 AI 能「看见并操作手机界面」的前提：读屏、点按、输入、截图理解。\n\n"
+                + "注意：有些系统或覆盖安装后会自动关闭它，"
+                + "失灵时到系统设置或控制台「权限」页重新打开即可。\n\n"
                 + "想用「帮我点一下」「看看这个界面」这类能力，这一步必须开。";
         p9.provider = new StatusProvider() { @Override public boolean granted() {
             return conA11yEnabled();
@@ -10427,7 +10432,8 @@ public class MainActivity extends Activity {
 
         col.addView(cGrpTitle(t("title.grpPermMore", "其它")), cTop(cGap(18)));
         LinearLayout c3 = cCardBox();
-        addPermRow(c3, "无障碍服务（读屏 / 点屏）", "android_screen / tap / type / see（不需要 root 或 Shizuku）", "a11y");
+        // v1.24（维护者要求）：删去"（不需要 root 或 Shizuku）"—— 不再强调这条。
+        addPermRow(c3, "无障碍服务（读屏 / 点屏）", "android_screen / tap / type / see", "a11y");
             // v1.21（我们保留）：读取应用列表 —— android_apps / 启动应用工具依赖
             addPermRow(c3, "读取应用列表", "AI 查看 / 启动你装的应用（多数手机无需授权）", "applist");
         addPermRow(c3, "安装未知应用", "android_package 装 APK 用", "install");
