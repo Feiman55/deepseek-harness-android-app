@@ -2358,6 +2358,11 @@ public class MainActivity extends Activity {
             guideBody.addView(cText("权限可以随时在控制台的「权限」页里再改。现在可以进入 DeepSeek Harness 了。",
                     13.5f, cSub(), false), cTop(dp(10)));
 
+            // v1.24（维护者要求）：完成页上的「AI 工作区（可选）」入口**先关掉**（代码原样保留，
+            // 只是没启用）。工作区仍可在 控制台 →「授予权限」→「AI 工作区（可选）」里设置 /
+             // 更改 / 恢复默认 —— 那条入口与本处共用 onWorkspaceRowClick()（issue #30 加的），
+             // 所以关掉这页不会让工作区失去入口。要恢复：去掉下面这段外面的块注释记号即可。
+            /*
             // AI 工作区（可选）：沿用原来的选择逻辑
             LinearLayout wsRow = new LinearLayout(this);
             wsRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -2381,6 +2386,8 @@ public class MainActivity extends Activity {
                 onWorkspaceRowClick();
             }});
             guideBody.addView(wsRow);
+            */
+            workspaceDescView = null;   // 没创建：清掉上一次完成页可能留下的引用（refreshAllStatuses 里有判空）
 
             // v1.24：去掉完成页的「界面外观」卡片（维护者要求）——
             // 深浅色在控制台「主题 → 界面外观」里改即可，首次引导不必塞这一步。
