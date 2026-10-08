@@ -241,11 +241,25 @@ input[type="search"] {
 /* ============ 窄屏：会话标题栏给左上角三条杠让位 ============
    聊天区顶部 header（会话标题/面包屑）默认左 padding 20px，
    会被 fixed 在左上角（8px 起、宽 36px）的三条杠按钮盖住；
-   窄屏下把标题栏左内边距加大，让标题从三条杠右侧开始。 */
-@media (max-width: 640px) {
+   窄屏下把标题栏左内边距加大，让标题从三条杠右侧开始（52 = 8 + 36 + 8）。
+
+   ⚠ 阈值必须是 **1024** —— 它才是三条杠按钮真正的出现条件：
+   client.js 里 `narrow = viewport < SIDEBAR_AUTO_COLLAPSE`（= 1024）才渲染该按钮，
+   而这条规则原先写的是 640。于是 CSS 视口落在 **641 ~ 1023** 时"按钮在、让位不在"：
+   标题从 20px 起排，按钮占 8~44px，标题被压住 24px。
+   5:7 竖屏平板正好落在这一区间（实测 1600×2240 @320dpi → CSS 800×1027，
+   .wSkVaW_header padding-left=20px、标题列 x=20、按钮 x=8 宽 36 → 重叠 24px）。
+   本文件其它窄屏规则（插件按钮挪到三条杠下方、右侧面板打开时隐去三条杠）用的也都是 1024。 */
+@media (max-width: 1024px) {
   .wSkVaW_header {
     padding-left: 52px !important;
   }
+}
+
+/* 兜底（同一件事不再重复一份阈值）：三条杠真的在 DOM 里就让位。
+   老 WebView 不支持 :has 时整条规则被忽略，上面那条 1024 仍然生效。 */
+html:has(.dsh-mobile-menu-btn) .wSkVaW_header {
+  padding-left: 52px !important;
 }
 
 /* ============ 窄屏：正文与输入框扩宽 ============
