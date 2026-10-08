@@ -7361,7 +7361,9 @@ public class MainActivity extends Activity {
         items.put("sessionadmin", cNavRow(t("card.sessionadmin", "会话管理"),
                 t("desc.sessionadmin", "删除不需要的会话 · 先进回收站，可恢复"), "", PAGE_SESSION_ADMIN));
         items.put("sessionheal", cNavRow(t("card.sessionheal", "会话修复"),
-                t("desc.sessionheal", "坏图毒死的会话：只降级那一条消息"), "", PAGE_SESSION_HEAL));
+                // v1.24（维护者要求）：原副标题"坏图毒死的会话：只降级那一条消息"用词太冲（"毒死"），
+                // 换成中性说法；语义不变（附件坏掉导致会话打不开 → 只降级那一条消息）。
+                t("desc.sessionheal", "被坏附件卡住的会话：只降级那一条消息"), "", PAGE_SESSION_HEAL));
 
         // ── 系统 ──
         items.put("group.system", cGrpTitle(t("title.grpSystem", "系统")));
