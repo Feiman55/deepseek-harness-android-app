@@ -2014,7 +2014,7 @@ public class MainActivity extends Activity {
     }
 
     private final java.util.ArrayList<GuidePage> guidePages = new java.util.ArrayList<GuidePage>();
-    private int guideIndex = 0;                 // 当前页（== guidePages.size() 时是最后的完成页）
+    private int guideIndex = 0;                 // 当前页（v1.24：0 .. guidePages.size()-1，不再有"完成页"）
     private LinearLayout guideBody = null;      // 页面内容区（每页重建）
     private LinearLayout guideRoot = null;      // v1.21：引导页最外层容器（深浅色切换时要整页刷新底色）
     // v1.21（UI 统一）：引导页顶部细进度条（轨道 + 强调色填充，跟随壳调色板）
@@ -2269,7 +2269,7 @@ public class MainActivity extends Activity {
         guideSkipBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         guideSkipBtn.setPadding(dp(6), dp(10), dp(6), dp(10));
         guideSkipBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
-            guideGo(+1);
+            guideAdvance();
         }});
         nav.addView(guideSkipBtn);
 
@@ -2287,11 +2287,7 @@ public class MainActivity extends Activity {
         nextLp.leftMargin = dp(8);
         guideNextBtn.setLayoutParams(nextLp);
         guideNextBtn.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
-            if (guideIndex >= guidePages.size()) {
-                guideFinish();          // 完成页上的「下一步」就是开始使用
-            } else {
-                guideGo(+1);
-            }
+            guideAdvance();
         }});
         nav.addView(guideNextBtn);
         root.addView(nav);
@@ -2301,11 +2297,26 @@ public class MainActivity extends Activity {
         probeShizuku();
     }
 
-    /** 翻一页（dir=+1/-1），越界即停在完成页/首页。 */
+    /**
+     * 底部「下一步 / 跳过」的共同行为。
+     * v1.24（维护者要求）：**去掉了最后那张"配置完成"页** —— 停在最后一项权限页时，
+     * 这两个按钮都直接收尾（原来"跳过"只是往后翻一页，现在少一步）。
+     */
+    private void guideAdvance() {
+        if (guideIndex >= guidePages.size() - 1) guideFinish();
+        else guideGo(+1);
+    }
+
+    /**
+     * 翻一页（dir=+1/-1），越界即停在首页 / 最后一项权限页。
+     * v1.24：上界从 guidePages.size()（完成页）收到 size() - 1（要恢复完成页：把
+     * 下面那行改回 `if (next > guidePages.size()) next = guidePages.size();`）。
+     */
     private void guideGo(int dir) {
+        int last = Math.max(0, guidePages.size() - 1);
         int next = guideIndex + dir;
         if (next < 0) next = 0;
-        if (next > guidePages.size()) next = guidePages.size();
+        if (next > last) next = last;
         if (next == guideIndex) return;
         guideIndex = next;
         renderGuidePage();
@@ -2318,24 +2329,30 @@ public class MainActivity extends Activity {
         startEngine();
     }
 
-    /** 渲染当前页（guideIndex == guidePages.size() 时是完成页）。 */
+    /**
+     * 渲染当前页。
+     * v1.24（维护者要求）：**最后那张"配置完成"页已下线** —— 现在最后一页就是最后一项权限
+     * （Shizuku / root 可选），它的按钮是「开始使用」。下面 finishPage 因此恒为 false，
+     * 完成页那段代码逐行保留、只是不再进入；要恢复：guideGo 的上界与 total 的 +1 一起改回去。
+     */
     private void renderGuidePage() {
         if (guideBody == null) return;
         guideBody.removeAllViews();
         permRows.clear();
         guideActionBtn = null;
         boolean finishPage = guideIndex >= guidePages.size();
-        int total = guidePages.size() + 1;
+        int total = guidePages.size();                                  // v1.24：步数不再含"完成页"
+        boolean lastPage = guideIndex >= guidePages.size() - 1;          // 最后一项权限页 = 收尾页
 
         guideDots.setText(finishPage
                 ? "准备完成 · 最后一步"
                 : "第 " + (guideIndex + 1) + " / " + total + " 步");
         guidePrevBtn.setEnabled(guideIndex > 0);
-        guideNextBtn.setText(finishPage ? "开始使用" : "下一步");
+        guideNextBtn.setText(finishPage || lastPage ? "开始使用" : "下一步");
         guideSkipBtn.setVisibility(finishPage ? View.GONE : View.VISIBLE);
-        guideSkipBtn.setText(guideIndex == guidePages.size() - 1 ? "跳过" : "跳过这页");
+        guideSkipBtn.setText(lastPage ? "跳过" : "跳过这页");
 
-        // v1.21（UI 统一）：细进度条跟着步数走（完成页 = 满格）
+        // v1.21（UI 统一）：细进度条跟着步数走（v1.24：最后一项权限页 = 满格）
         if (guideProgressFill != null && guideProgressSpacer != null) {
             float done = finishPage ? total : (guideIndex + 1f);
             float rest = Math.max(total - done, 0.0001f);
@@ -2347,6 +2364,11 @@ public class MainActivity extends Activity {
             guideProgressSpacer.setLayoutParams(slp);
         }
 
+        // v1.24（维护者要求）：**整张"配置完成"页已下线**（guideIndex 再也到不了 guidePages.size()，
+        // 所以这个分支不会被进入）。下面这段代码**逐行保留**，只是没启用；要恢复这一页：
+        //   ① guideGo() 的上界改回 guidePages.size()；
+        //   ② total 改回 guidePages.size() + 1；
+        //   ③ 底部按钮的判断（guideAdvance()）改回"翻到完成页"的写法。
         if (finishPage) {
             TextView t = new TextView(this);
             t.setText("配置完成");
@@ -6425,7 +6447,8 @@ public class MainActivity extends Activity {
         int keep = guideIndex;
         showPermissionScreen();                       // 内部会把 guideIndex 归零
         try {
-            guideIndex = Math.max(0, Math.min(keep, guidePages.size()));
+            // v1.24：上界改成最后一项权限页（"完成页"已下线）
+            guideIndex = Math.max(0, Math.min(keep, Math.max(0, guidePages.size() - 1)));
             renderGuidePage();
         } catch (Throwable ignored) {}
     }
