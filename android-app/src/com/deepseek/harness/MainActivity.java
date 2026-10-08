@@ -391,6 +391,10 @@ public class MainActivity extends Activity {
         ensureConsoleThemeAssets();
         ensureAgentSkills(); // D1：把内置「自我定制」技能落到 <filesDir>/.agents/skills（引擎默认扫描目录）
         applyStatusBar(); // 状态栏/导航栏底色跟随 App 主题（浅色模式不再是一条黑条）
+        // v1.24：注册「控制台」动态快捷方式（长按桌面图标 → 控制台）。
+        // 这是**不依赖任何权限**的救援入口：悬浮窗权限被关掉时面板入口就没了，
+        // 若常驻通知也被关/引擎没在跑，用户会找不到控制台（详见方法注释）。
+        publishConsoleShortcut();
         installCrashHandler();
         checkAbiCompat(); // ② ABI 检测：非 arm64 设备引擎可能无法运行，弹提示
         // ④ 电池优化引导：被限制时提示（挂后台可能被杀）
@@ -781,6 +785,55 @@ public class MainActivity extends Activity {
             return true;
         } catch (Throwable t) {
             return false;
+        }
+    }
+
+    /**
+     * v1.24（维护者报障：入口自锁）：给 launcher 注册一个「控制台」**动态快捷方式**
+     * —— 长按桌面图标 → 菜单里出现「控制台」→ 点它直接进原生控制台。
+     *
+     * 为什么需要它：控制台的常规入口是「悬浮窗面板的按钮」和「常驻通知点按」。用户一旦把
+     * **悬浮窗权限**关掉，面板入口立刻消失；若通知也被关/屏蔽、或引擎没在跑（没有常驻通知），
+     * 用户就只剩"进系统设置里翻悬浮窗权限"这一条路 —— 而权限管理页本身在控制台里。
+     * 快捷方式既不需要权限、也不依赖引擎与前端，是这类故障下的救援入口（其它权限坏掉同样能救）。
+     *
+     * 为什么用**动态**而不是静态（res/xml + manifest meta-data）：
+     *   · Intent 在代码里构造，可以带 FLAG_ACTIVITY_SINGLE_TOP —— App 已在运行时交给
+     *     onNewIntent（否则 MainActivity 是 standard 启动模式，会再起一个 Activity 实例）；
+     *   · 不必为 official / lite / compat / community 四个变体各改写一份 XML 里的包名。
+     * 代价：App 至少冷启动过一次才会有这一项（对"用着用着把权限关了"的场景完全够）。
+     * 幂等：每次冷启动重发一次，防止启动器把它丢掉。
+     *
+     * ⚠ App Shortcuts 需要 API 25（Android 7.1）；低版本直接跳过（minSdk 是 24）。
+     */
+    private void publishConsoleShortcut() {
+        if (Build.VERSION.SDK_INT < 25) return;
+        try {
+            final android.content.pm.ShortcutManager sm =
+                    (android.content.pm.ShortcutManager) getSystemService(Context.SHORTCUT_SERVICE);
+            if (sm == null) return;
+            Intent i = new Intent(this, MainActivity.class);
+            i.setAction(Intent.ACTION_VIEW);
+            i.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);   // 已在运行 → onNewIntent → showConsole()
+            i.putExtra(EXTRA_OPEN_CONSOLE, true);          // 冷启动 → onCreate 消费同一 extra
+            final android.content.pm.ShortcutInfo sc =
+                    new android.content.pm.ShortcutInfo.Builder(this, "console")
+                            .setShortLabel("控制台")
+                            .setLongLabel("打开原生控制台：权限 / 日志 / 救援")
+                            .setIcon(android.graphics.drawable.Icon.createWithResource(this, R.drawable.ic_launcher))
+                            .setIntent(i)
+                            .setRank(0)
+                            .build();
+            // ShortcutManager 是同步 binder 调用，放到主线程之外（与官方建议一致；失败不致命）
+            new Thread(new Runnable() { @Override public void run() {
+                try {
+                    sm.setDynamicShortcuts(java.util.Collections.singletonList(sc));
+                } catch (Throwable t) {
+                    Log.w(TAG, "publishConsoleShortcut: setDynamicShortcuts failed", t);
+                }
+            }}, "shortcut-publish").start();
+        } catch (Throwable t) {
+            Log.w(TAG, "publishConsoleShortcut failed", t);
         }
     }
 
