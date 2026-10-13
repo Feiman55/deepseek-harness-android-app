@@ -56,6 +56,9 @@ usage() {
                       同一份矢量），悬浮窗 = 上游那只鲸鱼。默认（不带此参数）仍是我们现在的
                       卡通形象（头像特写图标 + 全身立绘悬浮窗）。
                       产物名会自动加 -original 后缀，避免覆盖卡通包。
+  --kernel <mode>     内核树来源：payload（默认，从上游 APK 的 payload 取）|
+                      official（从官方 npm registry + 仓库内冻结 lock 安装，A2′；
+                      见 android-app/kernel/README.md —— 内核树不再依赖上游 APK）
   --keystore <path>   签名密钥（默认 official/lite/compat 用 .cache 里自动生成的本地调试密钥，
                       community 用仓库内公开的 android-app/community.jks）
   --android-jar <p>   android.jar（默认自动从 Android SDK 里挑）
@@ -95,6 +98,7 @@ while [ $# -gt 0 ]; do
     --cache)    CACHE="${2:?}"; shift 2 ;;
     --emulator) DO_EMULATOR=1; shift ;;
     --original-look) DO_ORIGINAL_LOOK=1; shift ;;
+    --kernel)   DSH_KERNEL_MODE="${2:?}"; shift 2 ;;
     --smoke)    DO_SMOKE=1; shift ;;
     --no-verify) DO_VERIFY=0; shift ;;
     --clean)    DO_CLEAN=1; shift ;;
@@ -128,6 +132,13 @@ else
 fi
 echo "   变体        : $DSH_VARIANT（appId=$V_APP_ID 引擎=$V_PORT 外部目录=$V_EXT_DIR）"
 echo "   外观        : $DSH_LOOK（cartoon=卡通形象｜original=上游原版蓝鲸鱼）"
+# 内核树来源：payload = 上游 APK 的 payload；official = 官方 npm registry 冻结安装（A2′）
+case "${DSH_KERNEL_MODE:-payload}" in
+  payload|official) ;;
+  *) die "未知 --kernel 取值：${DSH_KERNEL_MODE}（只支持 payload | official）" ;;
+esac
+export DSH_KERNEL_MODE="${DSH_KERNEL_MODE:-payload}"
+echo "   内核来源    : $DSH_KERNEL_MODE（$( [ "$DSH_KERNEL_MODE" = official ] && echo '官方 registry + 仓库内冻结 lock（不依赖上游 APK 的 dshroot）' || echo '上游 APK 的 payload' )）"
 
 # ── 0. 预检 ───────────────────────────────────────────────────────────────
 info "0/7 预检环境"
@@ -443,6 +454,8 @@ export KEYSTORE_PASS KEYSTORE_ALIAS
 export DSH_VARIANT
 # 外观（cartoon | original）：build.sh 据此选图标与悬浮窗资源（见其「外观」段）
 export DSH_LOOK
+# 内核树来源（payload | official）：build.sh 据此决定"从上游 payload 取"还是"官方 registry 冻结安装"
+export DSH_KERNEL_MODE
 # build.sh 默认用 android-app/release.jks；这里指向我们实际选择的密钥
 export DSH_KEYSTORE="$KEYSTORE"
 
@@ -534,7 +547,13 @@ if [ "$DO_VERIFY" = 1 ]; then
 @deepseek-ai/dsh-bash-local/lib/index.js:DSH_BASH_PATH
 @deepseek-ai/dsh-subprocess-local/lib/runner-launch-*.js:dsh-android-patch
 "
-  LAYER="$H/dshroot/lib/node_modules/@deepseek-ai/dsh/node_modules"
+  # 校验对象必须是**真正进包的那棵树**（staging），不是构建用的 devhome 缓存 ——
+  # 否则会出现"检查过了、包里没有"（本仓库踩过：overlay 只贴了 devhome，staging 是干净的）。
+  LAYER="$REPO/android-app/staging/dshroot/lib/node_modules/@deepseek-ai/dsh/node_modules"
+  if [ ! -d "$LAYER" ]; then
+    warn "找不到 staging 内核树（$LAYER），退回检查 devhome —— 结论不代表产物"
+    LAYER="$H/dshroot/lib/node_modules/@deepseek-ai/dsh/node_modules"
+  fi
   TOTAL=0
   MISSING="$(printf '%s\n' "$PATCHES" | while IFS=: read -r rel sig; do
       [ -z "$rel" ] && continue
@@ -593,6 +612,7 @@ INFO="$OUT.build-info.txt"
   echo "android.jar     : $ANDROID_JAR"
   echo "模拟器适配      : $([ "$DO_EMULATOR" = 1 ] && echo yes || echo no)"
   echo "外观(look)      : $DSH_LOOK（cartoon=卡通形象 / original=上游原版蓝鲸鱼）"
+  echo "内核来源        : $DSH_KERNEL_MODE（payload=上游 APK 的 dshroot / official=官方 registry 冻结安装）"
 } > "$INFO"
 # B6：产物哈希单独落一个 sha256sum 兼容的 sidecar，便于 `sha256sum -c` 核对
 ( cd "$(dirname "$OUT")" && printf '%s  %s\n' "$(file_sha256 "$OUT")" "$(basename "$OUT")" ) > "$OUT.sha256" 2>/dev/null || true

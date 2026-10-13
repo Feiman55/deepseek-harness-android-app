@@ -1,0 +1,17 @@
+# overlay 里属于「我们新增」而不是「替换已有文件」的路径（前缀匹配，一行一条，# 注释）。
+#
+# 语义：这些文件在**干净的官方内核树**里本来就不存在，所以"在树里找不到"是正常的，不算 stale。
+# 其余 overlay 文件必须能在内核树里找到 —— 找不到说明 overlay 是与旧内核配套的快照
+# （"看着打了、其实没生效"），构建会直接失败。
+#
+# 构建期：android-app/build.sh 的「补丁层」段读这个文件做 stale 检测。
+# 维护期：tools/overlay-recapture.py 的 ADD_PATHS 应与此保持一致（避免重采时把这些当残骸丢掉）。
+
+# 我们补进 payload 的原生 PTY 模块（官方只声明依赖、不带原生模块）
+node_modules/node-pty/
+
+# 我们自己的插件（官方包里没有）
+node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-tool-
+
+# 我们给既有包新增的文件（不是替换）：sharp 替身
+node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-attachment-local/lib/sharp-shim.js

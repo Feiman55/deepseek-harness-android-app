@@ -201,6 +201,14 @@ if [ -n "$DSH_X64_BARE_LIBS" ]; then
 fi
 
 mkdir -p "$P/staging/dshroot/lib"
+# ── 内核树的来源（DSH_KERNEL_MODE）────────────────────────────────────────────
+#   payload （默认，过渡期保留）：从上游 APK 的 payload（$H/dshroot）取
+#   official（A2′）：用 tools/fetch-kernel.sh 从**官方 npm registry + 仓库内冻结 lock** 安装
+#                     （来历与实测数据见 android-app/kernel/README.md）
+# 两条路都会在下面叠加 dsh-patches/overlay 补丁层（官方包是干净的，必须叠加）。
+KERNEL_MODE="${DSH_KERNEL_MODE:-payload}"
+case "$KERNEL_MODE" in
+payload)
 # 排除项（B7 体积优化；实测 dshroot 树里这些占 ~76MB / ~12000 个文件）：
 #   1) dsh 的 node_modules/.bin（原脚本即排除）
 #   2) dsh/node_modules/@deepseek-ai/dsh —— 开发树里被误造的「dsh 自我递归嵌套」
@@ -223,6 +231,87 @@ mkdir -p "$P/staging/dshroot/lib"
     --exclude='*.pyc' \
     . ) \
   | ( cd "$P/staging/dshroot/lib" && tar xf - )
+  echo "  内核树: payload（$H/dshroot/lib）"
+  ;;
+official)
+  KERNEL_SCRIPT="$P/../tools/fetch-kernel.sh"
+  [ -f "$KERNEL_SCRIPT" ] || { echo "!! official 内核模式需要 tools/fetch-kernel.sh"; exit 1; }
+  bash "$KERNEL_SCRIPT" "$P/staging/dshroot/lib" || { echo "!! 内核冻结安装失败"; exit 1; }
+  # 与 payload 路径同样的体积裁剪（npm 包里的 sourcemap/类型声明/Windows 命令 shim 对运行时无用）
+  find "$P/staging/dshroot/lib" -name '.bin' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+  find "$P/staging/dshroot/lib" \
+      \( -name '*.map' -o -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' \
+         -o -name '__pycache__' -o -name '*.pyc' \) -exec rm -rf {} + 2>/dev/null || true
+  echo "  内核树: official（官方 registry 冻结安装）"
+  ;;
+*)
+  echo "!! 未知 DSH_KERNEL_MODE=$KERNEL_MODE（只支持 payload | official）"; exit 1
+  ;;
+esac
+
+# ============================================================================
+# 补丁层：dsh-patches/overlay 覆盖到 staging（**构建期必做**）
+#
+# 官方 npm 包是「干净」的（15 条 Android 补丁签名里只有 1 条天然命中），所以内核树必须叠加
+# 这一层；上游的 `dsh-patches/apply.sh` 只在**设备端**重贴，构建期不应用的话会静默失效。
+# 覆盖前先做 **stale 检测**：overlay 里每个文件都必须能在 staging 里找到 —— 找不到说明
+# overlay 是与当前内核版本不匹配的旧快照（"看着打了、其实没生效"），直接构建失败。
+# ============================================================================
+OVERLAY_LIB="$P/../dsh-patches/overlay/lib"
+[ -d "$OVERLAY_LIB" ] || { echo "!! 缺补丁层：$OVERLAY_LIB"; exit 1; }
+OVL_LIST="$(mktemp)"
+( cd "$OVERLAY_LIB" && find . -type f ) > "$OVL_LIST"
+OVL_N=$(wc -l < "$OVL_LIST" | tr -d ' ')
+# 「新增」白名单：这些路径在干净内核树里本来就没有（我们自己的插件、node-pty、给既有包新增的文件），
+# 找不到不算 stale。语义与维护说明见该文件头部注释。
+OVL_ADD_FILE="$P/../dsh-patches/overlay-additions.txt"
+OVL_ADD=""
+if [ -f "$OVL_ADD_FILE" ]; then
+  OVL_ADD="$(grep -v '^[[:space:]]*#' "$OVL_ADD_FILE" | grep -v '^[[:space:]]*$' || true)"
+fi
+STALE=0
+ADDED=0
+while IFS= read -r rel; do
+  rel="${rel#./}"
+  # 先看是不是"我们新增"的路径（前缀匹配）
+  _is_add=0
+  if [ -n "$OVL_ADD" ]; then
+    while IFS= read -r _pat; do
+      [ -n "$_pat" ] || continue
+      case "$rel" in "$_pat"*) _is_add=1; break ;; esac
+    done <<EOF
+$OVL_ADD
+EOF
+  fi
+  if [ ! -f "$P/staging/dshroot/lib/$rel" ]; then
+    if [ "$_is_add" = 1 ]; then
+      ADDED=$((ADDED + 1))
+    else
+      STALE=$((STALE + 1))
+      [ "$STALE" -le 5 ] && echo "  !! overlay 文件在 staging 里不存在：$rel"
+    fi
+  fi
+done < "$OVL_LIST"
+rm -f "$OVL_LIST"
+[ "$STALE" -eq 0 ] || { echo "!! overlay 有 $STALE 个文件不在当前内核树里（overlay 与内核版本不匹配）"; exit 1; }
+( cd "$OVERLAY_LIB" && tar cf - . ) | ( cd "$P/staging/dshroot/lib" && tar xf - )
+echo "  补丁层: overlay 已覆盖（$OVL_N 个文件：stale=0，其中新增 $ADDED 个）"
+
+# node-pty：npm 装的那份**没有 Android 预编译**（我们是 Termux 构建的 AArch64 N-API 产物），
+# 而 dsh-subprocess-local 解析 node-pty 时命中的是 @deepseek-ai/dsh/node_modules/node-pty
+# —— 不是 hoisted 的 lib/node_modules/node-pty。所以必须把 overlay 那份复制到**嵌套路径**。
+NPTY_SRC="$P/../dsh-patches/overlay/lib/node_modules/node-pty"
+NPTY_DST="$P/staging/dshroot/lib/node_modules/@deepseek-ai/dsh/node_modules/node-pty"
+if [ -d "$NPTY_SRC" ]; then
+  rm -rf "$NPTY_DST"
+  mkdir -p "$(dirname "$NPTY_DST")"
+  cp -r "$NPTY_SRC" "$NPTY_DST"
+  _pty="$NPTY_DST/prebuilds/android-arm64/pty.node"
+  [ -f "$_pty" ] || { echo "!! node-pty 缺 AArch64 原生产物：$_pty"; exit 1; }
+  _m=$(od -An -tx1 -j18 -N2 "$_pty" | tr -d ' \n')
+  [ "$_m" = "b700" ] || { echo "!! node-pty 的 pty.node 不是 AArch64（ELF machine=$_m）"; exit 1; }
+  echo "  node-pty: 嵌套路径已覆盖（$(stat -c%s "$_pty") B, ELF=AArch64）"
+fi
 
 # ============================================================================
 # v1.24：把**本仓库自己的插件**同步进 staging（插件补丁的唯一生效路径）。
@@ -244,9 +333,11 @@ for _pd in "$P"/../plugins/dsh-tool-*; do
   _pn=$(basename "$_pd")
   for _dst in "$P/staging/dshroot/lib/node_modules/@deepseek-ai/$_pn" \
               "$P/staging/dshroot/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/$_pn"; do
-    [ -d "$_dst" ] || continue
+    # official 内核模式下这两处都不存在（官方包里没有我们的插件）→ 直接创建
+    mkdir -p "$_dst"
     rm -rf "$_dst/lib"
     cp -r "$_pd/lib" "$_dst/lib"
+    [ -f "$_pd/package.json" ] && cp -f "$_pd/package.json" "$_dst/package.json"
     PLUGIN_SYNCED=$((PLUGIN_SYNCED + 1))
   done
 done
