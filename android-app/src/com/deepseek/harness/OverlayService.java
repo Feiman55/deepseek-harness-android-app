@@ -229,37 +229,34 @@ public class OverlayService extends Service {
     }
 
     /**
-     * 判类：把送来的原文归到四类之一。
-     * ⚠ 只认今天插件实际发的措辞；认不出就当"原文直出"（KIND_PLAIN）——
-     * 宁可少套一次模板，也不要把不认识的文案改坏。
+     * v1.24：判类**只看插件送来的结构化 state**（thinking / tool / ask / done / ended / error，
+     * 见 plugins/dsh-tool-android 的 bubble()）。
+     *
+     * 这里刻意**不做中文文案匹配**：插件是本仓库的补丁、由构建保证同步进 payload
+     * （见 android-app/build.sh 的「插件同步」段，缺了补丁直接构建失败），所以 state 一定在；
+     * 按文案猜的老做法只会是一段永远走不到、却会悄悄腐烂的死代码。
+     * 没有对应类别的状态（ask / error / 空 / 未知）→ 原文直出（KIND_PLAIN）。
      */
-    static int classifyBubble(String t) {
-        if (t == null || t.isEmpty()) return KIND_PLAIN;
-        if (t.startsWith("摸鱼")) return KIND_IDLE;
-        if (t.startsWith("思考")) return KIND_THINK;
-        if (t.startsWith("任务已完成") || t.startsWith("会话已结束") || t.startsWith("已完成")) return KIND_DONE;
-        if (t.startsWith("正在向用户提问")) return KIND_PLAIN;   // 那是在等你回答，不算调用工具
-        if (t.startsWith("正在")) return KIND_TOOL;
+    static int kindOf(String state) {
+        if (state != null) {
+            if ("thinking".equals(state)) return KIND_THINK;
+            if ("tool".equals(state)) return KIND_TOOL;
+            if ("done".equals(state) || "ended".equals(state)) return KIND_DONE;
+            if ("idle".equals(state)) return KIND_IDLE;
+        }
+        // ask（在等你回答）/ error / 未知：不套模板，原样显示 —— 这两个都不该被说成"干活中"
         return KIND_PLAIN;
     }
 
-    /** 从「正在调用 web_fetch…」里抠工具名；抠不到返回空串。 */
-    static String toolNameOf(String t) {
-        if (t == null) return "";
-        String s = t.startsWith("正在调用") ? t.substring(4) : (t.startsWith("正在") ? t.substring(2) : t);
-        s = s.replace("…", "").replace("...", "").trim();
-        return s.length() > 24 ? s.substring(0, 24) : s;
-    }
-
     /** 按类别渲染模板（支持 {tool} / {工具} / {name} 占位符）。 */
-    static String renderBubble(String raw, int kind, String toolOverride) {
+    static String renderBubble(String raw, int kind, String tool) {
         switch (kind) {
             case KIND_IDLE:  return msgIdle;
             case KIND_THINK: return msgThink;
             case KIND_DONE:  return msgDone;
             case KIND_TOOL: {
-                String tool = toolOverride != null ? toolOverride : toolNameOf(raw);
-                return msgTool.replace("{tool}", tool).replace("{工具}", tool).replace("{name}", tool);
+                String name = tool == null ? "" : tool;
+                return msgTool.replace("{tool}", name).replace("{工具}", name).replace("{name}", name);
             }
             default: return raw == null ? "" : raw;
         }
@@ -1554,10 +1551,18 @@ public class OverlayService extends Service {
      * onCreate 会用它把"任务已完成/会话已结束"这类终态补回来，
      * 否则用户回到桌面会发现气泡莫名消失（实测踩过：后台期间服务重启）。
      */
-    public static void pushStatus(final String text, final boolean sticky, final long ttlMs) {
-        // v1.24：先判类 → 套用户模板（认不出就原文直出）→ 再按气泡真实宽度裁一次。
-        final int kind = classifyBubble(text);
-        final String shown = fitBubbleWidth(renderBubble(text, kind, null), 400);
+    /**
+     * v1.24：内核侧插件 → 本机 HTTP → 这里。
+     *
+     * @param text  插件送来的原文（只在没有对应类别的状态下原样显示）
+     * @param state 插件送来的结构化状态（thinking/tool/ask/done/ended/error）
+     * @param tool  插件送来的工具名（KIND_TOOL 时替换模板里的 {tool}）
+     */
+    public static void pushStatus(final String text, final boolean sticky, final long ttlMs,
+                                  final String state, final String tool) {
+        // 判类只看 state → 套用户模板 → 再按气泡真实宽度裁一次。
+        final int kind = kindOf(state);
+        final String shown = fitBubbleWidth(renderBubble(text, kind, tool), 400);
         pushRendered(shown, sticky, ttlMs, kind);
     }
 

@@ -224,6 +224,41 @@ mkdir -p "$P/staging/dshroot/lib"
     . ) \
   | ( cd "$P/staging/dshroot/lib" && tar xf - )
 
+# ============================================================================
+# v1.24：把**本仓库自己的插件**同步进 staging（插件补丁的唯一生效路径）。
+#
+# 为什么必须有这一步：staging 的 dshroot 树来自上游 Release APK 的 payload（只读输入），
+# 而 `dsh-patches/overlay` 是「替换已有文件」的快照层 —— 上游的 `dsh-patches/apply.sh`
+# 只在**设备端**重贴它，本仓库的构建流程原本并不应用 overlay。于是"改了插件却不生效"
+# 会**静默**发生（构建成功、装机后还是旧行为）。
+#
+# 这里只同步我们自己的插件包 `plugins/dsh-tool-*` 的 lib/：
+#   · 覆盖两个解析位置（hoisted 与 dsh 内嵌套），与 app 侧 apply.sh 的处理保持一致；
+#   · **不碰内核文件** —— 避免旧快照把内核降级（见 tools/overlay-recapture.py 的说明）；
+#   · 真源是 `plugins/`，同一份内容也在 `dsh-patches/overlay/`（供设备端重贴补丁用），
+#     两边必须一致：`tools/overlay-drift.sh` 与本段的自检都会盯着。
+# ============================================================================
+PLUGIN_SYNCED=0
+for _pd in "$P"/../plugins/dsh-tool-*; do
+  [ -d "$_pd" ] || continue
+  _pn=$(basename "$_pd")
+  for _dst in "$P/staging/dshroot/lib/node_modules/@deepseek-ai/$_pn" \
+              "$P/staging/dshroot/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/$_pn"; do
+    [ -d "$_dst" ] || continue
+    rm -rf "$_dst/lib"
+    cp -r "$_pd/lib" "$_dst/lib"
+    PLUGIN_SYNCED=$((PLUGIN_SYNCED + 1))
+  done
+done
+echo "  插件同步: $PLUGIN_SYNCED 处（plugins/dsh-tool-* → staging，两个解析位置）"
+# 自检：本轮的 v1.24 气泡补丁必须真的落到 staging（否则控制台「悬浮窗消息」的
+# 工具名/结束态会退化成"按中文文案猜"，用户改了文案就失效）
+_bubble_marker="v1.24 bubble: 结构化 state/tool"
+if ! grep -rqF -- "$_bubble_marker" "$P/staging/dshroot/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-tool-android/lib/index.js" 2>/dev/null; then
+  echo "!! staging 里的 dsh-tool-android 缺少气泡补丁（$_bubble_marker）—— 检查 plugins/ 与本段同步逻辑"
+  exit 1
+fi
+
 # v1.21：内置默认插件 ds-harness-remote（维护者要求 Android 默认就装好它）——
 # 等价于 `dsh plugin --profile web add github:blue-soda/ds-harness-remote`，但走**构建期内置**：
 #   · 运行时装不了的原因（实测）：Android 侧 git 调用报 "Unable to get realpath of git"、

@@ -436,19 +436,24 @@ function apply(ctx) {
     let lastText = "";
     let lastAt = 0;
     const MIN_GAP_MS = 1200;
-    const bubble = (text, sticky) => {
+    // v1.24 bubble: 结构化 state/tool —— App 侧据此套用户模板（控制台「悬浮窗消息」），
+    // 不再靠中文文案匹配；text 仍然保留（老版本 App、日志、兼容都靠它）。
+    // state 取值：thinking / tool / ask / done / ended / error
+    const bubble = (text, sticky, state, tool) => {
       try {
         const now = Date.now();
         if (text === lastText && now - lastAt < 5000) return;   // 文案没变，别刷新
         if (now - lastAt < MIN_GAP_MS && !sticky) return;       // 节流（终态不丢）
         lastText = text;
         lastAt = now;
-        console.log("[bubble] " + text + (sticky ? " (sticky)" : ""));
-        appPost("/overlay", { action: "bubble", text, sticky: !!sticky, ttl: 0 });
+        console.log("[bubble] " + text + (sticky ? " (sticky)" : "")
+          + (state ? " [" + state + (tool ? ":" + tool : "") + "]" : ""));
+        appPost("/overlay", { action: "bubble", text, sticky: !!sticky, ttl: 0,
+                              state: state || "", tool: tool || "" });
       } catch (e) { /* 忽略：状态气泡是尽力而为 */ }
     };
     // 有新输入被领取 = 开始干活
-    ctx.on("agent/inbox/claimed", () => { busy = true; bubble("思考中…", false); });
+    ctx.on("agent/inbox/claimed", () => { busy = true; bubble("思考中…", false, "thinking"); });
     // 流式输出：带工具名就是工具调用，否则仍算思考/输出中
     // v1.21：原来只认 frame.name/tool/toolName/call.name —— 真机反馈"正在调用 <工具>… 从没出现过"，
     // 说明实际帧结构不是这几种。改成深度扫描帧里可能藏工具名的字段，
@@ -489,14 +494,14 @@ function apply(ctx) {
         const toolName = String(tool).replace(/^.*\//, "");
         if (/ask[_-]?user[_-]?question|request[_-]?user[_-]?input|ask[_-]?question/i.test(toolName)) {
           // v1.21：向用户提问是"等用户"，不是"在跑工具" —— 单独一个常驻状态
-          bubble("正在向用户提问...", true);
+          bubble("正在向用户提问...", true, "ask");
         } else {
           // v1.21：文案简化（用户要求）——「正在调用 <工具>…」→「正在 <工具>…」
-          bubble("正在 " + toolName + "…", false);
+          bubble("正在 " + toolName + "…", false, "tool", toolName);
         }
       } else {
         busy = true;
-        bubble("思考中…", false);
+        bubble("思考中…", false, "thinking");
       }
     });
     // agent 状态机：由"忙"回到 idle 才算任务完成（避免启动时的初始 idle 误报）
@@ -506,23 +511,23 @@ function apply(ctx) {
       // v1.21：waiting-input / waiting-for-input = 明确在等用户输入（例如 agent 提了问）
       if (s === "waiting-input" || s === "waiting-for-input") {
         busy = false;
-        bubble("正在向用户提问...", true);
+        bubble("正在向用户提问...", true, "ask");
         return;
       }
       if (s === "idle" || s === "waiting") {
-        if (busy) { busy = false; bubble("任务已完成", true); }
+        if (busy) { busy = false; bubble("任务已完成", true, "done"); }
       } else {
         busy = true;
-        bubble("思考中…", false);
+        bubble("思考中…", false, "thinking");
       }
     });
-    ctx.on("agent/error", () => { busy = false; bubble("出错了（点开控制台看日志）", true); });
+    ctx.on("agent/error", () => { busy = false; bubble("出错了（点开控制台看日志）", true, "error"); });
     // 会话级：running → 思考中；由 running 变 false → 任务已完成；会话被移除 → 会话已结束
     ctx.on("api-session/status", (_id, running) => {
-      if (running) { busy = true; bubble("思考中…", false); }
-      else if (busy) { busy = false; bubble("任务已完成", true); }
+      if (running) { busy = true; bubble("思考中…", false, "thinking"); }
+      else if (busy) { busy = false; bubble("任务已完成", true, "done"); }
     });
-    ctx.on("api-session/removed", () => { busy = false; bubble("会话已结束", true); });
+    ctx.on("api-session/removed", () => { busy = false; bubble("会话已结束", true, "ended"); });
   }
 
   // ===== App 层工具（无需 root/Shizuku，走 App 本地 HTTP 服务）=====

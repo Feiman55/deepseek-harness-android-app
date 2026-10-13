@@ -4536,7 +4536,12 @@ public class MainActivity extends Activity {
                 boolean sticky = "true".equalsIgnoreCase(jsonField(raw, "sticky"));
                 long ttl = 0L;
                 try { ttl = Long.parseLong(jsonField(raw, "ttl")); } catch (Throwable ignored) {}
-                OverlayService.pushStatus(fitted, sticky, ttl);
+                // v1.24：插件（本仓库的补丁，构建保证同步进 payload，见 build.sh「插件同步」段）
+                // 除 text 外还送结构化 state/tool：判类只看 state，**不做中文文案匹配** ——
+                // 用户改了气泡文案、插件将来换措辞，都不会影响模板；ask/error 原样显示。
+                String state = jsonField(raw, "state");
+                String toolName = jsonField(raw, "tool");
+                OverlayService.pushStatus(fitted, sticky, ttl, state, toolName);
                 StringBuilder sb = new StringBuilder("{\"ok\":true,\"bubble\":\"");
                 sb.append(fitted.replace("\"", "'"));
                 sb.append("\",\"cjk\":").append(cnt[0]);
@@ -11823,9 +11828,9 @@ public class MainActivity extends Activity {
      *
      * 文案真源在 {@link OverlayService} 的静态字段 + prefs（键见那边的 KEY_MSG_*）；
      * 这里只负责编辑、保存、预览 —— 保存后**立刻**对悬浮窗生效（不必重启引擎或服务）。
-     * 判类规则见 {@link OverlayService#classifyBubble}：App 把内核侧插件送来的原文只当
-     * 判类依据，再用这里的模板渲染，所以**不动插件**也能自定义（插件在 payload 里，
-     * 改它要走"发 npm → 重打 payload → 上游发版"，代价太大）。
+     * 判类规则见 {@link OverlayService#kindOf}：插件（本仓库补丁，构建保证同步进 payload）
+     * 送结构化 `state`，App 据此套模板 —— 不靠中文文案匹配，所以用户改了气泡文案、
+     * 或插件将来换措辞，都不会影响判类。
      */
     private void renderConsoleOverlayMsg() {
         LinearLayout col = consoleBody;
@@ -11852,8 +11857,8 @@ public class MainActivity extends Activity {
 
         col.addView(cNote(t("desc.bubbleDefaults",
                 "默认：空闲「摸鱼中…」· 思考「思考中…」· 工具「正在调用 {tool}…」· 结束「任务已完成」。"
-              + "「结束」同时管插件发来的「任务已完成」与「会话已结束」两条；"
-              + "认不出的文案（例如「正在向用户提问…」「出错」）原样显示，不会被改。")), cTop(cGap(8)));
+              + "「结束」同时管插件的 done 与 ended 两种结束状态；"
+              + "「在等你回答」「出错」这两类状态不套模板，原样显示。")), cTop(cGap(8)));
 
         LinearLayout acts = new LinearLayout(this);
         acts.setOrientation(LinearLayout.HORIZONTAL);
