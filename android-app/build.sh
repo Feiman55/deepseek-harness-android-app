@@ -315,6 +315,31 @@ if [ -n "$DSH_X64_BARE_LIBS" ]; then
     done
     [ -e "$P/staging/runtime/bin/coreutils" ] && { echo "!! [模拟器] runtime/bin/coreutils 仍在包内"; exit 1; }
     echo "  [模拟器] 排除自检通过：arm64-only 库与工具均不在包内 ✓"
+
+    # 剪掉"目标已被排除"的别名条目：设备端 applyLinks 对目标不存在的条目会直接跳过
+    # （`if (!src.exists()) continue;`），但完整性检查是按 LINKS.txt 的**条目数**预期别名的
+    # → 不剪枝的话模拟器包每次启动都报 `别名=35/160` 的**假 DRIFT**（实测）。
+    for _lf in "$P/staging/runtime/lib/LINKS.txt" "$P/staging/runtime/bin/LINKS.txt"; do
+      [ -f "$_lf" ] || continue
+      _ldir="$(dirname "$_lf")"
+      _before=$(grep -cv '^[[:space:]]*$' "$_lf" 2>/dev/null || echo 0)
+      : > "$_lf.new"
+      while IFS= read -r _ln; do
+        _ln="${_ln%$'\r'}"
+        case "$_ln" in ""|\#*) continue ;; esac
+        _lk="$(printf '%s' "$_ln" | awk -F'\t' '{print $1}')"
+        _tg="$(printf '%s' "$_ln" | awk -F'\t' '{print $2}')"
+        [ -n "$_lk" ] && [ -n "$_tg" ] || continue
+        [ -e "$_ldir/$_tg" ] && printf '%s\t%s\n' "$_lk" "$_tg" >> "$_lf.new"
+      done < "$_lf"
+      mv -f "$_lf.new" "$_lf"
+      _after=$(grep -cv '^[[:space:]]*$' "$_lf" 2>/dev/null || echo 0)
+      echo "  [模拟器] $(basename "$(dirname "$_lf")")/LINKS.txt 剪枝：$_before → $_after 条"
+    done
+    if [ -z "$_X64_KEEP_BIN_ALIASES" ] && [ -f "$P/staging/runtime/bin/LINKS.txt" ]; then
+      # bin 的别名目标（coreutils 等）已被整份排除 → 该文件此时通常已空；留着不影响（空文件即 0 条）
+      :
+    fi
   else
     echo "  !! [模拟器] 缺 config/runtime-tools-files.txt —— 无法排除 arm64-only 文件（引擎可能起不来）"
   fi
