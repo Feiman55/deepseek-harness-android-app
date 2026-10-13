@@ -268,23 +268,40 @@ if [ -n "$DSH_X64_BARE_LIBS" ]; then
   #     · tools/build-apk.sh 默认不设；只有显式 `--emulator` 才设
   echo "⚠⚠ 正在使用模拟器(x86_64)适配构建：DSH_X64_BARE_LIBS=$DSH_X64_BARE_LIBS" >&2
   echo "⚠⚠ 这个 APK 不要装到真机 arm64（node 的 OpenSSL 会 dlopen 失败并直接崩溃）" >&2
+  # ── x86_64 覆盖表：**目录里有几个就注入几个**（v1.25 起不再写死三个名字）──────────
+  # 为什么必须可扩展：翻译运行器（host 侧 x86_64）会从 LD_LIBRARY_PATH（= runtime/lib）解析**它自己**
+  # 需要的库，撞上同名 arm64 文件就 CANNOT LINK、引擎起不来。实测踩到两个：
+  #   · libz / libssl / libcrypto（裸名，历史遗留）；
+  #   · **liblzma.so.5.8.4**（带完整版本号 —— 引擎日志里就是这条；W3 之前就存在，与本仓库改动无关）。
+  # 取法：从模拟器自身拉，按**目标名字**存进 $DSH_X64_BARE_LIBS（例：
+  #   adb pull /system/lib64/liblzma.so .cache/x64libs/liblzma.so.5.8.4 ）。
+  # 安全性：只覆盖"guest 侧没有引用"的库（node 的 DT_NEEDED 里没有 liblzma —— 实测确认）。
+  _x64_n=0
   for _l in libz.so libssl.so libcrypto.so; do
     [ -f "$DSH_X64_BARE_LIBS/$_l" ] || { echo "!! DSH_X64_BARE_LIBS 缺少 $_l：$DSH_X64_BARE_LIBS"; exit 1; }
-    cp -f "$DSH_X64_BARE_LIBS/$_l" "$P/staging/runtime/lib/$_l"
   done
-  # 从 LINKS.txt 移除这三条：否则 App 解压后会把裸名重建为指向 arm64 的链接，覆盖掉刚注入的 x86_64 库。
+  for _f in "$DSH_X64_BARE_LIBS"/*; do
+    [ -f "$_f" ] || continue
+    _n="$(basename "$_f")"
+    cp -f "$_f" "$P/staging/runtime/lib/$_n"
+    _x64_n=$((_x64_n + 1))
+  done
+  # 从 LINKS.txt 移除被覆盖的名字：否则 App 解压后会把它们重建为指向 arm64 的链接，覆盖掉刚注入的 x86_64 库。
   # ⚠ v1.18：**不要**再清空整个 LINKS.txt（旧的 DSH_X64_NO_LINKS 做法）。当时清空是因为
   #    "App 会按 LINKS.txt 把实体文件重建为软链、而 ndk_translation 下软链加载不了" —— 那是
   #    链接**实体化**时代的因果。现在 App 侧 applyLinks() 是**硬链优先**（Os.link），
   #    硬链对 guest 加载器就是普通文件，没有软链问题；带版本号的条目必须保留，
   #    否则 node 会报 "library libz.so.1 not found"。
-  grep -v -E '^(libcrypto\.so|libssl\.so|libz\.so)[[:space:]]' \
-    "$P/staging/runtime/lib/LINKS.txt" > "$P/staging/runtime/lib/LINKS.txt.x64"
-  mv -f "$P/staging/runtime/lib/LINKS.txt.x64" "$P/staging/runtime/lib/LINKS.txt"
+  _x64_pat="$(cd "$DSH_X64_BARE_LIBS" && ls -1 | sed 's/\./\\./g' | paste -sd'|' -)"
+  if [ -n "$_x64_pat" ]; then
+    grep -v -E "^($_x64_pat)([[:space:]]|$)" \
+      "$P/staging/runtime/lib/LINKS.txt" > "$P/staging/runtime/lib/LINKS.txt.x64"
+    mv -f "$P/staging/runtime/lib/LINKS.txt.x64" "$P/staging/runtime/lib/LINKS.txt"
+  fi
   if [ -n "$DSH_X64_NO_LINKS" ]; then
     echo "  [模拟器] 注意：DSH_X64_NO_LINKS 自 v1.18 起不再清空 LINKS.txt（硬链优先已足够，清空会让 node 缺 libz.so.1）"
   fi
-  echo "  [模拟器] 已注入 x86_64 裸名库并从 LINKS.txt 移除对应条目"
+  echo "  [模拟器] 已注入 x86_64 覆盖库 $_x64_n 个（$(cd "$DSH_X64_BARE_LIBS" && ls -1 | paste -sd' ' -)）并从 LINKS.txt 移除对应条目"
 
   # ── v1.25（W3）：模拟器构建**排除** arm64-only 的工具集与其新库 ──────────────────
   # 为什么必须排：ndk_translation 的运行器（host 侧 x86_64）会从 LD_LIBRARY_PATH（= runtime/lib）

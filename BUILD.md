@@ -243,6 +243,24 @@ Linux / CI 上没有这个问题，构建同样在 **1 分钟出头**量级。
 
 ## 6. 在 x86_64 模拟器上运行
 
+> **`DSH_X64_BARE_LIBS` 里要放哪些库（v1.25 起由目录内容决定）**：构建期会把该目录（默认
+> `.cache/x64libs`）里的**每一个文件**按**同名**注入 `runtime/lib`，并从 `LINKS.txt` 移除对应条目
+> —— 不再写死三个名字。为什么必须同名：ndk_translation 的翻译运行器（host 侧 x86_64）会从
+> `LD_LIBRARY_PATH`（= `runtime/lib`）解析**它自己**需要的库，撞上同名 arm64 文件就
+> `CANNOT LINK … is for EM_AARCH64 (183) instead of EM_X86_64 (62)`，**引擎直接起不来**。
+>
+> ```bash
+> mkdir -p .cache/x64libs
+> for n in libz.so libssl.so libcrypto.so; do adb pull /system/lib64/$n .cache/x64libs/$n; done
+> # v1.25 实测还需要这个（注意存成**报错里的全名**）：
+> adb pull /system/lib64/liblzma.so .cache/x64libs/liblzma.so.5.8.4
+> ```
+>
+> 以后引擎日志若报出新的库名，按同样方式 `adb pull` 后存成报错里的那个名字即可（无需改代码）。
+> 安全性：只覆盖 guest 侧没有引用的库（可用 `grep -c liblzma runtime/bin/node` 确认 node 不引用它）。
+
+
+
 上游只出 **arm64** 产物。x86_64 模拟器要靠 `ndk_translation` 转译，需要额外两步
 （**真机 arm64 完全不需要**）：
 
