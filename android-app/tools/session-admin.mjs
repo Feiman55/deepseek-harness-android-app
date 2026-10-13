@@ -9,6 +9,8 @@
 //   4. 「彻底删除」只在回收站里提供，且必须显式调用（`purge` / `purge-all`）；
 //   5. 每个回收站条目写一个 `.origin` 文件记住**原来的 slug** —— 恢复时才能放回原位；
 //   6. 只动 `<sessionsDir>` 与 `<回收站>` 这两棵树里的东西，别处一个字节都不碰。
+//   7. 找会话日志一律走 `pickLogFile()`：内核按「代」命名（v0=session.jsonl，
+//      v≥1=session.v<N>.jsonl，压缩加 .zstd）——**不许再写死某个文件名**（见下方注释的踩坑史）。
 //
 // 用法（App 侧一律带 --json）：
 //   node session-admin.mjs list       --sessions <sessionsDir> [--json]
@@ -23,6 +25,53 @@ import zlib from 'node:zlib';
 import { pathToFileURL } from 'node:url';
 
 const MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
+
+// ── 会话日志文件名：按内核的「代（generation）」规则 ─────────────────────────────
+// 内核（@deepseek-ai/dsh-session-format 的 sessionFormatLogFilename）规定：
+//   v0（历史）→ session.jsonl；v≥1 → session.v<N>.jsonl；压缩（本项目默认）再加 .zstd
+//   例：session.v4.jsonl.zstd（当前内核 session-format-catalog 的 currentVersion = 4）
+//
+// ⚠ 这里曾经**写死** 'session.jsonl.zstd'，只认 v0 名字：内核写的是 session.v4.jsonl.zstd，
+//   existsSync 直接失败 ⇒ 列表恒为空（管理页"一条会话都没有"、删不掉），回收站条目也读不到
+//   标题/大小。维护者 2026-10-13 报障，根因即此（与上游无关：官方 v1.17.3 payload 的
+//   currentVersion 同样是 4）。凡是要找会话日志的地方，都必须走 pickLogFile()。
+const LOG_RE = /^session(?:\.v([1-9][0-9]*))?\.jsonl(\.zstd)?$/;
+
+/**
+ * 在一个会话目录里挑出「当前那一代」的日志文件。
+ * 同一目录里若存在多代（格式迁移的中间态），取**版本最高**的一代；同版本优先 .zstd。
+ * @param {string} dir 会话目录（`<sessions>/<slug>/<session-id>/`）
+ * @returns {string|null} 日志文件绝对路径；没有可用的则 null
+ */
+function pickLogFile(dir) {
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return null; }
+  let best = null, bestV = -1, bestZstd = false;
+  for (const e of entries) {
+    if (!e.isFile()) continue;
+    const m = LOG_RE.exec(e.name);
+    if (m === null) continue;
+    const v = m[1] === undefined ? 0 : Number(m[1]);
+    const zstd = m[2] === '.zstd';
+    if (v > bestV || (v === bestV && zstd && !bestZstd)) {
+      best = path.join(dir, e.name);
+      bestV = v;
+      bestZstd = zstd;
+    }
+  }
+  return best;
+}
+
+/** 读一个会话日志：.zstd 走多帧解；纯文本 .jsonl 直读（内核两种编码都合法）。 */
+function readLog(file) {
+  const buf = fs.readFileSync(file);
+  if (!file.endsWith('.zstd')) {
+    return { text: buf.toString('utf8'), frames: 0, bad: 0, plain: true };
+  }
+  const dec = decodeAll(buf);
+  dec.plain = false;
+  return dec;
+}
 
 /** 多帧 zstd 解（⚠ 不能只用 zstdDecompressSync 解首帧 —— 本项目踩过的坑）。 */
 function decodeAll(buf) {
@@ -99,14 +148,14 @@ function listSessions(sessionsDir) {
     for (const idDir of ids) {
       if (!idDir.isDirectory()) continue;
       const dir = path.join(slugDir, idDir.name);
-      const file = path.join(dir, 'session.jsonl.zstd');
-      if (!fs.existsSync(file)) continue;
+      const file = pickLogFile(dir);          // 按内核的「代」命名取当前那一代（v0/vN 都认）
+      if (file === null) continue;
       let bytes = 0, mtime = 0, title = '', lines = 0, frames = 0, bad = 0;
       try {
         const st = fs.statSync(file);
         bytes = st.size;
         mtime = st.mtimeMs;
-        const dec = decodeAll(fs.readFileSync(file));
+        const dec = readLog(file);
         frames = dec.frames;
         bad = dec.bad;
         lines = dec.text.split('\n').filter((x) => x.trim()).length;
@@ -176,14 +225,14 @@ function listTrash(sessionsDir) {
     const dir = path.join(root, e.name);
     let origin = null;
     try { origin = JSON.parse(fs.readFileSync(path.join(dir, '.origin'), 'utf8')); } catch {}
-    const file = path.join(dir, 'session.jsonl.zstd');
+    const file = pickLogFile(dir);           // 同上：回收站条目也按「代」找
     let title = '', bytes = 0, lines = 0, mtime = 0;
-    if (fs.existsSync(file)) {
+    if (file !== null) {
       try {
         const st = fs.statSync(file);
         bytes = st.size;
         mtime = st.mtimeMs;
-        const dec = decodeAll(fs.readFileSync(file));
+        const dec = readLog(file);
         lines = dec.text.split('\n').filter((x) => x.trim()).length;
         title = titleOf(dec.text);
       } catch {}

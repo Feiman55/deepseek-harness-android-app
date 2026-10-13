@@ -17,13 +17,51 @@
 //
 // 用法：
 //   node session-heal.mjs audit --sessions <sessionsDir> --att-root <attachments/v1 目录> [--json]
-//   node session-heal.mjs heal  --file <session.jsonl.zstd> --att-root <dir> [--apply] [--json] [--reason "…"]
+//   node session-heal.mjs heal  --file <会话日志> --att-root <dir> [--apply] [--json] [--reason "…"]
+//
+// ⚠ 会话日志的文件名由内核按「代」决定（`@deepseek-ai/dsh-session-format` 的
+//   sessionFormatLogFilename）：v0 = `session.jsonl`，v≥1 = `session.v<N>.jsonl`，压缩再加 `.zstd`
+//   （当前内核 currentVersion = 4 ⇒ `session.v4.jsonl.zstd`）。本工具原先**只认 v0 名字**
+//   `session.jsonl.zstd`，于是 audit 在新会话上一条也找不到（维护者 2026-10-13 报障）。
+//   现在统一走 `pickLogFile()`：同一会话目录里取版本最高的一代；两代都认。
+//   另：写路径只支持 zstd 会话（纯文本 .jsonl 直接报错，避免写出编码不一致的文件）。
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { pathToFileURL } from 'node:url';
 
 const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
+
+// ── 会话日志文件名（内核的「代」规则）────────────────────────────────────────────
+// v0 = session.jsonl；v≥1 = session.v<N>.jsonl；压缩加 .zstd（当前内核 currentVersion = 4）。
+// ⚠ 曾经写死 'session.jsonl.zstd' ⇒ 新会话一条都找不到（2026-10-13 报障）。
+const LOG_RE = /^session(?:\.v([1-9][0-9]*))?\.jsonl(\.zstd)?$/;
+
+/**
+ * 在一个会话目录里挑出「当前那一代」的 zstd 日志（取版本最高；同版本优先 .zstd）。
+ * 本工具是**写路径**，只处理 zstd 会话：纯文本 .jsonl 不返回（见文件头注释）。
+ * @returns {string|null}
+ */
+function pickLogFile(dir) {
+	let entries;
+	try {
+		entries = fs.readdirSync(dir, { withFileTypes: true });
+	} catch {
+		return null;
+	}
+	let best = null, bestV = -1;
+	for (const e of entries) {
+		if (!e.isFile()) continue;
+		const m = LOG_RE.exec(e.name);
+		if (m === null || m[2] !== '.zstd') continue;
+		const v = m[1] === undefined ? 0 : Number(m[1]);
+		if (v > bestV) {
+			best = path.join(dir, e.name);
+			bestV = v;
+		}
+	}
+	return best;
+}
 
 // ─────────────────────────── zstd 多帧 ───────────────────────────
 // 内核把会话写成**追加式多帧 zstd**：每次 flush 一帧。实测每帧都落在完整 JSONL 行边界上
@@ -191,10 +229,13 @@ function degradePart(part, verdict) {
 
 /**
  * 体检一个会话文件（只读）。返回坏引用清单 + 结构统计。
- * @param file - session.jsonl.zstd 绝对路径
+ * @param file - 会话日志绝对路径（v0 的 session.jsonl.zstd 或 v≥1 的 session.vN.jsonl.zstd）
  * @param attRoot - attachments/v1 根目录；为空时跳过实体校验（只查引用形态）
  */
 function inspectSession(file, attRoot) {
+	if (!file.endsWith('.zstd')) {
+		throw new Error(`不支持的会话日志（仅支持 .zstd）：${file}`);
+	}
 	const raw = fs.readFileSync(file);
 	const frames = splitFrames(raw);
 	const bad = [];
@@ -248,7 +289,11 @@ function inspectSession(file, attRoot) {
 	};
 }
 
-/** 递归找出所有 session.jsonl.zstd。 */
+/**
+ * 递归找出所有会话日志。
+ * 命名按内核的「代」规则（v0=session.jsonl，v≥1=session.v<N>.jsonl，可带 .zstd）；
+ * **每个会话目录只取版本最高的一代**（迁移中间态可能同时存在两代）。
+ */
 function findSessions(dir) {
 	const out = [];
 	const walk = (d, depth) => {
@@ -260,10 +305,11 @@ function findSessions(dir) {
 			return;
 		}
 		for (const e of entries) {
-			const p = path.join(d, e.name);
-			if (e.isDirectory()) walk(p, depth + 1);
-			else if (e.name === 'session.jsonl.zstd') out.push(p);
+			if (e.isDirectory()) walk(path.join(d, e.name), depth + 1);
 		}
+		// 本目录若就是这个会话目录（含一代日志），取版本最高的那一代
+		const mine = pickLogFile(d);
+		if (mine !== null) out.push(mine);
 	};
 	walk(dir, 0);
 	return out;
@@ -470,6 +516,6 @@ if (!isMain) {
 	emit(r);
 	process.exit(r.ok ? 0 : 3);
 } else {
-	console.error('用法:\n  node session-heal.mjs audit --sessions <dir> --att-root <dir> [--json]\n  node session-heal.mjs heal --file <session.jsonl.zstd> --att-root <dir> [--apply] [--json]');
+	console.error('用法:\n  node session-heal.mjs audit --sessions <dir> --att-root <dir> [--json]\n  node session-heal.mjs heal --file <会话日志：session.vN.jsonl.zstd / session.jsonl.zstd> --att-root <dir> [--apply] [--json]');
 	process.exit(2);
 }
