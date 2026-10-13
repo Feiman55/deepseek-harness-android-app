@@ -1,26 +1,23 @@
 #!/usr/bin/env bash
-# DeepSeek Harness 安卓版 —— 一键复现构建
+# DeepSeek Harness 安卓版 —— 一键复现构建（单一构建路径）
 #
-# 目标：任何人 clone 本仓库后，一条命令构建出可用的 arm64 APK，无需手工准备 devhome。
+#   bash tools/build-apk.sh                      # 构建（首次会装内核 + 取运行时资产，之后走缓存）
+#   bash tools/build-apk.sh --emulator           # 额外适配 x86_64 模拟器（ndk_translation）
+#   bash tools/build-apk.sh --original-look      # 用上游原版图标 + 原版悬浮窗形象
+#   bash tools/build-apk.sh --variant community  # 变体：official | lite | compat | community
+#   bash tools/build-apk.sh --clean              # 清缓存重来（内核缓存也清，会重新联网装）
+#   bash tools/build-apk.sh --out ~/x.apk        # 指定产物路径
 #
-#   bash tools/build-apk.sh                 # 全自动（第一次会下载约 150MB 上游 APK）
-#   bash tools/build-apk.sh --clean         # 清缓存重来
-#   bash tools/build-apk.sh --emulator      # 额外适配 x86_64 模拟器（ndk_translation）
-#   bash tools/build-apk.sh --apk ~/x.apk   # 用本地 APK，不下载
-#
-# 原理：本仓库不含 node 运行时与已打补丁的 DSH 树。这两样是**上游 Release 的 APK**
-# 里的 assets/payload.zip 提供的成品；本脚本把它取出来组装成 build.sh 需要的 devhome。
-# 详见 BUILD.md 与 tools/LOCAL-BUILD.md。
-set -euo pipefail
+# 两个输入都由**官方渠道**取得，且都 pin 住版本：
+#   · 内核树：官方 npm registry 的 @deepseek-ai/dsh@0.2.0-rc.2 + 仓库内冻结 lock
+#             （tools/fetch-kernel.sh，带 .cache/kernel/*.tar 构建缓存）
+#   · 运行时：我们自己的 arm64 运行时资产（tools/fetch-runtime.sh，sha256 pin）
+# 详见 BUILD.md 与 android-app/kernel/README.md。
 
-# ── 可调常量（上游更新时改这里）────────────────────────────────────────────
-UPSTREAM_REPO="woaiys3/deepseek-harness-android-app"
-UPSTREAM_TAG="v1.17.3"
-UPSTREAM_ASSET="DeepSeekHarness-official-${UPSTREAM_TAG}.apk"
-# 发布页公布的 md5；上游改动资产时这里会不匹配，从而拒绝对不上号的包
-UPSTREAM_MD5="1341959ce4e347f8fc5e761966bbf3bd"
-# payload.zip 顶层应有这些目录
-PAYLOAD_TOP="bin dshhome dshroot git npm pnpm python rish runtime"
+# ── 可调常量 ──────────────────────────────────────────────────────────────
+# 内核版本与运行时资产都 pin 在各自脚本里，本脚本不另设版本常量：
+#   · 内核：android-app/kernel/package-lock.json（+ tools/fetch-kernel.sh 的安装参数）
+#   · 运行时：tools/fetch-runtime.sh 顶部的 RUNTIME_TAG / RUNTIME_ASSET / RUNTIME_SHA256_DEFAULT
 # 本地调试密钥的口令（仅本地自签用；正式分发请用 --keystore 指定自己的密钥）
 LOCAL_KEY_PASS="dshandroid"
 LOCAL_KEY_ALIAS="dsh"
@@ -29,9 +26,7 @@ LOCAL_KEY_ALIAS="dsh"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 CACHE="$REPO/.cache"
 OUT="$REPO/android-app/DeepSeekHarness.apk"
-APK_IN=""
 KEYSTORE=""
-UPSTREAM_TAG_OPT=""
 DO_CLEAN=0
 DO_EMULATOR=0
 DO_VERIFY=1
@@ -43,22 +38,16 @@ DO_ORIGINAL_LOOK=0
 OUT_SET=0
 
 usage() {
-  sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
   cat <<'EOF'
 
 选项：
-  --upstream <tag>    指定上游 Release tag（默认见脚本顶部 UPSTREAM_TAG）
-  --apk <path>        用本地 APK（跳过下载与 md5 校验）
-  --md5 <hex>         覆盖期望的 md5
   --variant <name>    变体：official | lite | compat | community
                       （真源 android-app/variants.sh：包名/端口/外部目录/显示名/默认密钥）
   --original-look     用**上游原版形象**构建：桌面图标 = 品牌蓝方块+白鲸鱼（与上游官方 APK
                       同一份矢量），悬浮窗 = 上游那只鲸鱼。默认（不带此参数）仍是我们现在的
                       卡通形象（头像特写图标 + 全身立绘悬浮窗）。
                       产物名会自动加 -original 后缀，避免覆盖卡通包。
-  --kernel <mode>     内核树来源：payload（默认，从上游 APK 的 payload 取）|
-                      official（从官方 npm registry + 仓库内冻结 lock 安装，A2′；
-                      见 android-app/kernel/README.md —— 内核树不再依赖上游 APK）
   --keystore <path>   签名密钥（默认 official/lite/compat 用 .cache 里自动生成的本地调试密钥，
                       community 用仓库内公开的 android-app/community.jks）
   --android-jar <p>   android.jar（默认自动从 Android SDK 里挑）
@@ -88,9 +77,6 @@ mark() {  # $1=阶段名
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --upstream) UPSTREAM_TAG_OPT="${2:?}"; shift 2 ;;
-    --apk)      APK_IN="${2:?}"; shift 2 ;;
-    --md5)      UPSTREAM_MD5="${2:?}"; shift 2 ;;
     --variant)  DSH_VARIANT="${2:?}"; VARIANT_SET=1; shift 2 ;;
     --keystore) KEYSTORE="${2:?}"; shift 2 ;;
     --android-jar) ANDROID_JAR_OPT="${2:?}"; shift 2 ;;
@@ -98,8 +84,6 @@ while [ $# -gt 0 ]; do
     --cache)    CACHE="${2:?}"; shift 2 ;;
     --emulator) DO_EMULATOR=1; shift ;;
     --original-look) DO_ORIGINAL_LOOK=1; shift ;;
-    --runtime)  DSH_RUNTIME_MODE="${2:?}"; shift 2 ;;
-    --kernel)   DSH_KERNEL_MODE="${2:?}"; shift 2 ;;
     --smoke)    DO_SMOKE=1; shift ;;
     --no-verify) DO_VERIFY=0; shift ;;
     --clean)    DO_CLEAN=1; shift ;;
@@ -107,11 +91,6 @@ while [ $# -gt 0 ]; do
     *) die "未知参数：$1（用 --help 看用法）" ;;
   esac
 done
-
-if [ -n "$UPSTREAM_TAG_OPT" ]; then
-  UPSTREAM_TAG="$UPSTREAM_TAG_OPT"
-  UPSTREAM_ASSET="DeepSeekHarness-official-${UPSTREAM_TAG}.apk"
-fi
 
 # ── 变体（B11）：真源 android-app/variants.sh，build.sh 也会 source 同一份 ──
 REPO_VARIANTS="$REPO/android-app/variants.sh"
@@ -133,16 +112,9 @@ else
 fi
 echo "   变体        : $DSH_VARIANT（appId=$V_APP_ID 引擎=$V_PORT 外部目录=$V_EXT_DIR）"
 echo "   外观        : $DSH_LOOK（cartoon=卡通形象｜original=上游原版蓝鲸鱼）"
-# 内核树来源：payload = 上游 APK 的 payload；official = 官方 npm registry 冻结安装（A2′）
-case "${DSH_KERNEL_MODE:-payload}" in
-  payload|official) ;;
-  *) die "未知 --kernel 取值：${DSH_KERNEL_MODE}（只支持 payload | official）" ;;
-esac
-export DSH_KERNEL_MODE="${DSH_KERNEL_MODE:-payload}"
-echo "   内核来源    : $DSH_KERNEL_MODE（$( [ "$DSH_KERNEL_MODE" = official ] && echo '官方 registry + 仓库内冻结 lock（不依赖上游 APK 的 dshroot）' || echo '上游 APK 的 payload' )）"
 
 # ── 0. 预检 ───────────────────────────────────────────────────────────────
-info "0/7 预检环境"
+info "0/6 预检环境"
 
 need() { command -v "$1" >/dev/null 2>&1 || die "缺少 $1${2:+（$2）}"; }
 need curl   "下载上游 APK 用"
@@ -252,165 +224,33 @@ cache_state() {  # $1=路径 $2=名称 $3=附加说明
     printf '   %-14s （无）\n' "$2"
   fi
 }
+RT_ASSET_NAME="$(sed -n 's/^RUNTIME_ASSET="\(.*\)"/\1/p' "$REPO/tools/fetch-runtime.sh" | head -1)"
+RT_SHA_PIN="$(sed -n 's/^RUNTIME_SHA256_DEFAULT="\(.*\)"/\1/p' "$REPO/tools/fetch-runtime.sh" | head -1)"
+RT_ASSET_STAMP="runtime-asset@$(printf '%s' "$RT_SHA_PIN" | cut -c1-16)"
+KERNEL_TAR="$(ls -1 "$CACHE"/kernel/*.tar 2>/dev/null | head -1 || true)"
 echo "缓存状态（$CACHE）："
-if [ -n "$APK_IN" ]; then
-  echo "   上游 APK      使用 --apk 指定的本地文件（跳过下载与 md5 校验）"
-else
-  cache_state "$CACHE/$UPSTREAM_ASSET" "上游 APK"
-fi
-cache_state "$CACHE/payload.zip" "payload.zip" "$([ -f "$CACHE/.payload-from" ] && echo "标记 $(cat "$CACHE/.payload-from")")"
+cache_state "$CACHE/kernel" "内核缓存" "$( [ -n "$KERNEL_TAR" ] && echo "标记 $(basename "$KERNEL_TAR")（命中则离线、不重装）" || echo "（首次构建从官方 registry 安装）" )"
+cache_state "$CACHE/$RT_ASSET_NAME" "运行时资产" "$( [ -f "$CACHE/$RT_ASSET_NAME" ] && echo "sha256 $(printf '%s' "$RT_SHA_PIN" | cut -c1-16)…" )"
 cache_state "$CACHE/devhome" "devhome" "$([ -f "$CACHE/devhome/.assembled-from" ] && echo "标记 $(cat "$CACHE/devhome/.assembled-from")")"
 cache_state "$CACHE/local-debug.jks" "签名密钥"
 echo "   （缓存失效时自动重建；--clean 强制重建，但保留签名密钥）"
 
-# ── 1. 取上游 APK ─────────────────────────────────────────────────────────
+# ── 1. 组装 devhome（build.sh 的输入：arm64 运行时 + profile 脚手架）──────────
+# 内核树**不在这里**：android-app/build.sh 会调 tools/fetch-kernel.sh 从官方 npm registry
+# 按仓库内冻结 lock 安装它（自带 tar 缓存）。本脚本只负责运行时与工具链。
 mark "预检"
-# ── 运行时输入模式（DSH_RUNTIME_MODE）────────────────────────────────────────
-#   payload（默认）：下载上游 APK → 抠出 payload.zip → 组装 devhome（历史路径）
-#   asset（B2）    ：只取**我们自己的** arm64 运行时资产（tools/fetch-runtime.sh），
-#                    完全不碰上游 APK；内核树由 --kernel official 从官方 registry 冻结安装。
-RT_SHA_PIN="$(sed -n 's/^RUNTIME_SHA256_DEFAULT="\(.*\)"/\1/p' "$REPO/tools/fetch-runtime.sh" | head -1)"
-RT_ASSET_STAMP="runtime-asset@$(printf '%s' "$RT_SHA_PIN" | cut -c1-16)"
-echo "   运行时来源  : ${DSH_RUNTIME_MODE:-payload}$( [ "${DSH_RUNTIME_MODE:-payload}" = asset ] && echo "（arm64 运行时资产，不下载上游 APK）" || echo "（上游 APK 的 payload）" )"
-
-if [ "${DSH_RUNTIME_MODE:-payload}" = "asset" ]; then
-  H="$CACHE/devhome"
-  STAMP="$H/.assembled-from"
-  if [ -f "$STAMP" ] && [ "$(cat "$STAMP" 2>/dev/null)" = "$RT_ASSET_STAMP" ]; then
-    echo "   复用缓存（运行时资产 $RT_ASSET_STAMP）—— 跳过解包"
-  else
-    rm -rf "$H"
-    mkdir -p "$H"
-    bash "$REPO/tools/fetch-runtime.sh" "$H" || die "运行时资产获取/解包失败"
-    printf '%s\n' "$RT_ASSET_STAMP" > "$STAMP"
-  fi
-  SRC_APK=""
-  SRC_MD5=""
-  SRC_ID="$RT_ASSET_STAMP"
-  PAYLOAD=""
-  mark "获取运行时资产"
-else
-info "1/7 获取上游 APK（$UPSTREAM_TAG）"
-
-# GitHub 的 release 直链以 github.com 开头。部分地区 github.com 不可达，
-# 但 api.github.com 仍可用 —— 此时可用 API 端点（Accept: application/octet-stream）取资产。
-API_BASE="https://api.github.com/repos/$UPSTREAM_REPO/releases"
-UA="dsh-android-build"
-
-resolve_asset_id() {
-  local json id
-  json="$(curl -sL --fail --max-time 60 -H "User-Agent: $UA" \
-            "$API_BASE/tags/$UPSTREAM_TAG")" || return 1
-  id="$(printf '%s' "$json" | tr '{' '\n' | awk -v want="$UPSTREAM_ASSET" '
-      { id = ""
-        if (match($0, /"id":[0-9]+/)) id = substr($0, RSTART+5, RLENGTH-5)
-        if (index($0, "\"name\":\"" want "\"") && id != "") { print id; exit } }')"
-  [ -n "$id" ] || return 1
-  printf '%s' "$id"
-}
-
-download_apk() {  # $1=目标文件；成功后文件就位。失败返回非零
-  local dest="$1" id
-  # 方式 1：直连 release 直链（大多数地区可用）
-  local direct="https://github.com/$UPSTREAM_REPO/releases/download/$UPSTREAM_TAG/$UPSTREAM_ASSET"
-  echo "   下载（直连）：$direct"
-  if curl -L --fail --retry 2 --retry-delay 2 -C - -o "$dest" "$direct" 2>/dev/null; then
-    return 0
-  fi
-  warn "直连 github.com 失败，改用 GitHub API 端点（api.github.com）"
-  # 方式 2：API 端点 —— 绕过被阻断的 github.com
-  if ! id="$(resolve_asset_id)"; then
-    warn "也无法通过 API 解析资产 id（api.github.com 可能同样不可达）"
-    return 1
-  fi
-  echo "   asset id = $id"
-  if curl -L --fail --retry 5 --retry-delay 3 --retry-all-errors -C - \
-       -H "Accept: application/octet-stream" -H "User-Agent: $UA" \
-       -o "$dest" "$API_BASE/assets/$id"; then
-    return 0
-  fi
-  return 1
-}
-
-if [ -n "$APK_IN" ]; then
-  [ -f "$APK_IN" ] || die "找不到 APK：$APK_IN"
-  SRC_APK="$APK_IN"
-  echo "   使用本地 APK：$SRC_APK"
-else
-  SRC_APK="$CACHE/$UPSTREAM_ASSET"
-  if [ -f "$SRC_APK" ] && [ -n "$UPSTREAM_MD5" ] && \
-     [ "$(file_md5 "$SRC_APK")" = "$UPSTREAM_MD5" ]; then
-    echo "   命中缓存：$SRC_APK"
-  else
-    [ -f "$SRC_APK" ] && { warn "缓存 md5 不符，重新下载"; rm -f "$SRC_APK"; }
-    download_apk "$SRC_APK.part" || die "下载失败（已尝试直连与 GitHub API 两条路）。
-   若是网络原因，可：
-     · 手动下载后 --apk <path>
-     · 重跑本脚本（会从 $SRC_APK.part 断点续传）"
-    mv "$SRC_APK.part" "$SRC_APK"
-  fi
-fi
-
-if [ -n "$UPSTREAM_MD5" ]; then
-  GOT_MD5="$(file_md5 "$SRC_APK")"
-  if [ "$GOT_MD5" != "$UPSTREAM_MD5" ]; then
-    warn "md5 不匹配"
-    warn "  期望：$UPSTREAM_MD5"
-    warn "  实际：$GOT_MD5"
-    die "上游资产可能已变动。确认无误后用 --md5 $GOT_MD5 显式接受，或改用 --apk"
-  fi
-  echo "   md5 校验通过：$GOT_MD5"
-fi
-# 用于判断下游缓存是否还有效（换 APK 必须重新解压/组装）
-SRC_MD5="$(file_md5 "$SRC_APK")"
-SRC_ID="$UPSTREAM_TAG@$SRC_MD5"
-
-# ── 2. 抽出 payload.zip ───────────────────────────────────────────────────
-mark "获取上游 APK"
-info "2/7 从 APK 提取 assets/payload.zip"
-PAYLOAD="$CACHE/payload.zip"
-PAYLOAD_STAMP="$CACHE/.payload-from"
-if [ -f "$PAYLOAD" ] && [ -f "$PAYLOAD_STAMP" ] \
-   && [ "$(cat "$PAYLOAD_STAMP" 2>/dev/null)" = "$SRC_ID" ]; then
-  echo "   复用缓存（来自 $SRC_MD5）"
-else
-  rm -f "$PAYLOAD"
-  unzip -o -q "$SRC_APK" "assets/payload.zip" -d "$CACHE/apkx" || die "APK 里找不到 assets/payload.zip"
-  mv -f "$CACHE/apkx/assets/payload.zip" "$PAYLOAD"
-  rm -rf "$CACHE/apkx"
-  printf '%s\n' "$SRC_ID" > "$PAYLOAD_STAMP"
-  echo "   已提取"
-fi
-echo "   payload.zip：$(du -h "$PAYLOAD" | cut -f1)"
-
-# ── 3. 组装 devhome ───────────────────────────────────────────────────────
-mark "提取 payload.zip"
-info "3/7 组装 devhome（build.sh 需要的 runtime/dshroot/.dsh/rish 等）"
+info "1/3 组装 devhome（arm64 运行时资产 → $CACHE/devhome）"
 H="$CACHE/devhome"
 STAMP="$H/.assembled-from"
-if [ -f "$STAMP" ] && [ "$(cat "$STAMP" 2>/dev/null)" = "$SRC_ID" ]; then
-  echo "   复用缓存（$SRC_ID）—— 跳过 440MB 解压"
+if [ -f "$STAMP" ] && [ "$(cat "$STAMP" 2>/dev/null)" = "$RT_ASSET_STAMP" ]; then
+  echo "   复用缓存（$RT_ASSET_STAMP）—— 跳过解包"
 else
-  rm -rf "$H"; mkdir -p "$H"
-  echo "   解压 payload（约 440MB，稍候）…"
-  unzip -q -o "$PAYLOAD" -d "$H" || die "解压 payload.zip 失败"
-
-  # 顶层结构自检
-  for d in $PAYLOAD_TOP; do
-    [ -e "$H/$d" ] || die "payload 结构异常：缺少 $d/（上游打包方式可能变了）"
-  done
-
-  # 修正 1：payload 里叫 dshhome，build.sh 要的是 .dsh
-  [ -d "$H/dshhome" ] && mv "$H/dshhome" "$H/.dsh"
-  # 修正 2：payload 把 git 主程序放在 bin/git，build.sh 要 git/bin/git
-  if [ -f "$H/bin/git" ] && [ ! -f "$H/git/bin/git" ]; then
-    mkdir -p "$H/git/bin"; mv "$H/bin/git" "$H/git/bin/git"
-  fi
-  printf '%s\n' "$SRC_ID" > "$STAMP"
-  echo "   组装完成：$H"
+  rm -rf "$H"
+  mkdir -p "$H"
+  bash "$REPO/tools/fetch-runtime.sh" "$H" || die "运行时资产获取/解包失败"
+  printf '%s\n' "$RT_ASSET_STAMP" > "$STAMP"
 fi
-
-fi   # ← 结束「运行时输入模式」分支（asset 模式不走上面的 1/7~3/7）
+SRC_ID="$RT_ASSET_STAMP"
 
 # 工具链 env.sh（build.sh 第 7 行 source 它）
 # Windows 路径（C:\a\b）转 Git Bash 形式（/c/a/b）
@@ -439,7 +279,7 @@ fi
 
 # ── 4. 签名密钥 ───────────────────────────────────────────────────────────
 mark "组装 devhome"
-info "4/7 签名密钥"
+info "2/3 签名密钥"
 if [ -z "$KEYSTORE" ] && [ "$DSH_VARIANT" = "community" ]; then
   # 社区版：仓库内公开密钥（口令同样公开，故意如此）——与正式 release.jks 完全无关。
   KEYSTORE="$REPO/android-app/$V_KEY_FILE"
@@ -474,7 +314,7 @@ echo "   指纹：$(keytool -list -v -keystore "$KEYSTORE" -storepass "$KEYSTORE
 
 # ── 5. 构建 ───────────────────────────────────────────────────────────────
 mark "签名密钥"
-info "5/7 构建 APK"
+info "3/3 构建 APK"
 export DSH_DEV_HOME="$H"
 export JAVA_BIN
 export ANDROID_JAR
@@ -482,8 +322,6 @@ export KEYSTORE_PASS KEYSTORE_ALIAS
 export DSH_VARIANT
 # 外观（cartoon | original）：build.sh 据此选图标与悬浮窗资源（见其「外观」段）
 export DSH_LOOK
-# 内核树来源（payload | official）：build.sh 据此决定"从上游 payload 取"还是"官方 registry 冻结安装"
-export DSH_KERNEL_MODE
 # build.sh 默认用 android-app/release.jks；这里指向我们实际选择的密钥
 export DSH_KEYSTORE="$KEYSTORE"
 
@@ -491,7 +329,7 @@ if [ "$DO_EMULATOR" = 1 ]; then
   X64="$CACHE/x64libs"
   if [ ! -f "$X64/libz.so" ]; then
     die "--emulator 需要 x86_64 的 libz.so/libssl.so/libcrypto.so 放在 $X64/
-   （从模拟器取：adb pull /system/lib64/libz.so $X64/ 等三个；详见 tools/LOCAL-BUILD.md 第四节）"
+   （从模拟器取：adb pull /system/lib64/libz.so $X64/ 等三个；详见 BUILD.md 的模拟器一节）"
   fi
   export DSH_X64_BARE_LIBS="$X64"
   # v1.21：模拟器包**不要**写成交付文件名 —— 曾因此把 x86_64 库带进交付 APK，
@@ -525,13 +363,10 @@ echo "   产物：$OUT（$(du -h "$OUT" | cut -f1)）"
 # ── 6. 校验 ───────────────────────────────────────────────────────────────
 mark "构建 APK"
 if [ "$DO_VERIFY" = 1 ]; then
-  if [ "$DO_VERIFY" = 1 ] && [ "${DSH_RUNTIME_MODE:-payload}" = "asset" ]; then
-  # asset 模式没有上游 payload.zip：完整性核对改用**产物自己**的 payload（自洽即可）
+  # 完整性核对对象 = **产物自己**的 assets/payload.zip（自洽即可；不再依赖任何本地缓存树）
   PAYLOAD="$(mktemp)"
   unzip -p "$OUT" assets/payload.zip > "$PAYLOAD" || die "产物里没有 assets/payload.zip"
-  echo "   （asset 模式：完整性核对对象 = 产物自身的 payload.zip）"
-fi
-info "6/7 校验"
+  info "校验"
   FAIL=0
 
   # 6.1 payload 结构
@@ -623,24 +458,19 @@ info "6/7 校验"
 
   [ "$FAIL" = 0 ] || die "校验未通过（见上面的 !! 行）"
 else
-  info "6/7 校验（已用 --no-verify 跳过）"
+  info "校验（已用 --no-verify 跳过）"
 fi
 
 # ── 7. 构建信息 ───────────────────────────────────────────────────────────
 mark "校验"
-info "7/7 记录构建信息"
+info "记录构建信息"
 INFO="$OUT.build-info.txt"
 {
   echo "构建时间        : $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   echo "仓库提交        : $(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo '（非 git 仓库）')"
   echo "分支            : $(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '-')"
-  if [ "${DSH_RUNTIME_MODE:-payload}" = "asset" ]; then
-    echo "运行时来源      : arm64 运行时资产（tools/fetch-runtime.sh，sha256 pin）"
-  else
-    echo "上游 Release    : $UPSTREAM_TAG"
-    echo "上游 APK md5    : $(file_md5 "$SRC_APK")"
-    echo "payload.zip     : $(du -h "$PAYLOAD" | cut -f1)"
-  fi
+  echo "运行时来源      : arm64 运行时资产（tools/fetch-runtime.sh，sha256 pin）"
+  echo "内核来源        : 官方 npm registry + android-app/kernel/package-lock.json（$(sed -n 's/.*"@deepseek-ai\/dsh": "\([^"]*\)".*/\1/p' "$REPO/android-app/kernel/package.json" | head -1)）"
   echo "产物            : $OUT"
   echo "产物大小        : $(du -h "$OUT" | cut -f1)"
   echo "产物 SHA-256    : $(file_sha256 "$OUT")"
@@ -650,7 +480,6 @@ INFO="$OUT.build-info.txt"
   echo "android.jar     : $ANDROID_JAR"
   echo "模拟器适配      : $([ "$DO_EMULATOR" = 1 ] && echo yes || echo no)"
   echo "外观(look)      : $DSH_LOOK（cartoon=卡通形象 / original=上游原版蓝鲸鱼）"
-  echo "内核来源        : $DSH_KERNEL_MODE（payload=上游 APK 的 dshroot / official=官方 registry 冻结安装）"
 } > "$INFO"
 # B6：产物哈希单独落一个 sha256sum 兼容的 sidecar，便于 `sha256sum -c` 核对
 ( cd "$(dirname "$OUT")" && printf '%s  %s\n' "$(file_sha256 "$OUT")" "$(basename "$OUT")" ) > "$OUT.sha256" 2>/dev/null || true

@@ -9,8 +9,14 @@ bash tools/build-apk.sh
 产物：`android-app/DeepSeekHarness.apk`（约 150 MB）
 同时生成 `android-app/DeepSeekHarness.apk.build-info.txt`，记录这次构建的全部来源信息。
 
-首次运行会从 GitHub 下载约 150 MB 的上游 APK 并解压约 440 MB，之后走缓存。
-**从零到出包约 15 分钟。**
+首次运行会做两件事，之后全部走缓存、可离线重复构建：
+
+1. **装内核树**：从官方 npm registry 按仓库内冻结 lock 安装 `@deepseek-ai/dsh@0.2.0-rc.2`
+   （`tools/fetch-kernel.sh`，约 10 秒；装好的树会打成一枚 253 MB 的 tar 缓存在 `.cache/kernel/`）；
+2. **取 arm64 运行时**：下载我们自己的 sha256 pin 资产（`tools/fetch-runtime.sh`，91 MB）
+   并解到 `.cache/devhome`（252 MB）。
+
+**实测：缓存就绪后一条模拟器包 1 分 34 秒**（首次含下载/安装约 3~4 分钟）。**不需要上游 APK。**
 
 ---
 
@@ -20,8 +26,9 @@ bash tools/build-apk.sh
 |---|---|---|
 | **JDK** | 17 及以上（**21 已验证**） | 提供 `javac` / `keytool` / `jar` |
 | **Android SDK** | 含 `build-tools` 与任一 `platforms/android-*` | 提供 `aapt` / `d8` / `zipalign` / `apksigner` / `android.jar` |
-| 常用工具 | `curl` `unzip` `tar` `git` | 一般发行版自带 |
-| 磁盘 | 约 3 GB 空闲 | 缓存 ~1 GB + 中间产物 ~1 GB + 产物 150 MB |
+| **Node.js + npm** | 18+（**24 已验证**） | 装内核树用（`npm ci`）；也用于生成内核清单 |
+| 常用工具 | `curl` `tar` `git` | 一般发行版自带 |
+| 磁盘 | 约 3 GB 空闲 | 缓存 ~1.2 GB + 中间产物 ~1 GB + 产物 150 MB |
 
 安装 SDK 组件（任意平台，需先有 `sdkmanager`）：
 
@@ -33,16 +40,15 @@ export ANDROID_HOME=/path/to/Android/Sdk     # 或 ANDROID_SDK_ROOT
 `ANDROID_HOME` 没设时脚本会自己探测常见位置（Windows 的 `%LOCALAPPDATA%\Android\Sdk`、
 Linux/macOS 的 `~/Android/Sdk`、`~/Library/Android/sdk`）。
 
-### 最小集与"不需要什么"（B2/B3/B4/B10）
+### 最小集与"不需要什么"
 
 - **最小组件集** = JDK 17+ + `build-tools`（aapt/d8/zipalign/apksigner）+ **任意一个** `platforms/android-*/android.jar`。
   本仓库**不用 Gradle、不用 AGP、不碰 Maven 仓库** —— 打包是 `aapt2 + javac + d8 + zipalign + apksigner`
   的直接调用（见 `android-app/build.sh`）。所以"maven.google.com 超时 / AGP 不认 SDK 布局"这类问题
   **在本仓库不存在**；`sdkmanager` 只在下载上面那几个组件时需要联网。
-- **源码获取**：本仓库自身用 tarball / `git clone` 均可。**不需要 clone 上游 DSH**：一键脚本走的是
-  "下载上游 Release APK → 取出里面的 `assets/payload.zip`"这条更短的路（第 3 节）。
-  若所在网络 `github.com` clone 卡死，用 `codeload.github.com` 的 tarball，或直接用 Release 里的 APK
-  （`--apk <路径>`）。
+- **不需要 clone 上游仓库、也不需要上游 APK**：内核来自官方 npm registry（版本由
+  `android-app/kernel/package-lock.json` 冻结，来历见 `android-app/kernel/README.md`），
+  arm64 运行时来自我们自己的 sha256 pin 资产（`tools/fetch-runtime.sh`）。
 - **不要在手机/平板 App 内构建 APK**：设备上没有、也不应该塞进构建工具链（最小集 raw 就 ~525MB，
   加 Gradle/AGP/SDK 要 +1~2GB，加 NDK 更不可行，与 APK 体积模型冲突）。手机上能做的是**运行期定制**
   （装插件 / 改 profile 补丁，见 `docs/开发指南.md` 的「定制面」一节）；要重建 APK 就在 PC 上做，
@@ -53,51 +59,42 @@ Linux、macOS 理论上同样可用，但**仅在 Windows + Git Bash 上实测�
 
 ---
 
-## 2. 它做了什么
+## 2. 它做了什么（v1.25 起只有一条路）
 
 | 步 | 动作 |
 |---|---|
 | 0 | 预检：JDK / SDK / build-tools / android.jar / 磁盘空间，缺什么直接说清楚 |
-| 1 | 下载上游 Release APK，**校验 md5**（与发布页公布值比对，不符即拒绝） || 2 | 从 APK 里取出 `assets/payload.zip` |
-| 3 | 解压组装成 `build.sh` 需要的 **devhome**，并做两处已知的目录修正 |
-| 4 | 准备签名密钥（没有就生成一个本地的） |
-| 5 | 调用 `android-app/build.sh` 完成 7 步打包 |
-| 6 | **校验**：payload 结构、13 个补丁特征串、APK 条目与签名、manifest 关键字段 |
-| 7 | 写出构建信息文件 |
+| 1 | 组装 `devhome`：取 arm64 运行时资产（sha256 pin）解到 `.cache/devhome`，并生成工具链 env |
+| 2 | 准备签名密钥（没有就生成一个本地的） |
+| 3 | 调用 `android-app/build.sh` 打包。**内核树在这一步装**：`tools/fetch-kernel.sh` 从官方 npm |
+| 4 | **校验**：payload 结构、15 个补丁特征串、payload 清单 entries/bytes、APK 条目与签名 |
+| 5 | 写出构建信息文件（含内核来源与运行时 pin） |
 
-### 关键点：devhome 从哪来
+### 内核树与运行时分别从哪来
 
-本仓库**不含** node 运行时，也**不含**打好补丁的 DSH 内核树 —— 这两样体积太大（约 590 MB）。
+本仓库**不含** node 运行时，也**不含**打好补丁的 DSH 内核树 —— 这两样体积太大（约 460 MB）。
 
-它们来自**上游 Release 的 APK**：那个 APK 里的 `assets/payload.zip` 就是维护者已经组装好、
-**13 个 Android 补丁全部打好**的成品。脚本把它取出、做两处目录修正，就得到了 devhome：
+- **内核树**：官方 npm registry 的 `@deepseek-ai/dsh@0.2.0-rc.2` + 仓库内冻结 lock
+  （610 条、全部带 integrity）。安装口径与上游 payload 当年完全一致：
+  `npm ci --os=android --cpu=arm64 --omit=optional --omit=dev --ignore-scripts`。
+  实测与上游 payload 的内核子树**逐包一致（535 包路径+版本相同、0 处版本不同）**。
+- **arm64 运行时**：`runtime/ python/ npm/ pnpm/ git/ bash/ bin/ rish/ .dsh/` 打成一枚
+  sha256 pin 的资产（node 26.4.0，Termux 构建）。官方 primary-runtime 不含 android target，
+  所以这部分只能我们自己维护。
+- **补丁与插件**：`dsh-patches/overlay`（45 个文件）+ `plugins/dsh-tool-*`（10 处同步）
+  + `mobile-patch` 前端补丁，全部在构建期合成到 **staging**，并做 stale / 签名 / 关键字自检。
 
-```
-payload.zip 顶层         →  devhome
-  runtime/                      runtime/        node v26.4.0 + 66 个 .so（arm64）
-  dshroot/                      dshroot/        DSH 内核树（补丁已打）
-  dshhome/                      .dsh/           ← 改名
-  git/  bin/git                 git/bin/git     ← 移动（build.sh 期望的位置）
-  pnpm/ python/ npm/ rish/ bin/ 同名保留
-```
+脚本会在第 4 步核对 15 个补丁特征串，**确认拿到的是已打补丁的树**，而不是空壳。
 
-脚本会在第 6 步核对 13 个补丁特征串，**确认拿到的确实是已打补丁的树**，而不是空壳。
+### 缓存与离线
 
-### 下载有两条路（重要）
+| 缓存 | 位置 | 失效条件 |
+|---|---|---|
+| 内核树 tar（253 MB） | `.cache/kernel/dsh-r1-<lock sha16>.tar` | lock 变更、安装口径版本号 `RECIPE` 变更、`DSH_KERNEL_REFRESH=1`、`--clean` |
+| 运行时资产（91 MB） | `.cache/dsh-android-runtime-arm64.tar.gz` | sha256 与 pin 不符（会自动重下；也可用 `DSH_RUNTIME_ARCHIVE=<文件>` 指定本地归档） |
+| 解出的 devhome（252 MB） | `.cache/devhome` | 资产 pin 变更、`--clean` |
 
-GitHub 的 release 直链以 `github.com` 开头。**部分地区 `github.com` 不可达，但
-`api.github.com` 仍可用** —— 此时脚本会自动回退：
-
-1. **直连**：`github.com/<repo>/releases/download/<tag>/<asset>`
-2. **回退到 API**：查 `api.github.com/.../releases/tags/<tag>` 拿到 asset id，
-   再用 `Accept: application/octet-stream` 从 API 端点下载（会 302 到
-   `release-assets.githubusercontent.com`）
-
-两条路都支持断点续传（`-C -`），中断后重跑会接着下，不会从零开始。
-两条都失败时，用 `--apk <已下载的文件>` 直接喂进去即可。
-
-> 实测（本项目所在网络，GitHub 直连被阻断）：第 1 条超时 → 自动走第 2 条，
-> 以约 4.7 MB/s 下完 149.5 MB，md5 校验通过。
+`--clean` 会清掉以上缓存（**保留签名密钥**），下一次构建重新联网安装/下载。
 
 ---
 
@@ -108,8 +105,8 @@ bash tools/build-apk.sh                      # 全自动（推荐，= official �
 bash tools/build-apk.sh --variant community  # 社区版：公开密钥签名，可与官方三个变体共存
 bash tools/build-apk.sh --variant lite       # Lite 共存版（包名 .beta / 端口 3082）
 bash tools/build-apk.sh --clean              # 清缓存重建（保留签名密钥）
-bash tools/build-apk.sh --apk ~/x.apk        # 用本地 APK，不下载
-bash tools/build-apk.sh --upstream v1.17.4 --md5 <hex>   # 换上游版本
+bash tools/build-apk.sh --emulator           # 适配 x86_64 模拟器
+bash tools/build-apk.sh --original-look      # 上游原版图标 + 原版悬浮窗形象
 bash tools/build-apk.sh --keystore my.jks    # 用你自己的密钥（需 export KEYSTORE_PASS）
 bash tools/build-apk.sh --out /tmp/a.apk     # 指定产物路径
 bash tools/build-apk.sh --no-verify          # 跳过校验（调试用）
@@ -128,33 +125,16 @@ bash tools/build-apk.sh --help
 > **装哪个就是哪套形象**（互相覆盖）；实现是构建期换资源引用，运行期零分支（见 `android-app/build.sh`
 > 的「外观」段与 `res/values/look.xml`）。
 
-> **构建输入来源（v1.25 起可完全脱离上游 APK）**：
-
-| 输入 | 参数 | 来源 |
-|---|---|---|
-| 内核树 | `--kernel official` | **官方 npm registry** + 仓库内冻结 lock（`android-app/kernel/package-lock.json`，由 `tools/fetch-kernel.sh` 安装）。来历与实测见 `android-app/kernel/README.md` |
-| arm64 运行时 | `--runtime asset` | **我们自己的 sha256 pin 资产**（`tools/fetch-runtime.sh`：node/python/npm/pnpm/git/bash/rish + profile 脚手架）|
-| 两者都不带（默认）| — | 上游 Release APK 的 payload（历史路径，过渡期保留）|
-
-```bash
-# 不依赖上游 APK 的可复现构建（内核来自官方 registry、运行时来自我们 pin 的资产）
-bash tools/build-apk.sh --variant community --kernel official --runtime asset
-```
-
-> 实测：该模式 **1 分 33 秒**出包（旧路 4~5 分钟，且要下载/解压 150 MB 上游 APK），产物与旧路的
-> 有效差异只有我们有意新增的部分（内核 535 包路径+版本逐一致、0 版本不同）。运行时可用
-> `DSH_RUNTIME_ARCHIVE=<文件>` 指定本地归档（离线构建）；资产发布后 `tools/fetch-runtime.sh`
-> 会按 pin 的 URL + sha256 自动下载并校验。
 
 > **脚本目录**（都在仓库里，路径由脚本自身位置推导，可在任意克隆 / 工作区里跑）：
 
 | 位置 | 用途 |
 |---|---|
 | `tools/build-apk.sh` | **一键构建**（官方入口，上面这些选项都在这里）|
-| `tools/build/` | 本地构建入口：`build-arm64.sh`（真机）/ `build-local.sh`（模拟器 x86_64）/ `build-all.sh`（依次三变体）|
+| `tools/build-apk.sh` | 唯一构建入口（`--variant` / `--emulator` / `--original-look` / `--clean`）|
 | `tools/diag/` | 诊断工具（多数是 `#!/system/bin/sh`，**在设备上跑**）：`check-abi.sh` 交付前 ABI 门（真机包 `x86_64` 必须为 0）· `refresh-overlay-lf.sh` 把 overlay 刷成字节级一致 + 纯 LF · `emu-guestlibs.sh` 给 x86_64 模拟器补 arm64 soname 库 · `find-engine.sh` / `find-engine-env.sh` 找引擎进程与关键 env · `plugin-cli.sh` 以 App 身份跑 DSH CLI · `probe-profile.sh` 复刻 loader 的插件解析视角 · `dump-cfg.sh` / `cfg-stats.sh` 看实际生效的 profile 配置 · `check-shell-env.sh` 看终端默认 shell 来源 · `bench-boot.sh` / `bench-phases.sh` 启动耗时基准 |
 
-> ⚠ `.cache/` 只是**缓存目录**（上游 APK、devhome、本地调试密钥），**不放脚本** ——
+> ⚠ `.cache/` 只是**缓存目录**（内核 tar、运行时资产、devhome、本地调试密钥），**不放脚本** ——
 > 构建与诊断一律用上表里的脚本。
 
 > **变体（v1.18）**：包名 / 端口 / 外部目录 / 显示名 / 默认密钥全部由 `android-app/variants.sh`
@@ -202,11 +182,11 @@ bash tools/build-apk.sh --keystore /secure/path/release.jks
 | `找不到 Android SDK` | 设 `ANDROID_HOME`；或 `--android-jar` 直接给 `android.jar` |
 | `SDK 里没有 build-tools` | `sdkmanager "build-tools;35.0.0"` |
 | `本机没有已验证的 build-tools 35.0.0，改用 X` | 只是提示。装 35.0.0 可让产物与文档记录一致 |
-| `md5 不匹配` | 上游资产变了（或换了 tag）。确认无误后 `--md5 <实际值>` 显式接受 |
-| 下载卡住 / `Failed to connect to github.com` | 直连被阻断。脚本会自动回退到 API 端点；两条都不通用 `--apk <本地文件>` |
+| `运行时资产 sha256 不符` | 资产被替换或下载损坏。确认无误后 `DSH_RUNTIME_SHA256=<实际值>` 显式接受并更新 pin |
+| 下载卡住 / `Failed to connect to github.com` | 用 `DSH_RUNTIME_ARCHIVE=<本地归档>` 走离线；内核侧可用 `NPM_CONFIG_REGISTRY=<镜像>` |
 | `keystore password was incorrect` | `android-app/release.jks` 是别人/别的口令留下的。删掉它，或用 `--keystore` 指定自己的 |
 | 安装报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE` | 与已装版本签名不同。先卸载：`adb uninstall com.deepseek.harness` |
-| 装上了但引擎起不来 | App 内「日志」页看 `dsh-web.log`；或见 [tools/LOCAL-BUILD.md](LOCAL-BUILD.md) |
+| 装上了但引擎起不来 | App 内「日志」页看 `dsh-web.log`；构建期可先跑 `tools/diag/` 下的诊断脚本 |
 | 模拟器上 node 报 `CANNOT LINK ... EM_AARCH64` 或 `libz.so.1 not found` | 见第 6 节 |
 | 构建脚本报 `找不到 javac` | 设 `JAVA_HOME`，或把 `$JAVA_HOME/bin` 放\进 `PATH` |
 | **构建很慢（Windows 上 8~10 分钟）** | 见下方说明 —— 是杀软实时扫描，不是脚本问题 |
@@ -218,8 +198,8 @@ bash tools/build-apk.sh --keystore /secure/path/release.jks
 ```
 各阶段耗时：
    预检                         7 秒
-   获取上游 APK               1 秒
-   提取 payload.zip             0 秒
+   取运行时资产（缓存命中）   0 秒
+   装内核树（tar 缓存命中）   13 秒
    组装 devhome                 0 秒
    签名密钥                   1 秒
    构建 APK                    62 秒     ← 正常情况下全部时间在这里
@@ -291,7 +271,7 @@ Linux / CI 上没有这个问题，构建同样在 **1 分钟出头**量级。
    并跑 `node -v` 自检。**为什么不能靠 `LD_LIBRARY_PATH`**：实测把同名实体文件放进 LD 路径依然报
    `libz.so.1 not found`，guest 链接器只搜那个目录；真机 arm64 完全不需要这些。
 
-完整步骤与原理见 [tools/LOCAL-BUILD.md 第四节](LOCAL-BUILD.md)。构建时加 `--emulator`
+构建时加 `--emulator`
 会自动带上需要的开关（`DSH_X64_BARE_LIBS`），但你仍需自备
 `x86_64` 的 `libz.so`/`libssl.so`/`libcrypto.so`（从模拟器 `/system/lib64/` 取）。
 
@@ -327,7 +307,7 @@ python tools/gen-icons.py        # 需要 Pillow
 
 | 没有 | 为什么 / 从哪来 |
 |---|---|
-| node 运行时（`runtime/`） | 体积大；由 `tools/build-apk.sh` 从上游 APK 提取 |
+| node 运行时（`runtime/`） | 体积大；由 `tools/build-apk.sh` 从我们 pin 的运行时资产解出 |
 | DSH 内核树（`dshroot/`） | 同上（且补丁已在内） |
 | `android.jar` | Google SDK 许可范围；从本地 Android SDK 取 |
 | 签名密钥 | 安全；本地生成或自备 |
@@ -366,7 +346,7 @@ UPSTREAM_MD5="<新包 md5，发布页公布值>"
 
 | 想看什么 | 去哪 |
 |---|---|
-| 本机构建的完整技术记录、模拟器实测全过程 | [tools/LOCAL-BUILD.md](LOCAL-BUILD.md) |
+| 内核树来源与实测对照 | [android-app/kernel/README.md](android-app/kernel/README.md) |
 | 各补丁解决了什么问题 | [CHANGES.md](CHANGES.md) |
 | 开发环境结构、真机/模拟器调试 | [docs/开发指南.md](docs/开发指南.md) |
 | 贡献方式 | [CONTRIBUTING.md](CONTRIBUTING.md) |

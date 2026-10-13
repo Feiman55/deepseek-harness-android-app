@@ -43,14 +43,18 @@ fi
 echo "== 0/7 组装 payload =="
 # v1.19.0 硬闸门：payload 里的 JSON/YAML 绝不能带 UTF-8 BOM ——
 # node 的 JSON.parse 会因为 BOM 直接抛 SyntaxError，表现为"引擎起不来"（真机实锤过一次）。
-BOMHIT=$(find "$H/dshroot" "$H/.dsh" \( -name '*.json' -o -name '*.yml' -o -name '*.yaml' \) -type f 2>/dev/null \
-  | xargs -r grep -l $'^\xEF\xBB\xBF' 2>/dev/null | head -5)
-if [ -n "$BOMHIT" ]; then
-  echo "!! 以下文件带 UTF-8 BOM，会让引擎解析失败（请用无 BOM 的 UTF-8 重写）："
-  echo "$BOMHIT"
-  exit 1
-fi
-echo "  BOM 闸门：payload 内 JSON/YAML 无 BOM ✓"
+# v1.25：改为检查**真正进包的 staging 树**（以前查 devhome 的 dshroot，而它现在只有运行时，
+# 没有 dshroot；查 staging 才是"进包内容"的事实）。调用点在 staging 组装完成之后。
+bom_gate() {
+  _hit=$(find "$P/staging/dshroot" "$P/staging/dshhome" \( -name '*.json' -o -name '*.yml' -o -name '*.yaml' \) -type f 2>/dev/null \
+    | xargs -r grep -l $'^\xEF\xBB\xBF' 2>/dev/null | head -5)
+  if [ -n "$_hit" ]; then
+    echo "!! 以下文件带 UTF-8 BOM，会让引擎解析失败（请用无 BOM 的 UTF-8 重写）："
+    echo "$_hit"
+    exit 1
+  fi
+  echo "  BOM 闸门：staging 内 JSON/YAML 无 BOM ✓"
+}
 # 注意：前端补丁（mobile-patch/inject.sh）**不在这里**打 —— 它必须打在真正进包的 staging 上，
 # 见下面「补丁层」之后的「前端补丁」段（v1.24 改动：以前打在上游 payload 的 devhome 上，
 # 那既让构建变成"有状态"，也在 asset 内核/运行时模式下直接失效）。
@@ -178,8 +182,7 @@ if [ -n "$DSH_X64_BARE_LIBS" ]; then
   #       ".../payload/runtime/lib/libz.so" is for EM_X86_64 (62) instead of EM_AARCH64 (183)
   #   而 payload 同步是"已存在文件不覆盖"，换 APK 也修不回来（只能卸载重装）。
   #   给真机构建时**不要**设置 DSH_X64_BARE_LIBS：
-  #     · tools/build-apk.sh 默认不设（只有 --emulator 才设）
-  #     · tools/build/build-local.sh 是本地**模拟器**入口，它设了 → 真机请用 tools/build/build-arm64.sh
+  #     · tools/build-apk.sh 默认不设；只有显式 `--emulator` 才设
   echo "⚠⚠ 正在使用模拟器(x86_64)适配构建：DSH_X64_BARE_LIBS=$DSH_X64_BARE_LIBS" >&2
   echo "⚠⚠ 这个 APK 不要装到真机 arm64（node 的 OpenSSL 会 dlopen 失败并直接崩溃）" >&2
   for _l in libz.so libssl.so libcrypto.so; do
@@ -202,53 +205,24 @@ if [ -n "$DSH_X64_BARE_LIBS" ]; then
 fi
 
 mkdir -p "$P/staging/dshroot/lib"
-# ── 内核树的来源（DSH_KERNEL_MODE）────────────────────────────────────────────
-#   payload （默认，过渡期保留）：从上游 APK 的 payload（$H/dshroot）取
-#   official（A2′）：用 tools/fetch-kernel.sh 从**官方 npm registry + 仓库内冻结 lock** 安装
-#                     （来历与实测数据见 android-app/kernel/README.md）
-# 两条路都会在下面叠加 dsh-patches/overlay 补丁层（官方包是干净的，必须叠加）。
-KERNEL_MODE="${DSH_KERNEL_MODE:-payload}"
-case "$KERNEL_MODE" in
-payload)
-# 排除项（B7 体积优化；实测 dshroot 树里这些占 ~76MB / ~12000 个文件）：
-#   1) dsh 的 node_modules/.bin（原脚本即排除）
-#   2) dsh/node_modules/@deepseek-ai/dsh —— 开发树里被误造的「dsh 自我递归嵌套」
-#      （实测 632 层、路径约 19000 字符）。tar 的 --exclude 会在深入前跳过它，
-#      构建产物不需要它，复制耗时也从「卡死」降到数分钟。
-#   3) *.map / *.d.ts / *.d.mts / *.d.cts —— sourcemap 与 TypeScript 类型声明，运行时（纯 JS）不需要
-#   4) __pycache__ / *.pyc —— Python 字节码缓存，python 运行时按需自己生成
-# ⚠ **不要**一刀切排除 *.md：dsh-agent-preset/skills/**/SKILL.md 与 skill 模板是运行时真读的，
-#    排掉会打断技能目录（收益也只有 ~8MB，不值）。
+# ── 内核树（v1.25：唯一来源 = 官方 npm registry + 仓库内冻结 lock）──────────────
+# 由 tools/fetch-kernel.sh 安装（A2′，来历与实测见 android-app/kernel/README.md）；
+# 该脚本自带构建缓存：第二次起直接从 .cache/kernel/*.tar 解出，不联网、不重装。
+# 官方包是「干净」的，所以下面必须叠加 dsh-patches/overlay 补丁层。
+KERNEL_SCRIPT="$P/../tools/fetch-kernel.sh"
+[ -f "$KERNEL_SCRIPT" ] || { echo "!! 缺 tools/fetch-kernel.sh（内核树由它安装）"; exit 1; }
+bash "$KERNEL_SCRIPT" "$P/staging/dshroot/lib" || { echo "!! 内核冻结安装失败"; exit 1; }
+# 体积裁剪（B7；与旧 payload 路径的 tar --exclude 等价，实测省 ~76MB / ~12000 文件）：
+#   1) node_modules/.bin —— 命令 shim（含 Windows 的 .cmd/.ps1），运行时不需要
+#   2) *.map / *.d.ts / *.d.mts / *.d.cts —— sourcemap 与 TypeScript 类型声明，纯 JS 运行时不需要
+#   3) __pycache__ / *.pyc —— Python 字节码缓存，运行时按需自己生成
+# ⚠ **不要**一刀切排除 *.md：dsh-agent-preset/skills/**/SKILL.md 与 skill 模板是运行时真读的。
 # ⚠ 也不要排除 licenses —— MIT/Apache 分发要求随附声明。
-# ⚠ 不要在这里改用 robocopy：它遇到那棵病态目录会不返回（实测挂住）或报错 16。
-( cd "$H/dshroot/lib" && tar cf - \
-    --exclude='./node_modules/@deepseek-ai/dsh/node_modules/.bin' \
-    --exclude='./node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh' \
-    --exclude='*.map' \
-    --exclude='*.d.ts' \
-    --exclude='*.d.mts' \
-    --exclude='*.d.cts' \
-    --exclude='__pycache__' \
-    --exclude='*.pyc' \
-    . ) \
-  | ( cd "$P/staging/dshroot/lib" && tar xf - )
-  echo "  内核树: payload（$H/dshroot/lib）"
-  ;;
-official)
-  KERNEL_SCRIPT="$P/../tools/fetch-kernel.sh"
-  [ -f "$KERNEL_SCRIPT" ] || { echo "!! official 内核模式需要 tools/fetch-kernel.sh"; exit 1; }
-  bash "$KERNEL_SCRIPT" "$P/staging/dshroot/lib" || { echo "!! 内核冻结安装失败"; exit 1; }
-  # 与 payload 路径同样的体积裁剪（npm 包里的 sourcemap/类型声明/Windows 命令 shim 对运行时无用）
-  find "$P/staging/dshroot/lib" -name '.bin' -type d -prune -exec rm -rf {} + 2>/dev/null || true
-  find "$P/staging/dshroot/lib" \
-      \( -name '*.map' -o -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' \
-         -o -name '__pycache__' -o -name '*.pyc' \) -exec rm -rf {} + 2>/dev/null || true
-  echo "  内核树: official（官方 registry 冻结安装）"
-  ;;
-*)
-  echo "!! 未知 DSH_KERNEL_MODE=$KERNEL_MODE（只支持 payload | official）"; exit 1
-  ;;
-esac
+find "$P/staging/dshroot/lib" -name '.bin' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+find "$P/staging/dshroot/lib" \
+    \( -name '*.map' -o -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' \
+       -o -name '__pycache__' -o -name '*.pyc' \) -exec rm -rf {} + 2>/dev/null || true
+echo "  内核树: 官方 registry 冻结安装 + 体积裁剪"
 
 # ============================================================================
 # 补丁层：dsh-patches/overlay 覆盖到 staging（**构建期必做**）
@@ -432,6 +406,8 @@ fi
 #   而且 cp -L 后没有执行位 —— 第一版就是这么静默跳过、包出来了却没有清单）。
 MANIFEST_GEN="$P/tools/manifest-gen.mjs"
 [ -f "$MANIFEST_GEN" ] || { echo "!! 缺 tools/manifest-gen.mjs（应在 android-app/tools/ 下），中止构建"; exit 1; }
+# BOM 闸门：到这一步 staging 的 dshroot/dshhome 都已组装完（含插件与前端补丁），检查最终形态
+bom_gate
 HOST_NODE="$(command -v node 2>/dev/null || true)"
 if [ -n "$HOST_NODE" ]; then
   # 直接传 /d/... 形式的路径：Git Bash(MSYS) 会自动转成 Windows 形式给 node.exe（实测可行）；
@@ -476,7 +452,7 @@ echo "  会话管理脚本闸门：$ALINES 行 ✓（assets/session-admin.mjs）
 
 
 # ── payload/bin/bash ───────────────────────────────────────────────────────────
-# v1.20：**优先用真 bash**（由 tools/fetch-bash.py 取到 $H/bash/bin/bash）。
+# v1.20：**优先用真 bash**（arm64 运行时资产自带 `bash/bin/bash`，随 tools/fetch-runtime.sh 解出）。
 # 为什么必须真 bash：DSH 内置终端是这样起 shell 的 ——
 #     bash --rcfile /data/.../cache/tmp/dsh-shell-XXXX/bashrc -i
 # 那份 bashrc 是**纯 bash 语法**（BASH_VERSINFO / PROMPT_COMMAND / declare -p / 数组 / $'…'），
@@ -542,7 +518,7 @@ exec /system/bin/sh "$@"
 EOF
   chmod +x "$P/staging/bin/bash"
   echo "  !! 未找到 \$H/bash/bin/bash，payload/bin/bash 用 mksh 回退包装"
-  echo "     （跑 python tools/fetch-bash.py 可取到真 bash；见 CHANGES「终端」一节）"
+  echo "     （arm64 运行时资产本应自带 bash/bin/bash；若缺，检查 tools/fetch-runtime.sh 解出的内容）"
 fi
 # 内置 pnpm（v1.15.3）：插件管理的「添加插件」全程 pnpm add，而 payload 原本不带 pnpm → 退出码 127，
 # 三种输入（本地目录 / 包名 / GitHub 地址）全装不上。这里把 pnpm 的纯 JS bundle 一起打进 payload：
@@ -876,6 +852,7 @@ else
   echo "  !! 未找到 skills/（内置技能将不可用）"; exit 1
 fi
 
+# profile 脚手架（dshhome）：来源 = arm64 运行时资产里的 `.dsh/`（tools/fetch-runtime.sh 解到 $H）
 cp "$H/.dsh/cordis.patch.yml" "$P/staging/dshhome/"
 cp "$H/.dsh/profiles/web/cordis.patch.yml" "$P/staging/dshhome/profiles/web/"
 cp "$H/.dsh/profiles/web/cordis.yml" "$P/staging/dshhome/profiles/web/"

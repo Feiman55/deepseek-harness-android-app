@@ -32,7 +32,7 @@ import java.util.Set;
 
 public final class KernelSelfCheck {
 
-    /** 清单资产名（构建期由 tools/manifest-gen.mjs 生成）。 */
+    /** 清单资产名（构建期由 android-app/tools/manifest-gen.mjs 生成）。 */
     public static final String MANIFEST_ASSET = "kernel-manifest.tsv";
 
     /** 一次自检的结果。 */

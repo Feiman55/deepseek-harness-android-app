@@ -24,7 +24,6 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$1"
 MODE="${2:-dir}"
 OVERLAY="$REPO/dsh-patches/overlay/lib/node_modules/node-pty"
-DEVHOME="$REPO/.cache/devhome/dshroot/lib/node_modules/node-pty"
 TMP="$REPO/.cache/node-pty-incoming"
 
 [ -n "$SRC" ] || { echo "用法：sh tools/install-node-pty.sh <node-pty 目录|tgz> [dir|tar]" >&2; exit 1; }
@@ -59,18 +58,19 @@ if [ -z "$BIN" ]; then
 fi
 echo "== 原生产物：${BIN#$PKG/}（$(wc -c < "$BIN") B）=="
 
-# 装进仓库 overlay（替换纯 JS 替身）与构建输入 devhome
-for DST in "$OVERLAY" "$DEVHOME"; do
-  rm -rf "$DST"
-  mkdir -p "$(dirname "$DST")"
-  cp -r "$PKG" "$DST"
-  echo "== 已安装到 $DST =="
-done
+# 只装进仓库 overlay —— 构建期由 android-app/build.sh 的「node-pty 嵌套覆盖」段复制到
+# 真正被解析到的位置（…/@deepseek-ai/dsh/node_modules/node-pty），并自检 ELF=AArch64。
+# v1.25：不再写 devhome —— 它现在只有运行时（内核树由 tools/fetch-kernel.sh 安装），
+# 往里写 dshroot 只会让人误以为"装了却没生效"。
+rm -rf "$OVERLAY"
+mkdir -p "$(dirname "$OVERLAY")"
+cp -r "$PKG" "$OVERLAY"
+echo "== 已安装到 $OVERLAY =="
 
 cat <<'EOF'
 
 下一步：
-  1) 重建社区版：bash tools/build/build-local.sh community    （tools/build-apk.sh --variant community）
+  1) 重建：bash tools/build-apk.sh --variant community   （构建期自动嵌套覆盖 + AArch64 自检）
   2) 设备上启动引擎（会走 dshroot-add 把新文件补上），再试「新建终端」
-  3) 提交：git add dsh-patches && git commit -m "feat(terminal): 打包原生 node-pty（Termux 构建，ABI 147）"
+  3) 提交：git add dsh-patches && git commit -m "feat(terminal): 打包原生 node-pty（Termux 构建）"
 EOF

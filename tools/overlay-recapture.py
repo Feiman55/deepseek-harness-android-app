@@ -40,13 +40,15 @@ import sys
 import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_TREE = os.path.join(REPO, ".cache", "devhome", "dshroot", "lib")
+# v1.25：默认对照上一次构建的 staging 内核树（devhome 现在只有运行时，没有 dshroot）。
+# 想要干净基线：bash tools/fetch-kernel.sh .cache/kernel-tree 后 --tree .cache/kernel-tree
+DEFAULT_TREE = os.path.join(REPO, "android-app", "staging", "dshroot", "lib")
 DEFAULT_OVERLAY = os.path.join(REPO, "dsh-patches", "overlay", "lib")
 
 # 我们改过、但历史 overlay 里没有对应文件的路径（相对 overlay/lib）。
 # 新增补丁后往这里加一行；路径必须相对内核树的 lib/。
 #
-# ⚠ v1.25 更新：内核树现在可以来自**官方 npm 包**（`--kernel official`，见
+# ⚠ v1.25 更新：内核树现在来自**官方 npm 包**（`tools/fetch-kernel.sh`，见
 #   android-app/kernel/README.md），那份干净树就是"上游基线" —— 下面这些路径正是
 #   与官方 npm 树逐字节不同的 13 个补丁文件（2026-10-14 探针实测）。
 #   维护建议：改内核补丁后，用 `tools/fetch-kernel.sh` 装一份官方树，与之 diff，
@@ -129,7 +131,7 @@ def main() -> int:
         return 0
 
     if not os.path.isdir(args.tree):
-        print(f"!! 找不到内核树 {args.tree}（先跑一次构建，或指定 --tree）", file=sys.stderr)
+        print(f"!! 找不到内核树 {args.tree}（先跑一次构建，或用 bash tools/fetch-kernel.sh .cache/kernel-tree 取干净基线后 --tree 指定）", file=sys.stderr)
         return 1
     if not os.path.isdir(args.overlay):
         print(f"!! 找不到 overlay {args.overlay}", file=sys.stderr)

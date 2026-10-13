@@ -121,5 +121,5 @@ bash tools/build-apk.sh --variant official|lite|compat
 
 - 端口与变体：`android-app/variants.sh`、`docs/开发指南.md`（端口一览）
 - 定制存活面：`docs/开发指南.md`（"定制面：哪些改动能活下来"）
-- 构建：`BUILD.md`、`tools/LOCAL-BUILD.md`
+- 构建：`BUILD.md`
 - 内核补丁：`dsh-patches/README.md`

@@ -5806,7 +5806,7 @@ public class MainActivity extends Activity {
         //   Terminal error: subprocess-local: command ".../com.termux/.../bash" is not an executable file
         // （DSH 官方 Android 形态是"装在 Termux 里跑"，所以那个默认值对它是对的。）
         // v1.20：payload 自带的 bash 已换成**真 bash**（GNU bash 5.3.20，Termux 构建，
-        //        见 tools/fetch-bash.py）——DSH 终端会用
+        //        真 bash 由 arm64 运行时资产随包提供）——DSH 终端会用
         //        `bash --rcfile <生成的 bashrc> -i` 起 shell，那份 rc 是纯 bash 语法，
         //        mksh 跑不了（旧版就是 /system/bin/sh 的包装，会报 --rcfile 未知选项）。
         env.put("SHELL", new File(bin, "bash").getAbsolutePath());

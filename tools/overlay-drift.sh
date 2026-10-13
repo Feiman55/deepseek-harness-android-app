@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# overlay 漂移体检：overlay 里每个文件，在**当前 devhome 内核树**里是否存在、是否一致。
+# overlay 漂移体检：overlay 里每个文件，在**目标内核树**里是否存在、是否一致。
+# v1.25：默认对照上一次构建的 staging 树（= 真正进包的那棵树）。
+#   想要「干净基线」对照，先解一份未打补丁的官方内核：
+#     bash tools/fetch-kernel.sh .cache/kernel-tree
+#     bash tools/overlay-drift.sh .cache/kernel-tree   # 此时「不同」才说明补丁真的改了东西
 # 判定：
 #   LOADED-IDENTICAL  路径存在且内容相同（补丁已在树里，且名字对得上）
 #   LOADED-DIFF       路径存在但内容不同（补丁未生效 / 树里是上游版本）
@@ -7,10 +11,10 @@
 set -u
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 OV="$REPO/dsh-patches/overlay/lib"
-TREE="${1:-$REPO/.cache/devhome/dshroot/lib}"
+TREE="${1:-$REPO/android-app/staging/dshroot/lib}"
 
 [ -d "$OV" ] || { echo "找不到 $OV"; exit 1; }
-[ -d "$TREE" ] || { echo "找不到内核树 $TREE"; exit 1; }
+[ -d "$TREE" ] || { echo "找不到内核树 $TREE（先跑一次构建，或 bash tools/fetch-kernel.sh .cache/kernel-tree 拿干净基线）"; exit 1; }
 
 ident=0; diff=0; stale=0
 stale_list=""; diff_list=""

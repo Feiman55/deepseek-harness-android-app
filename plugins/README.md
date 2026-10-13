@@ -59,11 +59,14 @@
 | accessibility / android / shizuku / vscreen 在**上游 v1.17.3 的 payload 里就有** | 实测 pristine payload 的 `dshroot/lib/node_modules/@deepseek-ai/` 下这 4 个目录各 4 条目 |
 | 这 5 个包都**不属于 DSH 官方内核** | 官方 `deepseek-ai/deepseek-harness @ dsh-v0.2.0-rc.2` 的 338 个 `@deepseek-ai/*` 包里，`dsh-tool-*` 一族只有 ask-user / bash / fs / web / terminal / todo 等 24 个，android / shizuku / accessibility / vscreen / browser 一个都没有；npm 上 `@deepseek-ai/dsh-tool-browser` 也是 404 |
 | 上游最新 Release 是 **v1.19.0**（2026-10-05），本仓库 pin 的 payload 是 **v1.17.3**（2026-10-03） | GitHub Releases API 实测 |
+| 本仓库在上游实现上做过**改进与补充**（不是纯副本） | 例：`dsh-tool-android` 的 v1.24 气泡补丁（`android-app/build.sh` 的「插件同步」自检标记）；`CHANGES.md` 里历次插件侧改动 |
 
 **维护不变量**：`plugins/` 是这些插件在**本仓库的事实标准**——构建（`android-app/build.sh` 的
 「插件同步」段）会用 `plugins/dsh-tool-*` 覆盖内核树里同名包（hoisted 与 dsh 内嵌套两处）。
 因此上游再更新这些插件时，必须重新同步进 `plugins/`；否则构建出来的包仍是本目录里的旧副本。
 
 > 说明：上文第 1 节「本项目给 DeepSeek Harness 增加的**两个** Android 专属能力插件」是早期说法
-> （本项目早期是独立 Android 构建，后来转为跟随上游源码按版本同步）。就目前能核对到的证据，
-> 无法区分"哪些是本项目原创、哪些是上游原创、哪些是两边都有"；**以本节的实测事实为准**。
+> （本项目早期是独立 Android 构建，后来转为跟随上游源码按版本同步）。**维护者已澄清的真实情况是：
+> 这些插件包的源码大部分来自上游仓库，本仓库在其上做了改进与补充**（如 `dsh-tool-android` 的
+> v1.24 结构化气泡补丁 —— 构建自检就盯着 `v1.24 bubble: 结构化 state/tool` 这个标记；
+> 以及 `plugins/` 里对上游实现的若干修复）。归属上有疑问时，以本节的实测事实 + 上游对应版本源码为准。
