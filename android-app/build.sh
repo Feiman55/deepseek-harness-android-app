@@ -21,27 +21,17 @@ APKSIGNER="apksigner"
 case "$(uname -s 2>/dev/null)" in
   MINGW*|MSYS*|CYGWIN*) CP_SEP=";"; D8="d8.bat"; APKSIGNER="apksigner.bat" ;;
 esac
-# 变体表（B11）：appId / 端口 / 外部目录 / 显示名 / 默认密钥文件名 的单一真源。
-# DSH_VARIANT=official|lite|compat|community（默认 community —— 与 tools/build-apk.sh 一致）
-# v1.25：默认变体统一为 community（tools/build-apk.sh 默认也是它）；显式设 DSH_VARIANT 可覆盖
-DSH_VARIANT="${DSH_VARIANT:-community}"
-export DSH_VARIANT
+# 变体表：appId / 端口 / 外部目录 / 显示名 / 默认密钥文件名的单一真源。
+# v1.25：**只有社区版**（official / lite / compat 已删；见 variants.sh 头部说明）。
 [ -f "$P/variants.sh" ] || { echo "!! 缺少 android-app/variants.sh（变体表）"; exit 1; }
 . "$P/variants.sh"
 
-# 签名密钥（自行准备，不入仓库）。DSH_KEYSTORE 可覆盖，便于一键脚本用缓存里的密钥。
-# 默认按变体取：official/lite/compat → release.jks；community → community.jks（公开密钥）。
+# 签名密钥：默认用仓库内公开的 community.jks（口令公开，只用于社区自助构建）。
+# DSH_KEYSTORE 可覆盖（正式分发请用 --keystore 指定自己的密钥）。
 KEY="${DSH_KEYSTORE:-$P/$V_KEY_FILE}"
 
-# 产物路径：official 保持历史名 DeepSeekHarness.apk（兼容 tools/build-apk.sh），
-# 其余变体带后缀，避免不同变体互相覆盖。
-if [ -n "${DSH_APK_OUT:-}" ]; then
-  APK_OUT="$DSH_APK_OUT"
-elif [ "$DSH_VARIANT" = "official" ]; then
-  APK_OUT="$P/DeepSeekHarness.apk"
-else
-  APK_OUT="$P/DeepSeekHarness-$DSH_VARIANT.apk"
-fi
+# 产物路径（社区版）：DeepSeekHarness-community.apk
+APK_OUT="${DSH_APK_OUT:-$P/DeepSeekHarness${V_SUFFIX}.apk}"
 
 echo "== 0/7 组装 payload =="
 # v1.19.0 硬闸门：payload 里的 JSON/YAML 绝不能带 UTF-8 BOM ——
@@ -740,10 +730,8 @@ sed -e "s|package=\"com\.deepseek\.harness\"|package=\"$V_APP_ID\"|" \
     -e "s|android:authorities=\"com\.deepseek\.harness\.|android:authorities=\"$V_APP_ID.|g" \
     -e "s|android:versionName=\"\([^\"]*\)\"|android:versionName=\"\1$V_SUFFIX\"|" \
     "$P/AndroidManifest.xml" > "$MANIFEST"
-if [ "$DSH_VARIANT" != "official" ]; then
-  sed -i "s|android:label=\"@string/app_name\"|android:label=\"$V_LABEL\"|" "$MANIFEST"
-  sed -i "s|android:label=\"DeepSeek Harness 屏幕助手\"|android:label=\"$V_LABEL 屏幕助手\"|" "$MANIFEST"
-fi
+sed -i "s|android:label=\"@string/app_name\"|android:label=\"$V_LABEL\"|" "$MANIFEST"
+sed -i "s|android:label=\"DeepSeek Harness 屏幕助手\"|android:label=\"$V_LABEL 屏幕助手\"|" "$MANIFEST"
 # 自检：替换必须真的发生（否则会静默产出"包名没变"的包，两个变体互相覆盖）
 grep -q "package=\"$V_APP_ID\"" "$MANIFEST" || { echo "!! manifest package 未替换为 $V_APP_ID"; exit 1; }
 grep -q "authorities=\"$V_APP_ID.shizuku\"" "$MANIFEST" || { echo "!! manifest shizuku authority 未替换"; exit 1; }

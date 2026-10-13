@@ -801,7 +801,7 @@ public class MainActivity extends Activity {
      * 为什么用**动态**而不是静态（res/xml + manifest meta-data）：
      *   · Intent 在代码里构造，可以带 FLAG_ACTIVITY_SINGLE_TOP —— App 已在运行时交给
      *     onNewIntent（否则 MainActivity 是 standard 启动模式，会再起一个 Activity 实例）；
-     *   · 不必为 official / lite / compat / community 四个变体各改写一份 XML 里的包名。
+     *   · 不必为每个变体各改写一份 XML 里的包名（v1.25 起只有社区版）。
      * 代价：App 至少冷启动过一次才会有这一项（对"用着用着把权限关了"的场景完全够）。
      * 幂等：每次冷启动重发一次，防止启动器把它丢掉。
      *
@@ -3181,7 +3181,7 @@ public class MainActivity extends Activity {
     private boolean vscreenAlive() {
         try {
             java.net.Socket s = new java.net.Socket();
-            // v1.18（B12）：桥端口随变体（official 8999 / lite 9009 / compat 9019 / community 9029）
+            // 桥端口由构建期生成的 BuildVariant.VS_BRIDGE_PORT 提供（社区版 9029）
             s.connect(new java.net.InetSocketAddress("127.0.0.1", BuildVariant.VS_BRIDGE_PORT), 500);
             s.close();
             return true;
@@ -3258,7 +3258,7 @@ public class MainActivity extends Activity {
     }
 
     private String pkgRoot() {
-        // v1.18（B11/B12）：外部目录名随变体（BuildVariant），不再 contains("beta")/("compat") 硬编码。
+        // v1.18（B11/B12）：外部目录名取自 BuildVariant，不再按包名子串硬编码。
         return BuildVariant.EXT_DIR_NAME;
     }
 

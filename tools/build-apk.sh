@@ -4,7 +4,7 @@
 #   bash tools/build-apk.sh                      # 构建（首次会装内核 + 取运行时资产，之后走缓存）
 #   bash tools/build-apk.sh --emulator           # 额外适配 x86_64 模拟器（ndk_translation）
 #   bash tools/build-apk.sh --original-look      # 用上游原版图标 + 原版悬浮窗形象
-#   bash tools/build-apk.sh --variant community  # 变体：official | lite | compat | community
+#   （v1.25：只构建社区版 community，无 --variant 参数）
 #   bash tools/build-apk.sh --clean              # 清缓存重来（内核缓存也清，会重新联网装）
 #   bash tools/build-apk.sh --out ~/x.apk        # 指定产物路径
 #
@@ -18,10 +18,6 @@
 # 内核版本与运行时资产都 pin 在各自脚本里，本脚本不另设版本常量：
 #   · 内核：android-app/kernel/package-lock.json（+ tools/fetch-kernel.sh 的安装参数）
 #   · 运行时：tools/fetch-runtime.sh 顶部的 RUNTIME_TAG / RUNTIME_ASSET / RUNTIME_SHA256_DEFAULT
-# 本地调试密钥的口令（仅本地自签用；正式分发请用 --keystore 指定自己的密钥）
-LOCAL_KEY_PASS="dshandroid"
-LOCAL_KEY_ALIAS="dsh"
-
 # ── 参数解析 ──────────────────────────────────────────────────────────────
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 CACHE="$REPO/.cache"
@@ -32,8 +28,7 @@ DO_EMULATOR=0
 DO_VERIFY=1
 DO_SMOKE=0
 ANDROID_JAR_OPT=""
-DSH_VARIANT="${DSH_VARIANT:-community}"
-VARIANT_SET=0
+DSH_VARIANT="community"   # v1.25：只保留社区版（见 android-app/variants.sh）
 DO_ORIGINAL_LOOK=0
 OUT_SET=0
 
@@ -42,8 +37,6 @@ usage() {
   cat <<'EOF'
 
 选项：
-  --variant <name>    变体：official | lite | compat | community
-                      （真源 android-app/variants.sh：包名/端口/外部目录/显示名/默认密钥）
   --original-look     用**上游原版形象**构建：桌面图标 = 品牌蓝方块+白鲸鱼（与上游官方 APK
                       同一份矢量），悬浮窗 = 上游那只鲸鱼。默认（不带此参数）仍是我们现在的
                       卡通形象（头像特写图标 + 全身立绘悬浮窗）。
@@ -77,7 +70,6 @@ mark() {  # $1=阶段名
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --variant)  DSH_VARIANT="${2:?}"; VARIANT_SET=1; shift 2 ;;
     --keystore) KEYSTORE="${2:?}"; shift 2 ;;
     --android-jar) ANDROID_JAR_OPT="${2:?}"; shift 2 ;;
     --out)      OUT="${2:?}"; OUT_SET=1; shift 2 ;;
@@ -97,10 +89,9 @@ REPO_VARIANTS="$REPO/android-app/variants.sh"
 [ -f "$REPO_VARIANTS" ] || die "缺少 $REPO_VARIANTS（变体表）"
 . "$REPO_VARIANTS"
 # 产物名：official 保持历史名（兼容既有文档/脚本），其余变体带后缀
-# 产物命名：非 official 变体一律带 -<变体> 后缀（**不管变体是显式给的还是默认的**，
-# 免得"没带参数"时出一个叫 DeepSeekHarness.apk 却装着社区版的包）。必须排在 -original 后缀之前。
-if [ "$OUT" = "$REPO/android-app/DeepSeekHarness.apk" ] && [ "$DSH_VARIANT" != "official" ]; then
-  OUT="$REPO/android-app/DeepSeekHarness-$DSH_VARIANT.apk"
+# 产物命名：社区版 DeepSeekHarness-community.apk（必须在 -original 后缀之前算）
+if [ "$OUT" = "$REPO/android-app/DeepSeekHarness.apk" ]; then
+  OUT="$REPO/android-app/DeepSeekHarness$V_SUFFIX.apk"
 fi
 # 外观：原版形象单独一个产物名，绝不覆盖卡通包（两者包名相同，装哪个就是哪套形象）
 # 调用方用 --out 显式指定路径时不加后缀（尊重调用方命名）
@@ -110,7 +101,7 @@ if [ "$DO_ORIGINAL_LOOK" = 1 ]; then
 else
   export DSH_LOOK="${DSH_LOOK:-cartoon}"
 fi
-echo "   变体        : $DSH_VARIANT（$( [ "$VARIANT_SET" = 1 ] && echo '显式指定' || echo '默认' )；appId=$V_APP_ID 引擎=$V_PORT 外部目录=$V_EXT_DIR）"
+echo "   变体        : $DSH_VARIANT（唯一；appId=$V_APP_ID 引擎=$V_PORT 外部目录=$V_EXT_DIR）"
 echo "   外观        : $DSH_LOOK（cartoon=卡通形象｜original=上游原版蓝鲸鱼）"
 
 # ── 0. 预检 ───────────────────────────────────────────────────────────────
@@ -233,7 +224,7 @@ echo "缓存状态（$CACHE）："
 cache_state "$CACHE/kernel" "内核缓存" "$( [ -n "$KERNEL_TAR" ] && echo "标记 $(basename "$KERNEL_TAR")（命中则离线、不重装）" || echo "（首次构建从官方 registry 安装）" )"
 cache_state "$CACHE/$RT_ASSET_NAME" "运行时资产" "$( [ -f "$CACHE/$RT_ASSET_NAME" ] && echo "sha256 $(printf '%s' "$RT_SHA_PIN" | cut -c1-16)…" )"
 cache_state "$CACHE/devhome" "devhome" "$([ -f "$CACHE/devhome/.assembled-from" ] && echo "标记 $(cat "$CACHE/devhome/.assembled-from")")"
-cache_state "$CACHE/local-debug.jks" "签名密钥"
+cache_state "$REPO/android-app/$V_KEY_FILE" "签名密钥（仓库内公开密钥）"
 echo "   （缓存失效时自动重建；--clean 强制重建，但保留签名密钥）"
 
 # ── 1. 组装 devhome（build.sh 的输入：arm64 运行时 + profile 脚手架）──────────
@@ -281,7 +272,7 @@ fi
 # ── 4. 签名密钥 ───────────────────────────────────────────────────────────
 mark "组装 devhome"
 info "2/3 签名密钥"
-if [ -z "$KEYSTORE" ] && [ "$DSH_VARIANT" = "community" ]; then
+if [ -z "$KEYSTORE" ]; then
   # 社区版：仓库内公开密钥（口令同样公开，故意如此）——与正式 release.jks 完全无关。
   KEYSTORE="$REPO/android-app/$V_KEY_FILE"
   [ -f "$KEYSTORE" ] || die "缺少社区密钥 $KEYSTORE（应随仓库分发，见 android-app/README.md）"
@@ -289,21 +280,6 @@ if [ -z "$KEYSTORE" ] && [ "$DSH_VARIANT" = "community" ]; then
   KEYSTORE_ALIAS="${KEYSTORE_ALIAS:-community}"
   echo "   使用社区公开密钥：$KEYSTORE（口令公开：dsh-community）"
   warn "社区密钥是【公开】的，只用于社区自助构建；绝不用于签名正式发布物。"
-elif [ -z "$KEYSTORE" ]; then
-  KEYSTORE="$CACHE/local-debug.jks"
-  if [ ! -f "$KEYSTORE" ]; then
-    echo "   生成本地调试密钥：$KEYSTORE"
-    keytool -genkeypair -v -keystore "$KEYSTORE" -alias "$LOCAL_KEY_ALIAS" \
-      -keyalg RSA -keysize 2048 -validity 10000 \
-      -storepass "$LOCAL_KEY_PASS" -keypass "$LOCAL_KEY_PASS" \
-      -dname "CN=DSH Android Local Debug, O=Local, C=CN" >/dev/null 2>&1 \
-      || die "keytool 生成密钥失败"
-  fi
-  KEYSTORE_PASS="$LOCAL_KEY_PASS"
-  KEYSTORE_ALIAS="$LOCAL_KEY_ALIAS"
-  warn "使用本地调试密钥签名（口令固定为 '$LOCAL_KEY_PASS'）。"
-  warn "  它不能用于覆盖安装官方版或他人构建的版本 —— 升级必须同一密钥。"
-  warn "  正式分发请用 --keystore <你的.jks> 指定，并在安全处备份。"
 else
   [ -f "$KEYSTORE" ] || die "找不到密钥：$KEYSTORE"
   KEYSTORE_PASS="${KEYSTORE_PASS:?请 export KEYSTORE_PASS=密钥口令}"
@@ -350,11 +326,7 @@ fi
 mkdir -p "$(dirname "$OUT")"
 rm -f "$OUT"
 ( cd "$REPO/android-app" && bash build.sh ) || die "构建失败（上面有日志）"
-if [ "$DSH_VARIANT" = "official" ]; then
-  BUILT="$REPO/android-app/DeepSeekHarness.apk"
-else
-  BUILT="$REPO/android-app/DeepSeekHarness-$DSH_VARIANT.apk"
-fi
+BUILT="$REPO/android-app/DeepSeekHarness$V_SUFFIX.apk"
 [ -f "$BUILT" ] || die "构建脚本报成功但没有产物"
 if [ "$BUILT" != "$OUT" ]; then
   mv -f "$BUILT" "$OUT"

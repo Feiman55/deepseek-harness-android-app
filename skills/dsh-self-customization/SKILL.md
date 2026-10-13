@@ -65,10 +65,9 @@ apksigner sign --ks android-app/community.jks \
 `build-tools` + 任一 `platforms/android-*/android.jar`）：
 
 ```bash
-bash tools/build-apk.sh --variant community   # 社区版：公开密钥签名，可与官方三个变体共存
-bash tools/build-apk.sh --variant official|lite|compat
+bash tools/build-apk.sh        # 社区版（唯一变体；公开密钥签名，可与官方包共存）
 ```
-产物：`DeepSeekHarness-<variant>.apk`（**默认 `community`**）；`official` 变体是历史名 `DeepSeekHarness.apk`。
+产物：`DeepSeekHarness-community.apk`。
 
 **社区密钥（公开，故意如此）**：`android-app/community.jks`，别名 `community`，口令 `dsh-community`。
 - 它的用途就是让**不持有维护者私钥**的人也能构建出可与官方包共存的自己那一份；
@@ -81,17 +80,13 @@ bash tools/build-apk.sh --variant official|lite|compat
 - **最后一步安装仍需用户确认**（或已授权的 Shizuku）；
 - 结论：**可行、不建议当常规路径**。常规做法是 PC 构建，或在 CI/他机构建后用哈希核对。
 
-**变体共存规则**（四个变体端口与外部目录已彻底错开，可同时安装同时运行）：
+**共存规则**（v1.25 起只有社区版；端口与外部目录都避开官方包）：
 
 | 变体 | 包名 | 引擎/通知 | 无障碍 | 虚拟屏 桥/核心 | 外部目录 |
 |---|---|---|---|---|---|
-| official | `com.deepseek.harness` | 3080/3081 | 3181 | 8999/8998 | `/sdcard/DeepSeekHarness` |
-| lite | `com.deepseek.harness.beta` | 3082/3083 | 3183 | 9009/9008 | `/sdcard/DeepSeekHarnessLite` |
-| compat | `com.deepseek.harness.compat` | 3084/3085 | 3185 | **8999/8998（暂与 official 冲突）** | `/sdcard/DeepSeekHarnessCompat` |
 | community | `com.deepseek.harness.community` | 3086/3087 | 3187 | 9029/9028 | `/sdcard/DeepSeekHarnessCommunity` |
 
-⚠️ compat 目前还没并入变体机制（它有一套独立的 GeckoView 差异文件），所以它的虚拟屏端口仍是
-8999/8998：**compat 与 official 不能同时使用虚拟屏**（其它功能不受影响）。
+（official / lite / compat 三个变体与救援版已删除，见 `android-app/variants.sh` 头部说明。）
 
 **签名不同的包不能覆盖安装**：换包名/换签名必须先卸载，会丢应用内部数据（会话、凭证、插件元数据）。
 迁移步骤：控制台 →「导出全部数据」→ 卸载 → 安装新包 → 「从备份导入还原」。

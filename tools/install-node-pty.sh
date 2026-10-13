@@ -70,7 +70,7 @@ echo "== 已安装到 $OVERLAY =="
 cat <<'EOF'
 
 下一步：
-  1) 重建：bash tools/build-apk.sh --variant community   （构建期自动嵌套覆盖 + AArch64 自检）
+  1) 重建：bash tools/build-apk.sh                     （构建期自动嵌套覆盖 + AArch64 自检）
   2) 设备上启动引擎（会走 dshroot-add 把新文件补上），再试「新建终端」
   3) 提交：git add dsh-patches && git commit -m "feat(terminal): 打包原生 node-pty（Termux 构建）"
 EOF

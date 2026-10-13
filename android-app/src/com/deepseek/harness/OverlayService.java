@@ -1692,7 +1692,7 @@ public class OverlayService extends Service {
         @Override public void run() {
             if (!vscreenPreviewRunning || !isRunning) return;
             try {
-                // v1.18（B12）：桥端口随变体（official 8999 / lite 9009 / compat 9019 / community 9029）
+                // 桥端口由构建期生成的 BuildVariant.VS_BRIDGE_PORT 提供（社区版 9029）
                 HttpURLConnection c = (HttpURLConnection) new URL(
                         "http://127.0.0.1:" + BuildVariant.VS_BRIDGE_PORT + "/vscreen/preview").openConnection();
                 c.setConnectTimeout(2000); c.setReadTimeout(2000);

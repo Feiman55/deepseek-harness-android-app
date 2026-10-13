@@ -121,7 +121,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
         int port = 3181;
         try {
             // v1.18（B12）：端口一律由变体表派生（BuildVariant），不再 contains() 猜包名。
-            // 无障碍端口 = 引擎端口 + 101（official 3181 / lite 3183 / compat 3185 / community 3187）。
+            // 无障碍端口 = 引擎端口 + 101（社区版 3086 + 101 = 3187）。
             port = BuildVariant.ENGINE_PORT + 101;
             SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
             if (prefs.getInt(KEY_A11Y_PORT, port) != port) {

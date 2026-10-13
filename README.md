@@ -41,7 +41,7 @@
 ## 🔨 构建
 
 ```bash
-bash tools/build-apk.sh --variant community
+bash tools/build-apk.sh
 ```
 
 需要 `android.jar` 与 JDK；社区版使用仓库内的**公开密钥** `android-app/community.jks`。

@@ -1,6 +1,6 @@
 # 控制台主题包规范（THEME-PACK-SPEC）
 
-> 适用：DeepSeek Harness 安卓版（`com.deepseek.harness` / `.beta` / `.compat`）· schema **1** · App ≥ 1.17.3
+> 适用：DeepSeek Harness 安卓版社区版（`com.deepseek.harness.community`）· schema **1** · App ≥ 1.17.3
 > 你可以是**人**，也可以是**AI**：照本文产出一个 zip，用户导入即可换掉 App 冷启动那个原生控制台的外观/布局/文案。
 > 机器可读版：同目录 `console.schema.json`；示例：`console.example.json`；自检：`theme_pack_check.py`。
 

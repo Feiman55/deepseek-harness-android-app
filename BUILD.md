@@ -53,7 +53,7 @@ Linux/macOS 的 `~/Android/Sdk`、`~/Library/Android/sdk`）。
 - **不要在手机/平板 App 内构建 APK**：设备上没有、也不应该塞进构建工具链（最小集 raw 就 ~525MB，
   加 Gradle/AGP/SDK 要 +1~2GB，加 NDK 更不可行，与 APK 体积模型冲突）。手机上能做的是**运行期定制**
   （装插件 / 改 profile 补丁，见 `docs/开发指南.md` 的「定制面」一节）；要重建 APK 就在 PC 上做，
-  或者用公开社区密钥构建可与官方共存的社区版（**不带 `--variant` 时的默认变体**）。
+  社区版就是本仓库唯一构建的变体（公开社区密钥签名，可与官方包共存）。
 
 **平台支持**：Windows 用 **Git Bash**（`C:\WINDOWS\system32\bash.exe` 是 WSL，不行）；
 Linux、macOS 理论上同样可用，但**仅在 Windows + Git Bash 上实测过**。
@@ -102,22 +102,14 @@ Linux、macOS 理论上同样可用，但**仅在 Windows + Git Bash 上实测�
 ## 3. 常用命令
 
 ```bash
-bash tools/build-apk.sh                      # 全自动（推荐，= official 变体）
-bash tools/build-apk.sh                      # 默认就是社区版（公开密钥签名，可与官方三个变体共存）
-bash tools/build-apk.sh --variant official   # 官方包名；用本地生成的调试密钥签名
-bash tools/build-apk.sh --variant community  # 显式指定社区版（等价于不带 --variant）
-bash tools/build-apk.sh --variant lite       # Lite 共存版（包名 .beta / 端口 3082）
-bash tools/build-apk.sh --clean              # 清缓存重建（保留签名密钥）
+bash tools/build-apk.sh                      # 全自动（推荐）：唯一变体 = 社区版，公开密钥签名
+bash tools/build-apk.sh --clean              # 清缓存重建（内核 tar / 运行时 / devhome 都重建）
 bash tools/build-apk.sh --emulator           # 适配 x86_64 模拟器
-bash tools/build-apk.sh --original-look      # 上游原版图标 + 原版悬浮窗形象
+bash tools/build-apk.sh --original-look      # 上游原版图标 + 原版悬浮窗形象（产物名加 -original）
 bash tools/build-apk.sh --keystore my.jks    # 用你自己的密钥（需 export KEYSTORE_PASS）
 bash tools/build-apk.sh --out /tmp/a.apk     # 指定产物路径
 bash tools/build-apk.sh --no-verify          # 跳过校验（调试用）
 bash tools/build-apk.sh --smoke              # 构建后若连着设备，装上去并提示怎么验
-bash tools/build-apk.sh --emulator           # 额外适配 x86_64 模拟器（见第 6 节）
-bash tools/build-apk.sh --variant community --original-look
-                                             # 原版形象：桌面图标与悬浮窗换成上游那只 DS 蓝鲸鱼
-                                             # （产物名自动加 -original；不带此参数仍是卡通形象）
 bash tools/build-apk.sh --help
 ```
 
@@ -134,7 +126,7 @@ bash tools/build-apk.sh --help
 | 位置 | 用途 |
 |---|---|
 | `tools/build-apk.sh` | **一键构建**（官方入口，上面这些选项都在这里）|
-| `tools/build-apk.sh` | 唯一构建入口（`--variant` / `--emulator` / `--original-look` / `--clean`）|
+| `tools/build-apk.sh` | 唯一构建入口（`--emulator` / `--original-look` / `--clean`）|
 | `tools/diag/` | 诊断工具（多数是 `#!/system/bin/sh`，**在设备上跑**）：`check-abi.sh` 交付前 ABI 门（真机包 `x86_64` 必须为 0）· `refresh-overlay-lf.sh` 把 overlay 刷成字节级一致 + 纯 LF · `emu-guestlibs.sh` 给 x86_64 模拟器补 arm64 soname 库 · `find-engine.sh` / `find-engine-env.sh` 找引擎进程与关键 env · `plugin-cli.sh` 以 App 身份跑 DSH CLI · `probe-profile.sh` 复刻 loader 的插件解析视角 · `dump-cfg.sh` / `cfg-stats.sh` 看实际生效的 profile 配置 · `check-shell-env.sh` 看终端默认 shell 来源 · `bench-boot.sh` / `bench-phases.sh` 启动耗时基准 |
 
 > ⚠ `.cache/` 只是**缓存目录**（内核 tar、运行时资产、devhome、本地调试密钥），**不放脚本** ——
@@ -285,10 +277,9 @@ Linux / CI 上没有这个问题，构建同样在 **1 分钟出头**量级。
 | 有 | 说明 |
 |---|---|
 | `android-app/` | APK 构建工程（Java 原生壳 + `build.sh`） |
-| `android-app/compat/`、`android-app-fix/` | 兼容版（GeckoView）/ 救援工具 的差异文件 |
 | `plugins/` | 4 个 DSH 插件源码（Shizuku / Android / 无障碍 / 虚拟屏） |
 | `dsh-patches/` | DSH 的 Android 补丁**归档**（`overlay*/`）与重放脚本 |
-| `mobile-patch/`、`legacy-patch/` | 前端移动端适配与老 WebView 降级 |
+| `mobile-patch/` | 前端移动端适配（构建期注入 staging 的 dist）|
 | `console-theme/` | 控制台主题包规范与校验工具 |
 | `config/`、`docs/` | 配置镜像与文档 |
 | `tools/` | **本仓库新增**：一键构建、桩 devhome、依赖闭包计算、构建说明 |

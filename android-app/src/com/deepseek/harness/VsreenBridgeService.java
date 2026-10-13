@@ -60,7 +60,7 @@ public class VsreenBridgeService extends Service {
 
     /** 插件使用的对外端口（本服务的代理端口）。v1.18（B12）：随变体错开，见 android-app/variants.sh。 */
     private static final int PORT = BuildVariant.VS_BRIDGE_PORT;
-    /** 特权服务端端口。v1.18（B12）：随变体错开（official 8998 / lite 9008 / compat 9018 / community 9028）。 */
+    /** 特权服务端端口。由构建期生成的 BuildVariant.VS_CORE_PORT 提供（社区版 9028）。 */
     private static final int CORE_PORT = BuildVariant.VS_CORE_PORT;
     /** 特权服务端主类。v1.18（B12）：随变体包名。 */
     private static final String CORE_MAIN = BuildVariant.APP_ID + ".vscreen.Main";
