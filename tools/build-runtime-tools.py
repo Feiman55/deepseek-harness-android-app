@@ -41,6 +41,11 @@ WANT = [
 ]
 
 
+def deb_path(fn: str) -> pathlib.Path:
+    """Termux 的版本号常带冒号（openssl_1:3.6.5_aarch64.deb），Windows 上文件名非法 → 统一替换。"""
+    return DEBS / pathlib.Path(fn).name.replace(":", "_")
+
+
 def fetch(url: str) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": "dsh-build"})
     with urllib.request.urlopen(req, timeout=90) as r:
@@ -133,9 +138,10 @@ def extract() -> None:
 
     files = links = skipped = 0
     problems = []
+    aliases: dict[str, list[tuple[str, str]]] = {"bin": [], "lib": []}
     for line in (TM / "closure.txt").read_text(encoding="utf-8").splitlines():
         n, ver, size, fn, sha = line.split("\t")
-        deb = DEBS / pathlib.Path(fn).name
+        deb = deb_path(fn)
         if not deb.is_file() or hashlib.sha256(deb.read_bytes()).hexdigest() != sha:
             deb.write_bytes(fetch(f"{BASE}/{fn}"))
         if hashlib.sha256(deb.read_bytes()).hexdigest() != sha:
@@ -159,6 +165,7 @@ def extract() -> None:
         tmp = TM / f"{n}.data.tar"
         tmp.write_bytes(data)
         with tarfile.open(tmp) as tf:
+            by_name = {m.name: m for m in tf.getmembers()}
             members = []
             for m in tf.getmembers():                      # 按 tar 顺序，链接目标先落地
                 rel = m.name.lstrip("./")
@@ -173,6 +180,7 @@ def extract() -> None:
                     continue
                 members.append((m, inner))
             for m, inner in members:
+                parts = inner.split("/")          # 必须就地重算：过滤循环里的 parts 是上一个成员的
                 dst = ROOTFS / inner
                 if m.isdir():
                     dst.mkdir(parents=True, exist_ok=True)
@@ -181,12 +189,35 @@ def extract() -> None:
                 if dst.exists() or dst.is_symlink():
                     continue
                 if m.issym():
-                    os.symlink(m.linkname, dst)            # 相对链接原样保留（不解引用）
+                    # 符号链接一律**不物化**（Windows 建链接要特权：实测 WinError 1314；
+                    # 且 payload.zip 存不了链接）。分两种情况：
+                    #   a) 同目录兄弟链接（如 bin/[ -> coreutils）→ 记进该目录的 LINKS.txt，
+                    #      设备端 applyLinks 重建（与既有 soname 别名机制同构，不增加字节）；
+                    #   b) 跨目录 / 指向绝对路径（如 bin/dx -> ../share/dx/bin/dx）→ 直接把
+                    #      tar 内目标成员的内容写成真实文件（这类是包装脚本，很小）。
+                    tgt = m.linkname.rstrip("/")
+                    if "/" not in tgt and len(parts) == 2 and parts[0] in aliases:
+                        aliases[parts[0]].append((parts[1], tgt))
+                        links += 1
+                        continue
+                    cand = tgt if tgt.startswith("/") is False else ""
+                    names = []
+                    if cand:
+                        names.append(os.path.normpath(os.path.join(os.path.dirname(m.name), cand)).replace("\\", "/"))
+                    if "/usr/" in tgt:
+                        names.append(PREFIX + tgt.split("/usr/", 1)[1])
+                    src_m = next((by_name[n] for n in names if n in by_name), None)
+                    if src_m is not None:
+                        data_b = tf.extractfile(src_m)
+                        dst.write_bytes(data_b.read() if data_b else b"")
+                        files += 1
+                    else:
+                        problems.append(f"{n}: 链接目标找不到（{inner} -> {tgt}）")
                     links += 1
                 elif m.islnk():
                     tgt = ROOTFS / m.linkname.lstrip("./").removeprefix(PREFIX)
                     if tgt.exists():
-                        os.link(tgt, dst)
+                        os.link(tgt, dst)                  # 硬链接：Windows 上无需特权
                     else:
                         src = tf.extractfile(m)
                         dst.write_bytes(src.read() if src else b"")
@@ -197,7 +228,16 @@ def extract() -> None:
                     files += 1
                     # 保留执行位（tar 里有；Windows 上没有，构建期会统一 chmod）
         tmp.unlink()
-    print(f"   普通文件 {files} · 链接 {links} · 因 devhome 同名跳过 {skipped} · 异常 {len(problems)}")
+    for top, pairs in aliases.items():
+        if not pairs:
+            continue
+        out = ROOTFS / top / "LINKS.txt"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        existing_lines = out.read_text(encoding="utf-8").splitlines() if out.is_file() else []
+        merged = sorted(set(existing_lines) | {f"{n} {t}" for n, t in pairs})
+        out.write_text("\n".join(merged) + "\n", encoding="utf-8")
+        print(f"   {top}/LINKS.txt: {len(merged)} 条别名（不物化，设备端重建）")
+    print(f"   普通文件 {files} · 链接(记入别名表) {links} · 因 devhome 同名跳过 {skipped} · 异常 {len(problems)}")
     for p in problems[:10]:
         print("   !!", p)
 
