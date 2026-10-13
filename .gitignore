@@ -23,3 +23,7 @@ payload.zip
 
 # 隔离工作区里的编译验证产物（不属于源码）
 .compile-check/
+
+# 构建产物 sidecar（每次构建重新生成）
+android-app/DeepSeekHarness-*.apk.sha256
+android-app/DeepSeekHarness-*.apk.build-info.txt
