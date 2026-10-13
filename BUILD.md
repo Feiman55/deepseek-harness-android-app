@@ -180,7 +180,7 @@ bash tools/build-apk.sh --keystore /secure/path/release.jks
 | `运行时资产 sha256 不符` | 资产被替换或下载损坏。确认无误后 `DSH_RUNTIME_SHA256=<实际值>` 显式接受并更新 pin |
 | 下载卡住 / `Failed to connect to github.com` | 用 `DSH_RUNTIME_ARCHIVE=<本地归档>` 走离线；内核侧可用 `NPM_CONFIG_REGISTRY=<镜像>` |
 | `keystore password was incorrect` | `android-app/release.jks` 是别人/别的口令留下的。删掉它，或用 `--keystore` 指定自己的 |
-| 安装报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE` | 与已装版本签名不同。先卸载：`adb uninstall com.deepseek.harness` |
+| 安装报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE` | 与已装版本签名不同。先卸载：`adb uninstall com.deepseek.harness.community` |
 | 装上了但引擎起不来 | App 内「日志」页看 `dsh-web.log`；构建期可先跑 `tools/diag/` 下的诊断脚本 |
 | 模拟器上 node 报 `CANNOT LINK ... EM_AARCH64` 或 `libz.so.1 not found` | 见第 6 节 |
 | 构建脚本报 `找不到 javac` | 设 `JAVA_HOME`，或把 `$JAVA_HOME/bin` 放\进 `PATH` |
@@ -257,8 +257,8 @@ Linux / CI 上没有这个问题，构建同样在 **1 分钟出头**量级。
 
    ```sh
    adb root && adb remount
-   adb push tools/emu-guestlibs.sh /data/local/tmp/
-   adb shell sh /data/local/tmp/emu-guestlibs.sh com.deepseek.harness   # 换包名即可换变体
+   adb push tools/diag/emu-guestlibs.sh /data/local/tmp/
+   adb shell sh /data/local/tmp/emu-guestlibs.sh com.deepseek.harness.community
    ```
 
    脚本把 payload 里 arm64 的 soname（`libz.so.1`、`libsqlite3.so`、`libicui18n.so.78`、

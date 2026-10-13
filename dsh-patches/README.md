@@ -50,7 +50,7 @@ dsh-patches/
 ## 架构
 
 ```
-APK (com.deepseek.harness)
+APK (com.deepseek.harness.community)
 ├── Android 壳（MainActivity：权限引导页 + WebView + 解压 payload + 拉起 node）
 ├── payload（首次解压到 files/）
 │   ├── runtime/               node 二进制 + .so

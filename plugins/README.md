@@ -43,7 +43,7 @@
 ## 开发提示
 
 - peerDependencies：`@deepseek-ai/dsh-tools`、`@deepseek-ai/cordis`（版本见各 package.json）
-- 调试 rish：`app_process -Djava.class.path=<rish dex> /system/bin --system --nice-name=rish rikka.shizuku.shell.ShizukuShellLoader -c "<命令>"`，环境变量 `RISH_APPLICATION_ID=com.deepseek.harness`
+- 调试 rish：`app_process -Djava.class.path=<rish dex> /system/bin --system --nice-name=rish rikka.shizuku.shell.ShizukuShellLoader -c "<命令>"`，环境变量 `RISH_APPLICATION_ID=com.deepseek.harness.community`
 
 ## 来源与维护（v1.25 补充，2026-10-14 核对）
 

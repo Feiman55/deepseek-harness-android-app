@@ -33,6 +33,53 @@ KEY="${DSH_KEYSTORE:-$P/$V_KEY_FILE}"
 # 产物路径（社区版）：DeepSeekHarness-community.apk
 APK_OUT="${DSH_APK_OUT:-$P/DeepSeekHarness${V_SUFFIX}.apk}"
 
+# ============================================================================
+# 提交前两道轻量闸门（v1.25）
+# ============================================================================
+# 闸门 1：设备端会执行/加载的**文本**文件不得有 CRLF 行尾（*.md 文档不管）。
+#   `/system/bin/sh` 遇到 CRLF 会把 \r 当成命令名的一部分（报 "not found"）；
+#   overlay 是字节级补丁快照（apply.sh 直接 tar 覆盖回内核树），行尾被改写会污染补丁。
+# ⚠ 判据实现有讲究（实测踩过两次）：
+#   · 本仓库主要在 Git Bash(MSYS) 下构建，那里的 grep 处于**文本模式**，会把 CRLF 当行尾直接吞掉
+#     —— `grep -rl $'\r'` / `grep -rl $'\r$'` 都**查不出来**（假阴性）；
+#   · 改用 `grep -U` 又能查出来，但会把二进制也算上 —— overlay 里的 `pty.node` 是 ELF，
+#     字节里天然含 0x0D（假阳性，实测因此误拦过一次构建）。
+#   · 所以这里用 `tr '\n' '\001'` 先把 LF 换成 SOH，再找 "\r\001"：只命中真正的 CRLF 行尾，
+#     不受文本模式影响，也不会撞上二进制里的孤立 0x0D。
+_lf_hit=""
+for _f in $(find "$P/../dsh-patches/apply.sh" "$P/../dsh-patches/overlay" "$P/../mobile-patch" \
+              -type f ! -name '*.md' 2>/dev/null); do
+  if LC_ALL=C tr '\n' '\001' < "$_f" 2>/dev/null | LC_ALL=C grep -q "$(printf '\r\001')"; then
+    _lf_hit="$_lf_hit$_f
+"
+  fi
+done
+if [ -n "$_lf_hit" ]; then
+  echo "!! 以下文件是 CRLF 行尾（设备端/overlay 必须纯 LF）："
+  printf '%s' "$_lf_hit" | head -5
+  exit 1
+fi
+echo "  LF 闸门：apply.sh / overlay / mobile-patch 无 CRLF 行尾 ✓"
+
+# 闸门 2：Java 语法体检（字符串/注释感知的括号配平 + "中文引号混入代码"这类低级错误）。
+#   不是编译器，只是让"改 Java 时写坏了"在打包前就暴露。
+#   ⚠ 解释器要**探测到真能跑**的：Windows 上 `command -v python3` 常命中应用商店的假 python
+#     （执行即失败/退出码 49），所以这里用 `-c 'import sys'` 试跑，失败就换下一个；
+#     一个都没有就跳过并明确说明（不阻塞构建）。
+PY_BIN=""
+for _c in python3 python py; do
+  _p="$(command -v "$_c" 2>/dev/null || true)"
+  if [ -n "$_p" ] && "$_p" -c 'import sys' >/dev/null 2>&1; then PY_BIN="$_p"; break; fi
+done
+if [ -n "$PY_BIN" ]; then
+  _java_files=$(find "$P/src" -name '*.java' 2>/dev/null)
+  # shellcheck disable=SC2086
+  "$PY_BIN" "$P/../tools/java-syntax-sanity.py" $_java_files || { echo "!! Java 语法体检未通过（见上）"; exit 1; }
+  echo "  Java 语法体检：$(printf '%s\n' "$_java_files" | grep -c . ) 个文件 ✓（$PY_BIN）"
+else
+  echo "  Java 语法体检：跳过（没找到可用的 python3/python/py）"
+fi
+
 echo "== 0/7 组装 payload =="
 # v1.19.0 硬闸门：payload 里的 JSON/YAML 绝不能带 UTF-8 BOM ——
 # node 的 JSON.parse 会因为 BOM 直接抛 SyntaxError，表现为"引擎起不来"（真机实锤过一次）。

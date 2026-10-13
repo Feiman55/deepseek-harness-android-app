@@ -1,0 +1,6 @@
+# overlay / 设备端脚本是**字节级**产物，禁止任何行尾转换（-text = 不做 CRLF<->LF 转换）。
+# 背景：Windows 上 core.autocrlf/编辑器曾把 overlay 快照改成 CRLF，污染补丁并在设备上引发问题；
+#       构建期有「LF 闸门」检查这三处（android-app/build.sh）。
+dsh-patches/overlay/** -text
+dsh-patches/apply.sh   -text
+mobile-patch/**        -text

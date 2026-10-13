@@ -30,7 +30,7 @@ android-app/
 - **工具链** —— JDK 17+ 与 Android SDK 的 `build-tools`（aapt/d8/zipalign/apksigner）+ 任一 `android.jar`；
 - **签名密钥** —— 默认用仓库内公开的 `community.jks`（`--keystore` 可换成你自己的）。
 
-统一通过 `DSH_DEV_HOME` 指向（结构见 `docs/开发指南.md`）。App 内实例：`/data/user/0/com.deepseek.harness/files/buildenv/devhome`。
+统一通过 `DSH_DEV_HOME` 指向（结构见 `docs/开发指南.md`）。App 内实例：`/data/user/0/com.deepseek.harness.community/files/buildenv/devhome`。
 
 ## 打包命令
 

@@ -14,9 +14,7 @@ android-app/assets/
 payload.zip
 *.bak
 *.bak-*
-# 本机构建产物（桩 devhome 等）
-/build/
-# 一键构建脚本的缓存（上游 APK、devhome、本地调试密钥）
+# 一键构建脚本的缓存（内核 tar、运行时资产、解出的 devhome）
 /.cache/
 # 每次构建生成的信息文件
 *.build-info.txt
