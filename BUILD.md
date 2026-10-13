@@ -115,8 +115,18 @@ bash tools/build-apk.sh --out /tmp/a.apk     # 指定产物路径
 bash tools/build-apk.sh --no-verify          # 跳过校验（调试用）
 bash tools/build-apk.sh --smoke              # 构建后若连着设备，装上去并提示怎么验
 bash tools/build-apk.sh --emulator           # 额外适配 x86_64 模拟器（见第 6 节）
+bash tools/build-apk.sh --variant community --original-look
+                                             # 原版形象：桌面图标与悬浮窗换成上游那只 DS 蓝鲸鱼
+                                             # （产物名自动加 -original；不带此参数仍是卡通形象）
 bash tools/build-apk.sh --help
 ```
+
+> **外观（look，v1.24）**：默认构建用我们自己的卡通形象 —— 桌面图标是头像特写（`icon-src/icon-windows.png`
+> 生成的自适应图标），悬浮窗是全身立绘（`icon-src/source.png`）。加 `--original-look` 则整套换成上游
+> 原版：桌面图标 = `drawable/ic_launcher`（品牌蓝方块 + 白鲸鱼，与上游官方 APK 的 `android:icon` 同源），
+> 悬浮窗 = `drawable/ic_whale_black`（上游 OverlayService 用的那只鲸鱼）。两者包名/签名相同，
+> **装哪个就是哪套形象**（互相覆盖）；实现是构建期换资源引用，运行期零分支（见 `android-app/build.sh`
+> 的「外观」段与 `res/values/look.xml`）。
 
 > **脚本目录**（都在仓库里，路径由脚本自身位置推导，可在任意克隆 / 工作区里跑）：
 

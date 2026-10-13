@@ -621,6 +621,44 @@ grep -q "authorities=\"$V_APP_ID.logshare\"" "$MANIFEST" || { echo "!! manifest 
 grep -q "^package $V_APP_ID;" "$SRC_STAGE/$V_PKG_PATH/MainActivity.java" || { echo "!! Java package 未替换"; exit 1; }
 echo "  变体: $DSH_VARIANT（appId=$V_APP_ID 引擎=$V_PORT 通知=$V_NOTIFY_PORT vscreen=$V_VS_BRIDGE_PORT/$V_VS_CORE_PORT 外部目录=$V_EXT_DIR）"
 
+# ============================================================================
+# 外观（DSH_LOOK）：cartoon（默认）| original（上游原版形象）
+#   · cartoon  —— 桌面图标 @mipmap/ic_launcher（头像特写自适应图标，见 tools/gen-icons.py）
+#                 悬浮窗 @drawable/overlay_avatar（全身立绘）
+#   · original —— 桌面图标 @drawable/ic_launcher（品牌蓝方块 + 白鲸鱼，**与上游官方 APK 的
+#                 application: icon='res/drawable/ic_launcher.xml' 逐字节同源**）
+#                 悬浮窗 @drawable/ic_whale_black（上游 OverlayService 用的那只鲸鱼）
+#   实现方式：只换"资源指向"，不动代码 —— 代码引用 R.drawable.overlay_look，
+#   本段把 res/ 复制到 out/res/ 并用另一份 look.xml 覆盖别名；桌面图标改 manifest 一行。
+#   两者包名/签名完全相同，装原版包会**覆盖**卡通包（这正是"换一套形象"的预期行为）。
+# ============================================================================
+DSH_LOOK="${DSH_LOOK:-cartoon}"
+RES_DIR="$P/res"
+case "$DSH_LOOK" in
+  cartoon)
+    echo "  外观: cartoon（桌面图标=@mipmap/ic_launcher 头像；悬浮窗=overlay_avatar 立绘）"
+    ;;
+  original)
+    RES_DIR="$P/out/res"
+    rm -rf "$RES_DIR"; cp -r "$P/res" "$RES_DIR"
+    cat > "$RES_DIR/values/look.xml" <<'LOOKEOF'
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 构建期生成（DSH_LOOK=original）：原版形象 —— 悬浮窗用上游那只鲸鱼。 -->
+<resources>
+    <item name="overlay_look" type="drawable">@drawable/ic_whale_black</item>
+</resources>
+LOOKEOF
+    sed -i 's|android:icon="@mipmap/ic_launcher"|android:icon="@drawable/ic_launcher"|' "$MANIFEST"
+    grep -q 'android:icon="@drawable/ic_launcher"' "$MANIFEST" \
+      || { echo "!! 原版外观：manifest 的 android:icon 未替换成 @drawable/ic_launcher"; exit 1; }
+    grep -q 'ic_whale_black' "$RES_DIR/values/look.xml" \
+      || { echo "!! 原版外观：look.xml 未写成 ic_whale_black"; exit 1; }
+    echo "  外观: original（桌面图标=@drawable/ic_launcher 蓝鲸鱼；悬浮窗=ic_whale_black 鲸鱼）"
+    ;;
+  *)
+    echo "!! 未知 DSH_LOOK=$DSH_LOOK（只支持 cartoon | original）"; exit 1 ;;
+esac
+
 # v1.9 虚拟屏服务 jar（VirtualScreenServer）：独立于 App classes，供 app_process 特权加载。
 # app_process -Djava.class.path 必须指向含 *.dex 的 jar（裸 dex 会报 Unsupported class loader）。
 # 单独 javac 编译 src/.../vscreen/ 源码 → d8 成 classes.dex → jar 打包 → 放 assets（App 提取后传给引擎）
@@ -795,7 +833,7 @@ grep -E '^subtree (runtime|runtime/lib) ' "$P/assets/payload_manifest.txt" | sed
 
 echo "== 1/7 资源编译 (aapt) =="
 mkdir -p "$P/out/gen" "$P/out/classes" "$P/out/dex"
-aapt package -f -m -J "$P/out/gen" -M "$MANIFEST" -S "$P/res" -I "$AJ"
+aapt package -f -m -J "$P/out/gen" -M "$MANIFEST" -S "$RES_DIR" -I "$AJ"
 R_JAVA="$P/out/gen/$V_PKG_PATH/R.java"
 [ -f "$R_JAVA" ] || { echo "!! aapt 未生成 $R_JAVA（包名与 manifest 不一致？）"; find "$P/out/gen" -name 'R.java'; exit 1; }
 
@@ -852,7 +890,7 @@ fi
 echo "  classes.dex 含 MainActivity，$(stat -c%s "$P/out/dex/classes.dex") bytes"
 
 echo "== 4/7 aapt 打包 + assets =="
-aapt package -f -M "$MANIFEST" -S "$P/res" -I "$AJ" -A "$P/assets" -0 zip -F "$P/out/unsigned.apk"
+aapt package -f -M "$MANIFEST" -S "$RES_DIR" -I "$AJ" -A "$P/assets" -0 zip -F "$P/out/unsigned.apk"
 ( cd "$P/out/dex" && aapt add "$P/out/unsigned.apk" classes.dex )
 
 echo "== 5/7 zipalign =="

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  外观（look）：**构建期**决定壳用哪套形象，运行期零分支。
+
+  · 默认（DSH_LOOK=cartoon，即不带任何参数）：卡通形象 —— 桌面图标 = mipmap/ic_launcher
+    （icon-src/icon-windows.png 头像特写 + 白底自适应图标），悬浮窗 = overlay_avatar.png
+    （icon-src/source.png 全身立绘）。
+  · tools/build-apk.sh 加 original-look 参数（DSH_LOOK=original）：上游原版形象 ——
+    桌面图标 = drawable/ic_launcher（品牌蓝圆角方块 + 白鲸鱼；与上游官方 APK 的
+    application: icon=res/drawable/ic_launcher.xml 完全一致），悬浮窗 = drawable/ic_whale_black
+    （上游 OverlayService 用的那只鲸鱼；我们只把填充色换成了品牌色 accent_brand）。
+
+  实现：代码只引用 R.drawable.overlay_look，具体指向哪张图由本文件决定；
+  original 外观时 build.sh 会把 res/ 复制一份到 out/res/ 并用另一份 look.xml 覆盖本文件，
+  所以**不需要改代码**就能整套换形象（详见 build.sh 的「外观」段）。
+
+  ⚠ XML 注释里不能出现连续两个短横线，本文件正文请勿把它们写进注释。
+-->
+<resources>
+    <item name="overlay_look" type="drawable">@drawable/overlay_avatar</item>
+</resources>

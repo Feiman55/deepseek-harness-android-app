@@ -455,8 +455,11 @@ public class OverlayService extends Service {
         iconRow.setPadding(dp(4), dp(2), dp(4), dp(2));
 
         iconView = new ImageView(this);
-        iconView.setImageResource(R.drawable.overlay_avatar); // 悬浮窗头像：icon-src/source.png（全身立绘）
-                                                              // 由 tools/gen-icons.py 生成到 res/drawable-nodpi/
+        // 悬浮窗形象由**构建期**的 res/values/look.xml 决定（运行期零分支）：
+        //   · 默认卡通：icon-src/source.png 全身立绘（res/drawable-nodpi/overlay_avatar.png，
+        //     由 tools/gen-icons.py 生成）
+        //   · --original-look 原版：drawable/ic_whale_black（上游 OverlayService 用的那只鲸鱼）
+        iconView.setImageResource(R.drawable.overlay_look);
         iconView.setLayoutParams(new LinearLayout.LayoutParams(dp(40), dp(40)));
         iconRow.addView(iconView);
 

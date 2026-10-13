@@ -39,6 +39,8 @@ DO_SMOKE=0
 ANDROID_JAR_OPT=""
 DSH_VARIANT="${DSH_VARIANT:-official}"
 VARIANT_SET=0
+DO_ORIGINAL_LOOK=0
+OUT_SET=0
 
 usage() {
   sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
@@ -50,6 +52,10 @@ usage() {
   --md5 <hex>         覆盖期望的 md5
   --variant <name>    变体：official | lite | compat | community
                       （真源 android-app/variants.sh：包名/端口/外部目录/显示名/默认密钥）
+  --original-look     用**上游原版形象**构建：桌面图标 = 品牌蓝方块+白鲸鱼（与上游官方 APK
+                      同一份矢量），悬浮窗 = 上游那只鲸鱼。默认（不带此参数）仍是我们现在的
+                      卡通形象（头像特写图标 + 全身立绘悬浮窗）。
+                      产物名会自动加 -original 后缀，避免覆盖卡通包。
   --keystore <path>   签名密钥（默认 official/lite/compat 用 .cache 里自动生成的本地调试密钥，
                       community 用仓库内公开的 android-app/community.jks）
   --android-jar <p>   android.jar（默认自动从 Android SDK 里挑）
@@ -85,9 +91,10 @@ while [ $# -gt 0 ]; do
     --variant)  DSH_VARIANT="${2:?}"; VARIANT_SET=1; shift 2 ;;
     --keystore) KEYSTORE="${2:?}"; shift 2 ;;
     --android-jar) ANDROID_JAR_OPT="${2:?}"; shift 2 ;;
-    --out)      OUT="${2:?}"; shift 2 ;;
+    --out)      OUT="${2:?}"; OUT_SET=1; shift 2 ;;
     --cache)    CACHE="${2:?}"; shift 2 ;;
     --emulator) DO_EMULATOR=1; shift ;;
+    --original-look) DO_ORIGINAL_LOOK=1; shift ;;
     --smoke)    DO_SMOKE=1; shift ;;
     --no-verify) DO_VERIFY=0; shift ;;
     --clean)    DO_CLEAN=1; shift ;;
@@ -111,7 +118,16 @@ if [ "$VARIANT_SET" = 1 ] && [ "$OUT" = "$REPO/android-app/DeepSeekHarness.apk" 
     OUT="$REPO/android-app/DeepSeekHarness-$DSH_VARIANT.apk"
   fi
 fi
+# 外观：原版形象单独一个产物名，绝不覆盖卡通包（两者包名相同，装哪个就是哪套形象）
+# 调用方用 --out 显式指定路径时不加后缀（尊重调用方命名）
+if [ "$DO_ORIGINAL_LOOK" = 1 ]; then
+  [ "$OUT_SET" = 1 ] || OUT="${OUT%.apk}-original.apk"
+  export DSH_LOOK=original
+else
+  export DSH_LOOK="${DSH_LOOK:-cartoon}"
+fi
 echo "   变体        : $DSH_VARIANT（appId=$V_APP_ID 引擎=$V_PORT 外部目录=$V_EXT_DIR）"
+echo "   外观        : $DSH_LOOK（cartoon=卡通形象｜original=上游原版蓝鲸鱼）"
 
 # ── 0. 预检 ───────────────────────────────────────────────────────────────
 info "0/7 预检环境"
@@ -425,6 +441,8 @@ export JAVA_BIN
 export ANDROID_JAR
 export KEYSTORE_PASS KEYSTORE_ALIAS
 export DSH_VARIANT
+# 外观（cartoon | original）：build.sh 据此选图标与悬浮窗资源（见其「外观」段）
+export DSH_LOOK
 # build.sh 默认用 android-app/release.jks；这里指向我们实际选择的密钥
 export DSH_KEYSTORE="$KEYSTORE"
 
@@ -574,6 +592,7 @@ INFO="$OUT.build-info.txt"
   echo "build-tools     : $BT_NAME"
   echo "android.jar     : $ANDROID_JAR"
   echo "模拟器适配      : $([ "$DO_EMULATOR" = 1 ] && echo yes || echo no)"
+  echo "外观(look)      : $DSH_LOOK（cartoon=卡通形象 / original=上游原版蓝鲸鱼）"
 } > "$INFO"
 # B6：产物哈希单独落一个 sha256sum 兼容的 sidecar，便于 `sha256sum -c` 核对
 ( cd "$(dirname "$OUT")" && printf '%s  %s\n' "$(file_sha256 "$OUT")" "$(basename "$OUT")" ) > "$OUT.sha256" 2>/dev/null || true
