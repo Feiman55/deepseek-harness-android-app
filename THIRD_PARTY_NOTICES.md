@@ -7,6 +7,25 @@
 
 ---
 
+## 0. AOSP apksig — Apache-2.0（设备内 APK 签名/校验）
+
+| 项 | 内容 |
+|---|---|
+| 项目 | **AOSP apksig**（`com.android.apksigner.ApkSignerTool`，Android SDK build-tools 的 `lib/apksigner.jar`） |
+| 来源 | Android Open Source Project（随本机 Android SDK 的 `build-tools` 分发） |
+| 许可证 | **Apache License 2.0** |
+| 许可证全文 | Apache-2.0 规范文本见 <https://www.apache.org/licenses/LICENSE-2.0>；随 SDK 分发的完整声明副本已归档为 [`licenses/android-build-tools-NOTICE.txt`](licenses/android-build-tools-NOTICE.txt)（即 build-tools 的 `NOTICE.txt`，内含 apksig 等组件的许可） |
+
+**本仓库怎么用它**：`android-app/build.sh` 在构建期用 build-tools 的 `d8 --min-api 26` 把
+`lib/apksigner.jar` 编成 `classes.dex`（构建期生成、**不入库**），随 payload 放到
+`runtime/lib/apksig/classes.dex`，并提供包装脚本 `runtime/bin/apksigner`（`CLASSPATH=<dex> app_process
+/system/bin com.android.apksigner.ApkSignerTool …`，默认补 `--ks-type PKCS12` 与
+`--v1-signing-enabled false`）。这样设备端**不需要 JVM** 就能 verify / sign APK
+（对比：Termux 的 apksigner 要拖 openjdk-21，闭包 305.8 MB）。
+
+> 另：设备内构建链还用到了 Termux 分发的 GNU 工具与 Java 工具（aapt2 / ecj / dx 等），
+> 它们各自的许可随包在 `payload/runtime/share/doc/*/COPYING*` 里，未在此逐一展开。
+
 ## 1. Operit — LGPL-3.0（虚拟屏 vscreen）
 
 | 项 | 内容 |

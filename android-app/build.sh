@@ -156,6 +156,70 @@ if [ -d "$H/runtime/share" ]; then
   echo "  runtime/share: $(du -sh "$P/staging/runtime/share" | cut -f1)"
 fi
 
+# ============================================================================
+# W5：设备内 apksig（AOSP apksig，Apache-2.0）—— 让设备端能自己 verify / sign APK
+#
+# 为什么这么做：设备上 Termux 的 apksigner 要拖 openjdk-21（闭包 305.8 MB）；而 AOSP 的 apksig
+# **不需要 JVM**：把 build-tools 里的 `lib/apksigner.jar` 用 d8 编成 dex，交给 `app_process` 跑即可。
+# 实测（维护者在设备上验过）：`app_process … com.android.apksigner.ApkSignerTool --version` → 0.9，
+# `verify --verbose --print-certs` 认系统包，`sign --ks community.jks` 产物证书 SHA-256 = 社区证书。
+#
+# 构建期生成而不是入库：dex 有 1 MB 且随 SDK 版本变 → 每次构建从**本机 build-tools** 现场生成，
+# 既不用往仓库塞二进制，也不会和 SDK 版本脱节。架构无关（dex 不是 ELF）→ 模拟器包同样带上。
+#
+# 三个实测坑（都处理了）：
+#   1) dex 必须**不可写**：Android 14+ 的 ART 拒载可写 dex（`Writable dex file is not allowed`，
+#      进程直接 SIGABRT）→ 这里 chmod 444，并由 App 的 secureDexFiles() 每次启动兜底；
+#   2) `--ks-type PKCS12` **必给**（否则 keystore 类型判定失败）→ 包装脚本在 `sign` 时自动补；
+#   3) `--v1-signing-enabled false` 更干净（现代设备只看 v2/v3）→ 包装脚本在 `sign` 时自动补。
+# ============================================================================
+APKSIG_JAR="$APK_TOOLS/lib/apksigner.jar"
+if [ -f "$APKSIG_JAR" ]; then
+  mkdir -p "$P/staging/runtime/lib/apksig"
+  _dex_tmp="$P/out/apksig-dex"
+  rm -rf "$_dex_tmp"; mkdir -p "$_dex_tmp"
+  if "$D8" --min-api 26 --output "$_dex_tmp" "$APKSIG_JAR" >/dev/null 2>&1 && [ -f "$_dex_tmp/classes.dex" ]; then
+    cp -f "$_dex_tmp/classes.dex" "$P/staging/runtime/lib/apksig/classes.dex"
+    chmod 444 "$P/staging/runtime/lib/apksig/classes.dex"
+    _dex_n=$(wc -c < "$P/staging/runtime/lib/apksig/classes.dex" | tr -d ' ')
+    [ "$_dex_n" -ge 500000 ] || { echo "!! apksig dex 只有 $_dex_n 字节，明显不对"; exit 1; }
+    echo "  apksig: runtime/lib/apksig/classes.dex（$_dex_n 字节，src=build-tools/$BT_NAME）"
+  else
+    echo "  !! apksig dex 生成失败（d8 处理 $APKSIG_JAR）—— 设备端签名/校验将不可用"
+    exit 1
+  fi
+  rm -rf "$_dex_tmp"
+  cat > "$P/staging/runtime/bin/apksigner" <<'APKSIGNER_EOF'
+#!/system/bin/sh
+# 设备内 apksigner（AOSP apksig，Apache-2.0）—— 不依赖 JVM：CLASSPATH + app_process 跑预编译 dex。
+# 用法与官方 apksigner 一致（sign / verify / …）；下面替你补上两个实测必给的参数：
+#   · sign 时自动加 --ks-type PKCS12（不加会报 keystore 类型判定失败）
+#   · sign 时自动加 --v1-signing-enabled false（现代设备只看 v2/v3；要 v1 就自己再传 true 覆盖）
+set -e
+SELF_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+DEX="$SELF_DIR/../lib/apksig/classes.dex"
+[ -f "$DEX" ] || { echo "apksigner: 缺 dex：$DEX" >&2; exit 1; }
+# Android 14+ 的 ART 拒载可写 dex → 每次确保只读（zip 不带权限位）
+chmod 444 "$DEX" 2>/dev/null || true
+if [ "${1:-}" = "sign" ]; then
+  shift
+  _has_kstype=0; _has_v1=0
+  for a in "$@"; do
+    case "$a" in --ks-type*) _has_kstype=1 ;; --v1-signing-enabled*) _has_v1=1 ;; esac
+  done
+  _extra=""
+  [ "$_has_kstype" = 1 ] || _extra="$_extra --ks-type PKCS12"
+  [ "$_has_v1" = 1 ] || _extra="$_extra --v1-signing-enabled false"
+  # shellcheck disable=SC2086
+  CLASSPATH="$DEX" exec app_process /system/bin com.android.apksigner.ApkSignerTool sign $_extra "$@"
+fi
+CLASSPATH="$DEX" exec app_process /system/bin com.android.apksigner.ApkSignerTool "$@"
+APKSIGNER_EOF
+  chmod 755 "$P/staging/runtime/bin/apksigner"
+else
+  echo "  !! 找不到 $APKSIG_JAR（build-tools 的 lib/apksigner.jar）—— 跳过设备内 apksig"
+fi
+
 for f in $(find "$H/runtime/lib" -maxdepth 1 -type f); do
   cp -L "$f" "$P/staging/runtime/lib/"
 done
@@ -541,7 +605,10 @@ echo "$DSHROOT_REV" > "$P/assets/dshroot_revision.txt"
 
 # 内核树布局标记：布局本身变了（如依赖树结构换了）必须全量重推 dshroot。
 # 否则同内核升级走 fast 同步（只补白名单文件），整棵树仍是旧结构，修好的补丁包不生效。
-DSHROOT_LAYOUT="hoisted-1"
+# v1.25：W3/W5 往 runtime/{bin,lib,share} 加了大批文件（GNU 工具集 + apksig dex）—— 布局变了，
+#   必须 bump（实测：不 bump 时设备走 fast 同步，新文件根本没进去，`runtime/bin/apksigner`
+#   在设备上不存在，而 APK 里明明有）。
+DSHROOT_LAYOUT="hoisted-2"
 echo "$DSHROOT_LAYOUT" > "$P/assets/dshroot_layout.txt"
 
 # 内核版本标记（v1.5.2 慢启动修复）：REVISION 是构建时间戳，每次构建都变；
