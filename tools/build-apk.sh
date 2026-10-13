@@ -98,6 +98,7 @@ while [ $# -gt 0 ]; do
     --cache)    CACHE="${2:?}"; shift 2 ;;
     --emulator) DO_EMULATOR=1; shift ;;
     --original-look) DO_ORIGINAL_LOOK=1; shift ;;
+    --runtime)  DSH_RUNTIME_MODE="${2:?}"; shift 2 ;;
     --kernel)   DSH_KERNEL_MODE="${2:?}"; shift 2 ;;
     --smoke)    DO_SMOKE=1; shift ;;
     --no-verify) DO_VERIFY=0; shift ;;
@@ -264,6 +265,31 @@ echo "   （缓存失效时自动重建；--clean 强制重建，但保留签名
 
 # ── 1. 取上游 APK ─────────────────────────────────────────────────────────
 mark "预检"
+# ── 运行时输入模式（DSH_RUNTIME_MODE）────────────────────────────────────────
+#   payload（默认）：下载上游 APK → 抠出 payload.zip → 组装 devhome（历史路径）
+#   asset（B2）    ：只取**我们自己的** arm64 运行时资产（tools/fetch-runtime.sh），
+#                    完全不碰上游 APK；内核树由 --kernel official 从官方 registry 冻结安装。
+RT_SHA_PIN="$(sed -n 's/^RUNTIME_SHA256_DEFAULT="\(.*\)"/\1/p' "$REPO/tools/fetch-runtime.sh" | head -1)"
+RT_ASSET_STAMP="runtime-asset@$(printf '%s' "$RT_SHA_PIN" | cut -c1-16)"
+echo "   运行时来源  : ${DSH_RUNTIME_MODE:-payload}$( [ "${DSH_RUNTIME_MODE:-payload}" = asset ] && echo "（arm64 运行时资产，不下载上游 APK）" || echo "（上游 APK 的 payload）" )"
+
+if [ "${DSH_RUNTIME_MODE:-payload}" = "asset" ]; then
+  H="$CACHE/devhome"
+  STAMP="$H/.assembled-from"
+  if [ -f "$STAMP" ] && [ "$(cat "$STAMP" 2>/dev/null)" = "$RT_ASSET_STAMP" ]; then
+    echo "   复用缓存（运行时资产 $RT_ASSET_STAMP）—— 跳过解包"
+  else
+    rm -rf "$H"
+    mkdir -p "$H"
+    bash "$REPO/tools/fetch-runtime.sh" "$H" || die "运行时资产获取/解包失败"
+    printf '%s\n' "$RT_ASSET_STAMP" > "$STAMP"
+  fi
+  SRC_APK=""
+  SRC_MD5=""
+  SRC_ID="$RT_ASSET_STAMP"
+  PAYLOAD=""
+  mark "获取运行时资产"
+else
 info "1/7 获取上游 APK（$UPSTREAM_TAG）"
 
 # GitHub 的 release 直链以 github.com 开头。部分地区 github.com 不可达，
@@ -384,6 +410,8 @@ else
   echo "   组装完成：$H"
 fi
 
+fi   # ← 结束「运行时输入模式」分支（asset 模式不走上面的 1/7~3/7）
+
 # 工具链 env.sh（build.sh 第 7 行 source 它）
 # Windows 路径（C:\a\b）转 Git Bash 形式（/c/a/b）
 POSIX() {
@@ -497,7 +525,13 @@ echo "   产物：$OUT（$(du -h "$OUT" | cut -f1)）"
 # ── 6. 校验 ───────────────────────────────────────────────────────────────
 mark "构建 APK"
 if [ "$DO_VERIFY" = 1 ]; then
-  info "6/7 校验"
+  if [ "$DO_VERIFY" = 1 ] && [ "${DSH_RUNTIME_MODE:-payload}" = "asset" ]; then
+  # asset 模式没有上游 payload.zip：完整性核对改用**产物自己**的 payload（自洽即可）
+  PAYLOAD="$(mktemp)"
+  unzip -p "$OUT" assets/payload.zip > "$PAYLOAD" || die "产物里没有 assets/payload.zip"
+  echo "   （asset 模式：完整性核对对象 = 产物自身的 payload.zip）"
+fi
+info "6/7 校验"
   FAIL=0
 
   # 6.1 payload 结构
@@ -600,9 +634,13 @@ INFO="$OUT.build-info.txt"
   echo "构建时间        : $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   echo "仓库提交        : $(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo '（非 git 仓库）')"
   echo "分支            : $(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '-')"
-  echo "上游 Release    : $UPSTREAM_TAG"
-  echo "上游 APK md5    : $(file_md5 "$SRC_APK")"
-  echo "payload.zip     : $(du -h "$PAYLOAD" | cut -f1)"
+  if [ "${DSH_RUNTIME_MODE:-payload}" = "asset" ]; then
+    echo "运行时来源      : arm64 运行时资产（tools/fetch-runtime.sh，sha256 pin）"
+  else
+    echo "上游 Release    : $UPSTREAM_TAG"
+    echo "上游 APK md5    : $(file_md5 "$SRC_APK")"
+    echo "payload.zip     : $(du -h "$PAYLOAD" | cut -f1)"
+  fi
   echo "产物            : $OUT"
   echo "产物大小        : $(du -h "$OUT" | cut -f1)"
   echo "产物 SHA-256    : $(file_sha256 "$OUT")"

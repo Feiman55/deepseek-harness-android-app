@@ -51,8 +51,9 @@ if [ -n "$BOMHIT" ]; then
   exit 1
 fi
 echo "  BOM 闸门：payload 内 JSON/YAML 无 BOM ✓"
-# 移动端适配注入（mobile.css，不覆盖原生 index.html，DSH 更新后也自动重新注入）
-sh "$P/../mobile-patch/inject.sh"
+# 注意：前端补丁（mobile-patch/inject.sh）**不在这里**打 —— 它必须打在真正进包的 staging 上，
+# 见下面「补丁层」之后的「前端补丁」段（v1.24 改动：以前打在上游 payload 的 devhome 上，
+# 那既让构建变成"有状态"，也在 asset 内核/运行时模式下直接失效）。
 
 rm -rf "$P/staging" "$P/out" "$P/assets"
 mkdir -p "$P/staging/runtime/bin" "$P/staging/runtime/lib" \
@@ -311,6 +312,23 @@ if [ -d "$NPTY_SRC" ]; then
   _m=$(od -An -tx1 -j18 -N2 "$_pty" | tr -d ' \n')
   [ "$_m" = "b700" ] || { echo "!! node-pty 的 pty.node 不是 AArch64（ELF machine=$_m）"; exit 1; }
   echo "  node-pty: 嵌套路径已覆盖（$(stat -c%s "$_pty") B, ELF=AArch64）"
+fi
+
+# ============================================================================
+# 前端补丁（mobile-patch）：对 **staging** 的 dsh-web-frontend/dist 注入
+#   · 以前这步打在 devhome（上游 payload 的树）上 —— 构建因此"有状态"，而且 asset 模式下
+#     devhome 里根本没有 dshroot，直接失败；现在只对真正进包的 staging 打补丁；
+#   · 顺序放在内核/补丁层之后，保证我们的 mobile.css/mobile.js 覆盖在官方前端之上。
+# ============================================================================
+FE_DIST="$P/staging/dshroot/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-web-frontend/dist"
+if [ -d "$FE_DIST" ]; then
+  sh "$P/../mobile-patch/inject.sh" "$FE_DIST" || { echo "!! 前端补丁注入失败：$FE_DIST"; exit 1; }
+  grep -q 'href="/mobile.css"' "$FE_DIST/index.html" || { echo "!! 前端补丁自检失败：index.html 未注入 mobile.css"; exit 1; }
+  grep -q 'src="/mobile.js"' "$FE_DIST/index.html" || { echo "!! 前端补丁自检失败：index.html 未注入 mobile.js"; exit 1; }
+  grep -q 'user-scalable=no' "$FE_DIST/index.html" || { echo "!! 前端补丁自检失败：viewport 未补 user-scalable=no"; exit 1; }
+  echo "  前端补丁: mobile.css / mobile.js / viewport 已注入 staging"
+else
+  echo "!! 找不到前端 dist（内核树不对？）：$FE_DIST"; exit 1
 fi
 
 # ============================================================================

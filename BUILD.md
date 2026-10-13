@@ -128,6 +128,24 @@ bash tools/build-apk.sh --help
 > **装哪个就是哪套形象**（互相覆盖）；实现是构建期换资源引用，运行期零分支（见 `android-app/build.sh`
 > 的「外观」段与 `res/values/look.xml`）。
 
+> **构建输入来源（v1.25 起可完全脱离上游 APK）**：
+
+| 输入 | 参数 | 来源 |
+|---|---|---|
+| 内核树 | `--kernel official` | **官方 npm registry** + 仓库内冻结 lock（`android-app/kernel/package-lock.json`，由 `tools/fetch-kernel.sh` 安装）。来历与实测见 `android-app/kernel/README.md` |
+| arm64 运行时 | `--runtime asset` | **我们自己的 sha256 pin 资产**（`tools/fetch-runtime.sh`：node/python/npm/pnpm/git/bash/rish + profile 脚手架）|
+| 两者都不带（默认）| — | 上游 Release APK 的 payload（历史路径，过渡期保留）|
+
+```bash
+# 不依赖上游 APK 的可复现构建（内核来自官方 registry、运行时来自我们 pin 的资产）
+bash tools/build-apk.sh --variant community --kernel official --runtime asset
+```
+
+> 实测：该模式 **1 分 33 秒**出包（旧路 4~5 分钟，且要下载/解压 150 MB 上游 APK），产物与旧路的
+> 有效差异只有我们有意新增的部分（内核 535 包路径+版本逐一致、0 版本不同）。运行时可用
+> `DSH_RUNTIME_ARCHIVE=<文件>` 指定本地归档（离线构建）；资产发布后 `tools/fetch-runtime.sh`
+> 会按 pin 的 URL + sha256 自动下载并校验。
+
 > **脚本目录**（都在仓库里，路径由脚本自身位置推导，可在任意克隆 / 工作区里跑）：
 
 | 位置 | 用途 |
