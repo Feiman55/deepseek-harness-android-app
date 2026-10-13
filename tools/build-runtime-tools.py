@@ -36,7 +36,8 @@ PREFIX = "data/data/com.termux/files/usr/"
 # 目标包（维护者清单：15 个 GNU 工具 + W5 的设备内最小构建链 3 个）
 WANT = [
     "grep", "sed", "gawk", "coreutils", "findutils", "diffutils", "patch",
-    "less", "tar", "zip", "unzip", "xz-utils", "zstd", "jq", "openssl",
+    "less", "tar", "zip", "unzip", "xz-utils", "zstd", "jq",
+    "openssl", "openssl-tool",          # 库与 CLI 是两个包：openssl-tool 才带 bin/openssl
     "aapt2", "ecj", "dx",
 ]
 
@@ -165,7 +166,7 @@ def extract() -> None:
         tmp = TM / f"{n}.data.tar"
         tmp.write_bytes(data)
         with tarfile.open(tmp) as tf:
-            by_name = {m.name: m for m in tf.getmembers()}
+            by_name = {m.name.lstrip('./'): m for m in tf.getmembers()}   # 键归一化：去掉 ./ 前缀
             members = []
             for m in tf.getmembers():                      # 按 tar 顺序，链接目标先落地
                 rel = m.name.lstrip("./")
@@ -200,12 +201,18 @@ def extract() -> None:
                         aliases[parts[0]].append((parts[1], tgt))
                         links += 1
                         continue
+                    if parts[0] == "share":
+                        links += 1        # 文档/许可链接：不进包也不重建，安静跳过
+                        continue
+                    if m.linkname.rstrip("/").endswith(("terminfo",)) or m.isdir():
+                        links += 1        # 目录型链接：由 env(TERMINFO) 指向真实目录，不物化
+                        continue
                     cand = tgt if tgt.startswith("/") is False else ""
                     names = []
                     if cand:
                         names.append(os.path.normpath(os.path.join(os.path.dirname(m.name), cand)).replace("\\", "/"))
                     if "/usr/" in tgt:
-                        names.append(PREFIX + tgt.split("/usr/", 1)[1])
+                        names.append((PREFIX + tgt.split("/usr/", 1)[1]).lstrip("./"))
                     src_m = next((by_name[n] for n in names if n in by_name), None)
                     if src_m is not None:
                         data_b = tf.extractfile(src_m)
