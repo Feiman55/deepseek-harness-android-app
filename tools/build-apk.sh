@@ -32,7 +32,7 @@ DO_EMULATOR=0
 DO_VERIFY=1
 DO_SMOKE=0
 ANDROID_JAR_OPT=""
-DSH_VARIANT="${DSH_VARIANT:-official}"
+DSH_VARIANT="${DSH_VARIANT:-community}"
 VARIANT_SET=0
 DO_ORIGINAL_LOOK=0
 OUT_SET=0
@@ -97,10 +97,10 @@ REPO_VARIANTS="$REPO/android-app/variants.sh"
 [ -f "$REPO_VARIANTS" ] || die "缺少 $REPO_VARIANTS（变体表）"
 . "$REPO_VARIANTS"
 # 产物名：official 保持历史名（兼容既有文档/脚本），其余变体带后缀
-if [ "$VARIANT_SET" = 1 ] && [ "$OUT" = "$REPO/android-app/DeepSeekHarness.apk" ]; then
-  if [ "$DSH_VARIANT" != "official" ]; then
-    OUT="$REPO/android-app/DeepSeekHarness-$DSH_VARIANT.apk"
-  fi
+# 产物命名：非 official 变体一律带 -<变体> 后缀（**不管变体是显式给的还是默认的**，
+# 免得"没带参数"时出一个叫 DeepSeekHarness.apk 却装着社区版的包）。必须排在 -original 后缀之前。
+if [ "$OUT" = "$REPO/android-app/DeepSeekHarness.apk" ] && [ "$DSH_VARIANT" != "official" ]; then
+  OUT="$REPO/android-app/DeepSeekHarness-$DSH_VARIANT.apk"
 fi
 # 外观：原版形象单独一个产物名，绝不覆盖卡通包（两者包名相同，装哪个就是哪套形象）
 # 调用方用 --out 显式指定路径时不加后缀（尊重调用方命名）
@@ -110,16 +110,17 @@ if [ "$DO_ORIGINAL_LOOK" = 1 ]; then
 else
   export DSH_LOOK="${DSH_LOOK:-cartoon}"
 fi
-echo "   变体        : $DSH_VARIANT（appId=$V_APP_ID 引擎=$V_PORT 外部目录=$V_EXT_DIR）"
+echo "   变体        : $DSH_VARIANT（$( [ "$VARIANT_SET" = 1 ] && echo '显式指定' || echo '默认' )；appId=$V_APP_ID 引擎=$V_PORT 外部目录=$V_EXT_DIR）"
 echo "   外观        : $DSH_LOOK（cartoon=卡通形象｜original=上游原版蓝鲸鱼）"
 
 # ── 0. 预检 ───────────────────────────────────────────────────────────────
 info "0/6 预检环境"
 
 need() { command -v "$1" >/dev/null 2>&1 || die "缺少 $1${2:+（$2）}"; }
-need curl   "下载上游 APK 用"
-need unzip  "解压 payload.zip 用"
-need tar    "组装 dshroot 用"
+need curl   "下载运行时资产用"
+need unzip  "读取产物内的 payload 做完整性核对用"
+need tar    "解包内核缓存 / 运行时资产用"
+need npm    "装内核树用（官方 registry 冻结安装）"
 need javac  "JDK；请设 JAVA_HOME 或把 \$JAVA_HOME/bin 放进 PATH"
 need keytool "JDK 自带；用于生成/查看签名密钥"
 

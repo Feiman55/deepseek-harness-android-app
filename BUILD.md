@@ -6,8 +6,9 @@
 bash tools/build-apk.sh
 ```
 
-产物：`android-app/DeepSeekHarness.apk`（约 150 MB）
-同时生成 `android-app/DeepSeekHarness.apk.build-info.txt`，记录这次构建的全部来源信息。
+产物：`android-app/DeepSeekHarness-community.apk`（约 105 MB；**默认变体 = 社区版**，
+official 变体仍是历史名 `DeepSeekHarness.apk`）
+同时生成与产物同名的 `.build-info.txt` 与 `.sha256`，记录这次构建的全部来源信息。
 
 首次运行会做两件事，之后全部走缓存、可离线重复构建：
 
@@ -52,7 +53,7 @@ Linux/macOS 的 `~/Android/Sdk`、`~/Library/Android/sdk`）。
 - **不要在手机/平板 App 内构建 APK**：设备上没有、也不应该塞进构建工具链（最小集 raw 就 ~525MB，
   加 Gradle/AGP/SDK 要 +1~2GB，加 NDK 更不可行，与 APK 体积模型冲突）。手机上能做的是**运行期定制**
   （装插件 / 改 profile 补丁，见 `docs/开发指南.md` 的「定制面」一节）；要重建 APK 就在 PC 上做，
-  或者用公开社区密钥构建可与官方共存的社区版（`--variant community`）。
+  或者用公开社区密钥构建可与官方共存的社区版（**不带 `--variant` 时的默认变体**）。
 
 **平台支持**：Windows 用 **Git Bash**（`C:\WINDOWS\system32\bash.exe` 是 WSL，不行）；
 Linux、macOS 理论上同样可用，但**仅在 Windows + Git Bash 上实测过**。
@@ -102,7 +103,9 @@ Linux、macOS 理论上同样可用，但**仅在 Windows + Git Bash 上实测�
 
 ```bash
 bash tools/build-apk.sh                      # 全自动（推荐，= official 变体）
-bash tools/build-apk.sh --variant community  # 社区版：公开密钥签名，可与官方三个变体共存
+bash tools/build-apk.sh                      # 默认就是社区版（公开密钥签名，可与官方三个变体共存）
+bash tools/build-apk.sh --variant official   # 官方包名；用本地生成的调试密钥签名
+bash tools/build-apk.sh --variant community  # 显式指定社区版（等价于不带 --variant）
 bash tools/build-apk.sh --variant lite       # Lite 共存版（包名 .beta / 端口 3082）
 bash tools/build-apk.sh --clean              # 清缓存重建（保留签名密钥）
 bash tools/build-apk.sh --emulator           # 适配 x86_64 模拟器

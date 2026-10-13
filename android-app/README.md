@@ -1,6 +1,6 @@
 # android-app/ —— APK 构建工程
 
-把 DSH 内核 + node 运行时 + 移动端适配打包成可直接安装的 Android APK（`DeepSeekHarness.apk`）。
+把 DSH 内核 + node 运行时 + 移动端适配打包成可直接安装的 Android APK（默认社区版 `DeepSeekHarness-community.apk`）。
 
 ## 目录结构
 
@@ -37,7 +37,7 @@ export ANDROID_JAR=<android.jar 路径>
 export KEYSTORE_PASS=<签名密码>
 export KEYSTORE_ALIAS=dsh
 sh build.sh
-# 产物：android-app/DeepSeekHarness.apk
+# 产物：android-app/DeepSeekHarness-community.apk
 ```
 
 ## build.sh 关键点
@@ -77,7 +77,7 @@ DSH_VARIANT=community bash android-app/build.sh
 - 把 `src/` 复制到 `out/src/`，按变体改写 `package` / `import` 并把整棵树搬进变体包目录；
 - 生成 `<变体包>/BuildVariant.java`（appId / 端口 / 外部目录常量，壳与 vscreen 核心共用）；
 - 改写 manifest 的 `package` / provider `authorities`（shizuku / logshare）/ 版本后缀 / 显示名，并**自检替换确实发生**；
-- 产物：official 保持 `DeepSeekHarness.apk`，其余变体为 `DeepSeekHarness-<variant>.apk`。
+- 产物：`DeepSeekHarness-<variant>.apk`（默认变体 community）；official 保持历史名 `DeepSeekHarness.apk`。
 
 **社区密钥 `community.jks`（别名 `community`，口令 `dsh-community`）是故意公开的**：它的用途是让任何人不持有维护者私钥也能构建出**可与官方包共存**的自己那一份。它**绝不**用于签名正式发布物 —— 正式包始终由私有 `release.jks` 签发。
 

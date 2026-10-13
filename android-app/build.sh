@@ -22,7 +22,10 @@ case "$(uname -s 2>/dev/null)" in
   MINGW*|MSYS*|CYGWIN*) CP_SEP=";"; D8="d8.bat"; APKSIGNER="apksigner.bat" ;;
 esac
 # 变体表（B11）：appId / 端口 / 外部目录 / 显示名 / 默认密钥文件名 的单一真源。
-# DSH_VARIANT=official|lite|compat|community（默认 official）
+# DSH_VARIANT=official|lite|compat|community（默认 community —— 与 tools/build-apk.sh 一致）
+# v1.25：默认变体统一为 community（tools/build-apk.sh 默认也是它）；显式设 DSH_VARIANT 可覆盖
+DSH_VARIANT="${DSH_VARIANT:-community}"
+export DSH_VARIANT
 [ -f "$P/variants.sh" ] || { echo "!! 缺少 android-app/variants.sh（变体表）"; exit 1; }
 . "$P/variants.sh"
 

@@ -68,7 +68,7 @@ apksigner sign --ks android-app/community.jks \
 bash tools/build-apk.sh --variant community   # 社区版：公开密钥签名，可与官方三个变体共存
 bash tools/build-apk.sh --variant official|lite|compat
 ```
-产物：`DeepSeekHarness.apk`（official）/ `DeepSeekHarness-<variant>.apk`。
+产物：`DeepSeekHarness-<variant>.apk`（**默认 `community`**）；`official` 变体是历史名 `DeepSeekHarness.apk`。
 
 **社区密钥（公开，故意如此）**：`android-app/community.jks`，别名 `community`，口令 `dsh-community`。
 - 它的用途就是让**不持有维护者私钥**的人也能构建出可与官方包共存的自己那一份；

@@ -93,7 +93,7 @@ cd android-app && bash build.sh
 
 ```sh
 cd android-app && bash build.sh
-# 产物：android-app/DeepSeekHarness.apk
+# 产物：android-app/DeepSeekHarness-community.apk（默认变体；official 为 DeepSeekHarness.apk）
 ```
 
 build.sh 会自动：
