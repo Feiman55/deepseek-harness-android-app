@@ -388,6 +388,8 @@ if [ "$DO_VERIFY" = 1 ]; then
 # 本 fork 的补丁（v1.20 起）：
 @deepseek-ai/dsh-bash-local/lib/index.js:DSH_BASH_PATH
 @deepseek-ai/dsh-subprocess-local/lib/runner-launch-*.js:dsh-android-patch
+# W4（v1.25）：Android 环境陷阱写进 bash 工具自己的描述（overlay 里改的是 dsh-tool-bash）
+@deepseek-ai/dsh-tool-bash/lib/index.js:Android 环境（本仓库注入
 "
   # 校验对象必须是**真正进包的那棵树**（staging），不是构建用的 devhome 缓存 ——
   # 否则会出现"检查过了、包里没有"（本仓库踩过：overlay 只贴了 devhome，staging 是干净的）。
