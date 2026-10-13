@@ -26,6 +26,16 @@
 > 另：设备内构建链还用到了 Termux 分发的 GNU 工具与 Java 工具（aapt2 / ecj / dx 等），
 > 它们各自的许可随包在 `payload/runtime/share/doc/*/COPYING*` 里，未在此逐一展开。
 
+## 0.1 设备内构建链里的 `android.jar`（**本仓库不再分发它**）
+
+W5 的「设备内从零构建链」需要四样：`aapt2`、`ecj`、`dx`（三者随运行时资产分发，许可见其
+`share/doc/*/COPYING*`）与 **`android.jar`**。最后一样**故意不随包分发**：
+
+- Android SDK 里 `platforms/android-*/android.jar` 受 **Android SDK 许可条款**约束，**不允许再分发**
+  （AOSP 自行构建的 android.jar 是 Apache-2.0，但那不是 SDK 里这一份）；
+- 正确做法：**用你自己的 SDK**，把它放到设备上任意路径，构建时用 `-bootclasspath` / `-classpath` 指过去；
+- 只做「改现成包 + 重签」时**根本不需要 android.jar**（用内置 `apksigner` 即可，见 §0）。
+
 ## 1. Operit — LGPL-3.0（虚拟屏 vscreen）
 
 | 项 | 内容 |

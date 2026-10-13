@@ -22,6 +22,31 @@
 
 - **`DeepSeekHarness-community-<版本>-arm64.apk`** —— 社区构建（包名 `com.deepseek.harness.community`，与上游各变体**可共存**）
 - 要求：**arm64 真机**、Android 7.0（API 24）及以上
+- **`DeepSeekHarness-community-<版本>-x86_64.apk`** —— **模拟器包**（x86_64 + `ndk_translation`），
+  只用于在模拟器上跑流程；**不要装到真机**（node 的 OpenSSL 会 dlopen 失败）
+- 每个包旁边都有同名 `.sha256`，下载后建议核对：
+  `sha256sum -c DeepSeekHarness-community-*-arm64.apk.sha256`
+
+## 🌐 镜像与网络（国内可用）
+
+Release 资产与仓库文件在部分网络下直连不畅。**单一真源是 [`config/mirrors.env`](config/mirrors.env)**，
+构建脚本、随包 helper 与引擎都读它：
+
+```bash
+# 1) 下 Release 资产：在 github.com 前加代理前缀（顺序见 mirrors.env 的 GH_RELEASE_PROXIES）
+curl -L -o app.apk https://ghfast.top/https://github.com/blue-soda/deepseek-harness-android-app/releases/download/v1.19.3/DeepSeekHarness-community-1.19.3-arm64.apk
+# 失败就换下一个前缀： https://gh-proxy.com/https://github.com/...
+
+# 2) 取仓库里的文件（设备端已内置 helper，多源自动回退、失败逐源报错）
+mirror-get tools/build-apk.sh /sdcard/build-apk.sh
+```
+
+- **npm / pnpm**：payload 内置 `.npmrc` → `registry.npmmirror.com`、`package-import-method=copy`
+  （避免硬链问题）、已关 audit/fund/update-notifier；构建内核默认走国内 registry，失败回落官方
+  （lock 带 integrity 兜底）。
+- **Python / pip**：引擎启动注入 `PIP_INDEX_URL` / `PIP_TRUSTED_HOST`（清华源）。
+- **想关掉镜像走官方源**：把应用偏好 `mirrors_off` 置 true（控制台开关 UI 待补），或删掉
+  `bin/mirrors.env` —— 关掉后**完全不注入** `NPM_CONFIG_REGISTRY` / `PIP_*`。
 
 ## 🚀 快速上手
 
@@ -53,6 +78,8 @@ bash tools/build-apk.sh
 - 内置插件：[ds-harness-remote](https://github.com/blue-soda/ds-harness-remote/)
 - [Operit](https://github.com/AAswordman/Operit) —— 虚拟屏（vscreen）移植来源，LGPL-3.0，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 - [Shizuku](https://github.com/RikkaApps/Shizuku) —— 免 Root 特权通道
+- [AOSP apksig](https://android.googlesource.com/platform/tools/apksig) —— 设备内 APK 签名/校验（Apache-2.0）
+- Termux 分发的 GNU 工具集与 Java 工具（aapt2 / ecj / dx 等）—— 许可随包在 `runtime/share/doc/*/COPYING*`
 - 本仓库源码主体为 [MIT](LICENSE)（例外与依赖许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)）
 
 > 本仓库是源码与配置仓库，**不含 APK 二进制与私有签名密钥**（社区公开密钥除外）；安装包见上方 Releases。

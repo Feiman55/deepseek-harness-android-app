@@ -110,6 +110,10 @@ bash tools/build-apk.sh        # 社区版（唯一变体；公开密钥签名�
 **在设备上构建：可行，但代价高**（如实说明，不要断言"做不到"）：
 - 可以只用用户态工具链（JDK + `d8` + `aapt2` + `apksigner` + 一个 `android.jar`），
   **不需要 Gradle/AGP/SDK 规范布局**；工具链约 0.5–2 GB（进 Gradle/NDK 则更夸张）；
+  **v1.19.3 起 `aapt2` / `ecj` / `dx` / `apksigner` 已随 payload 内置**（`runtime/bin/`，
+  不必再装 Termux 的 openjdk），**但 `android.jar` 必须自备** —— 它受 Android SDK 许可约束、
+  不能再分发；用你自己 SDK 里的 `platforms/android-*/android.jar`（`ecj -bootclasspath <android.jar>`）。
+  只做"改现成包 + 重签"时不需要它（见上一节的"安装后自证"）；
 - 构建本身还会吃 ~1 GB 中间产物与 ~100 MB 产物；
 - **最后一步安装仍需用户确认**（或已授权的 Shizuku）；
 - 结论：**可行、不建议当常规路径**。常规做法是 PC 构建，或在 CI/他机构建后用哈希核对。
