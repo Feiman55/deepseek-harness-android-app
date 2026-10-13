@@ -153,6 +153,125 @@ public class OverlayService extends Service {
     private static volatile String lastText = "";
     private static volatile boolean lastSticky = false;
     private static volatile long lastStatusAt = 0L;
+    /** v1.24：最近一次的类别 —— 恢复时要用它决定"常驻还是自动收"（不能再靠文案猜）。 */
+    private static volatile int lastKind = 0;
+
+    // ============ v1.24：气泡文案可自定义（控制台 →「悬浮窗消息」）============
+    //
+    // 文案的"作者"有两处：内核侧插件（思考中…／正在调用 X…／任务已完成／会话已结束，见
+    // plugins/dsh-tool-android/lib/index.js）与 App 侧（空闲 摸鱼中…／退出 下班啦）。
+    // 插件在 payload 里，改它要走"发 npm → 重打 payload → 上游发版"，代价太大；所以这里
+    // **把送来的原文只当判类依据**，再用用户模板渲染 —— 不动协议、不动插件。
+    // 判类认不出的一律原文直出（旧插件、将来新增的文案都不会被改坏）。
+    static final String KEY_MSG_IDLE  = "overlay_msg_idle";
+    static final String KEY_MSG_THINK = "overlay_msg_think";
+    static final String KEY_MSG_TOOL  = "overlay_msg_tool";
+    static final String KEY_MSG_DONE  = "overlay_msg_done";
+    /** 默认文案：与 v1.21 起的原文案逐字一致（用户不填就还是这些）。 */
+    static final String DEF_MSG_IDLE  = "摸鱼中…";
+    static final String DEF_MSG_THINK = "思考中…";
+    static final String DEF_MSG_TOOL  = "正在调用 {tool}…";
+    static final String DEF_MSG_DONE  = "任务已完成";
+    /** 「预览」工具那条时 {tool} 用什么示例名（真实运行时是真正的工具名）。 */
+    static final String PREVIEW_TOOL_SAMPLE = "web_fetch";
+    /** 气泡类别：既决定套哪条模板，也决定"常驻还是自动收"。 */
+    static final int KIND_PLAIN = 0, KIND_THINK = 1, KIND_TOOL = 2, KIND_DONE = 3, KIND_IDLE = 4;
+
+    private static volatile String msgIdle = DEF_MSG_IDLE;
+    private static volatile String msgThink = DEF_MSG_THINK;
+    private static volatile String msgTool = DEF_MSG_TOOL;
+    private static volatile String msgDone = DEF_MSG_DONE;
+
+    static String msgIdle()  { return msgIdle; }
+    static String msgThink() { return msgThink; }
+    static String msgTool()  { return msgTool; }
+    static String msgDone()  { return msgDone; }
+
+    /** 读一条模板：空/异常 → 默认值（"留空 = 用默认"是给用户看的规则）。 */
+    private static String readMsg(Context ctx, String key, String def) {
+        try {
+            String v = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(key, "");
+            if (v == null) return def;
+            v = v.trim();
+            return v.isEmpty() ? def : v;
+        } catch (Throwable t) { return def; }
+    }
+
+    /** 载入用户模板（OverlayService.onCreate 与控制台保存后各调一次）。 */
+    static void loadMessages(Context ctx) {
+        msgIdle  = readMsg(ctx, KEY_MSG_IDLE,  DEF_MSG_IDLE);
+        msgThink = readMsg(ctx, KEY_MSG_THINK, DEF_MSG_THINK);
+        msgTool  = readMsg(ctx, KEY_MSG_TOOL,  DEF_MSG_TOOL);
+        msgDone  = readMsg(ctx, KEY_MSG_DONE,  DEF_MSG_DONE);
+    }
+
+    /** 控制台「保存」：写 prefs + 立刻更新静态字段（悬浮窗不必重启；空串 = 回默认）。 */
+    static void saveMessages(Context ctx, String idle, String think, String tool, String done) {
+        try {
+            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                    .putString(KEY_MSG_IDLE,  idle  == null ? "" : idle.trim())
+                    .putString(KEY_MSG_THINK, think == null ? "" : think.trim())
+                    .putString(KEY_MSG_TOOL,  tool  == null ? "" : tool.trim())
+                    .putString(KEY_MSG_DONE,  done  == null ? "" : done.trim())
+                    .apply();
+        } catch (Throwable ignored) {}
+        loadMessages(ctx);
+    }
+
+    /** 控制台「恢复默认」：清掉四条（下次读就是默认值）。 */
+    static void resetMessages(Context ctx) {
+        try {
+            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                    .remove(KEY_MSG_IDLE).remove(KEY_MSG_THINK)
+                    .remove(KEY_MSG_TOOL).remove(KEY_MSG_DONE).apply();
+        } catch (Throwable ignored) {}
+        loadMessages(ctx);
+    }
+
+    /**
+     * 判类：把送来的原文归到四类之一。
+     * ⚠ 只认今天插件实际发的措辞；认不出就当"原文直出"（KIND_PLAIN）——
+     * 宁可少套一次模板，也不要把不认识的文案改坏。
+     */
+    static int classifyBubble(String t) {
+        if (t == null || t.isEmpty()) return KIND_PLAIN;
+        if (t.startsWith("摸鱼")) return KIND_IDLE;
+        if (t.startsWith("思考")) return KIND_THINK;
+        if (t.startsWith("任务已完成") || t.startsWith("会话已结束") || t.startsWith("已完成")) return KIND_DONE;
+        if (t.startsWith("正在向用户提问")) return KIND_PLAIN;   // 那是在等你回答，不算调用工具
+        if (t.startsWith("正在")) return KIND_TOOL;
+        return KIND_PLAIN;
+    }
+
+    /** 从「正在调用 web_fetch…」里抠工具名；抠不到返回空串。 */
+    static String toolNameOf(String t) {
+        if (t == null) return "";
+        String s = t.startsWith("正在调用") ? t.substring(4) : (t.startsWith("正在") ? t.substring(2) : t);
+        s = s.replace("…", "").replace("...", "").trim();
+        return s.length() > 24 ? s.substring(0, 24) : s;
+    }
+
+    /** 按类别渲染模板（支持 {tool} / {工具} / {name} 占位符）。 */
+    static String renderBubble(String raw, int kind, String toolOverride) {
+        switch (kind) {
+            case KIND_IDLE:  return msgIdle;
+            case KIND_THINK: return msgThink;
+            case KIND_DONE:  return msgDone;
+            case KIND_TOOL: {
+                String tool = toolOverride != null ? toolOverride : toolNameOf(raw);
+                return msgTool.replace("{tool}", tool).replace("{工具}", tool).replace("{name}", tool);
+            }
+            default: return raw == null ? "" : raw;
+        }
+    }
+
+    /** 控制台「预览」：按类别即时推一条（悬浮窗没在跑就静默忽略）。 */
+    public static void previewBubble(String text, int kind) {
+        String raw = text == null ? "" : text.trim();
+        if (raw.isEmpty()) return;
+        String shown = fitBubbleWidth(renderBubble(raw, kind, kind == KIND_TOOL ? PREVIEW_TOOL_SAMPLE : null), 400);
+        pushRendered(shown, true, 0L, kind);
+    }
 
     private float touchX, touchY, startX, startY;
     private boolean dragging = false;
@@ -302,7 +421,7 @@ public class OverlayService extends Service {
                             if (up && System.currentTimeMillis() - lastAgentStatusAt > IDLE_FISH_MS) {
                                 String cur = (statusBubble != null && statusBubble.getText() != null)
                                         ? statusBubble.getText().toString() : "";
-                                if (!cur.startsWith("正在向用户提问")) applyBubble("摸鱼中…", true, 0L);
+                                if (!cur.startsWith("正在向用户提问")) applyBubble(msgIdle, true, 0L, KIND_IDLE);
                             }
                         }
                     });
@@ -327,6 +446,7 @@ public class OverlayService extends Service {
         // v1.21：空闲计时从这里起算（服务刚起来不该立刻显示"摸鱼中…"）
         lastAgentStatusAt = System.currentTimeMillis();
         enginePort = enginePort(this);
+        loadMessages(this);   // v1.24：载入用户在控制台「悬浮窗消息」里改过的四条文案
         wm = (WindowManager) getSystemService(WINDOW_SERVICE);
         startForegroundCompat();
         buildOverlay();
@@ -341,8 +461,9 @@ public class OverlayService extends Service {
                     && System.currentTimeMillis() - lastStatusAt < 10 * 60 * 1000L) {
                 final String t = lastText;
                 final boolean st = lastSticky;
+                final int kd = lastKind;
                 handler.postDelayed(new Runnable() {
-                    @Override public void run() { applyBubble(t, st, 0L); }
+                    @Override public void run() { applyBubble(t, st, 0L, kd); }
                 }, 400);
             }
         } catch (Throwable ignored) {}
@@ -1172,7 +1293,7 @@ public class OverlayService extends Service {
             //（见 setPanelVisible(false, …)：面板一关，气泡消失、按钮变回普通「退出」）。
             // 所以气泡这里用 sticky（不自动收），避免没关面板就先自己消失了。
             setExitArmed(true);
-            applyBubble("下班啦", true, 0L);
+            applyBubble("下班啦", true, 0L, KIND_PLAIN);
             handler.removeCallbacks(exitDisarm);      // 不再排 TTL 定时器
             // v1.21（用户要求）：**不再弹**"再点一次「确认退出」…"的 Toast。
             // 按钮变红 + 头顶「下班啦」已经足够表达"已进入待确认"，底部反复弹提示条很打扰。
@@ -1181,7 +1302,7 @@ public class OverlayService extends Service {
         // 点红色「确认退出」：真正退出。
         // 这里不改按钮、不撤气泡（保持红色 + 「下班啦」），一直留到 App 整体关闭。
         handler.removeCallbacks(exitDisarm);
-        applyBubble("下班啦", true, 0L);
+        applyBubble("下班啦", true, 0L, KIND_PLAIN);
         try {
             android.widget.Toast.makeText(getApplicationContext(),
                     "正在退出…", android.widget.Toast.LENGTH_SHORT).show();
@@ -1390,7 +1511,7 @@ public class OverlayService extends Service {
      * @param sticky 是否常驻（内核侧对"任务已完成/会话已结束"会置 true；用户点一下才收）
      * @param ttlMs 瞬时状态的停留时长（0 → 默认 8 秒）
      */
-    private void applyBubble(String text, boolean sticky, long ttlMs) {
+    private void applyBubble(String text, boolean sticky, long ttlMs, int kind) {
         if (statusBubble == null) return;
         if (text == null || text.isEmpty()) { hideBubble(); return; }
         // 面板里的"任务"行与气泡同源：气泡被点掉/超时收起后，展开面板仍能看到最近状态。
@@ -1410,8 +1531,8 @@ public class OverlayService extends Service {
         if (bubbleWindowView != null) {
             bubbleWindowView.post(new Runnable() { @Override public void run() { layoutCompanions(); } });
         }
-        final boolean idle = text.startsWith("摸鱼");
-        final boolean terminal = text.startsWith("任务已完成") || text.startsWith("会话已结束");
+        final boolean idle = kind == KIND_IDLE;
+        final boolean terminal = kind == KIND_DONE;
         // 终态与空闲态常驻（用户点一下收起）；瞬时状态（思考中/调用工具）TTL 后自动收
         if (!sticky && !terminal && !idle) {
             handler.postDelayed(bubbleHide, ttlMs > 0 ? ttlMs : BUBBLE_TTL_MS);
@@ -1434,13 +1555,22 @@ public class OverlayService extends Service {
      * 否则用户回到桌面会发现气泡莫名消失（实测踩过：后台期间服务重启）。
      */
     public static void pushStatus(final String text, final boolean sticky, final long ttlMs) {
-        lastText = text;
+        // v1.24：先判类 → 套用户模板（认不出就原文直出）→ 再按气泡真实宽度裁一次。
+        final int kind = classifyBubble(text);
+        final String shown = fitBubbleWidth(renderBubble(text, kind, null), 400);
+        pushRendered(shown, sticky, ttlMs, kind);
+    }
+
+    /** v1.24：已经把模板渲染好的文案直接推（控制台预览走这条，不再二次套模板）。 */
+    static void pushRendered(final String shown, final boolean sticky, final long ttlMs, final int kind) {
+        lastText = shown;
         lastSticky = sticky;
+        lastKind = kind;
         lastStatusAt = System.currentTimeMillis();
         final OverlayService s = instance;
         if (s == null) return;   // 悬浮窗没在跑：静默忽略（用户没开悬浮窗就不打扰）
         s.handler.post(new Runnable() {
-            @Override public void run() { s.applyBubble(text, sticky, ttlMs); }
+            @Override public void run() { s.applyBubble(shown, sticky, ttlMs, kind); }
         });
     }
 

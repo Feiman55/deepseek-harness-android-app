@@ -183,6 +183,12 @@ v1.19.7 起全部接上：
 | `btn.theme.reload` / `.export` / `.import` / `.reset` / `.openDir` | `重新加载` / `导出主题包` / `导入主题包` / `恢复默认` / `打开主题目录` | 主题页五个操作 |
 | `title.themeAi` | `让 AI 做主题包` | 主题页第②块标题 |
 | `desc.themeAi` | （一句说明） | 同上说明 |
+| `card.overlaymsg` | `悬浮窗消息` | 主控台的「悬浮窗消息」导航行（v1.24 起；编辑小人气泡的文案）|
+| `desc.overlaymsg` | `小人气泡里说什么 · 空闲 / 思考 / 调用工具 / 结束` | 同上，副标题 |
+| `desc.overlaymsgPage` | （一句说明） | 悬浮窗消息页开头那段话 |
+| `desc.bubbleDefaults` | （一句说明） | 同上，默认值与"认不出的文案原样显示"的说明 |
+| `title.bubbleIdle` / `.bubbleThink` / `.bubbleTool` / `.bubbleDone` | `空闲时` / `思考时` / `调用工具时` / `结束时` | 四行输入框的标题（**只改标题，不改用户填的文案**；文案存在 prefs，不在主题里）|
+| `btn.bubblePreview` / `.bubbleSave` / `.bubbleReset` | `预览` / `保存` / `恢复默认` | 四行各自的预览按钮 + 底部两个操作 |
 | `btn.theme.copy` | `复制` | 每条提示词右侧的复制按钮 |
 | `title.themeSpec` | `规范与自检` | 主题页第③块标题 |
 | `desc.themeSpec` | （一句说明） | 同上说明 |

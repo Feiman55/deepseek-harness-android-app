@@ -36,6 +36,7 @@ import android.webkit.WebChromeClient;
 import android.webkit.ValueCallback;
 import android.webkit.WebViewClient;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -7244,6 +7245,7 @@ public class MainActivity extends Activity {
         if (consolePage == PAGE_SESSION_ADMIN) { renderConsoleSessionAdmin(); return; }   // v1.19.4：会话管理（删除）
         if (consolePage == PAGE_SESSION_TRASH) { renderConsoleSessionTrash(); return; }   // v1.19.4：回收站
         if (consolePage == PAGE_BROWSER) { renderConsoleBrowser(); return; }   // v1.19.6 · 阶段 C：AI 浏览器
+        if (consolePage == PAGE_OVERLAY_MSG) { renderConsoleOverlayMsg(); return; }   // v1.24：悬浮窗消息（气泡文案）
         if (consolePage >= 5) {                       // v1.17.8：layout.pages 的额外页
             ConsoleTheme ct = conTheme;
             int idx = consolePage - 4;
@@ -7379,6 +7381,9 @@ public class MainActivity extends Activity {
         items.put("log", cNavRow(t("card.log", "日志"), conLogLine(), "", 3));
         items.put("theme", cNavRow(t("card.theme", "主题"), t("desc.theme", "外观 / 布局 / 文案都由 console.json 决定 · 点这里导入导出"),
                 "", 4));
+        // v1.24：悬浮窗消息（小人气泡的文案：空闲 / 思考 / 调用工具 / 结束）
+        items.put("overlaymsg", cNavRow(t("card.overlaymsg", "悬浮窗消息"),
+                t("desc.overlaymsg", "小人气泡里说什么 · 空闲 / 思考 / 调用工具 / 结束"), "", PAGE_OVERLAY_MSG));
 
         // ── 诊断 ──
         items.put("group.diagnose", cGrpTitle(t("title.grpDiagnose", "诊断")));
@@ -7435,7 +7440,7 @@ public class MainActivity extends Activity {
      */
     private static final String[][] SIMPLE_GROUPS = {
         {"", "extract"},
-        {"group.system", "env", "browser", "perm", "plugins", "log", "theme"},
+        {"group.system", "env", "browser", "perm", "plugins", "log", "theme", "overlaymsg"},
         {"group.diagnose", "selfcheck"},
         // v1.21（用户要求）：会话两行移到最后 —— 它们不是日常高频操作，
         // 原来排在最上面会挡住「启动引擎 / 权限 / 日志」这些常用入口。
@@ -11345,6 +11350,11 @@ public class MainActivity extends Activity {
      * 用负数哨兵的理由同 PAGE_SELFCHECK：自定义页从 5 起编号，内置页不得占用。
      */
     private static final int PAGE_BROWSER = -104;
+    /**
+     * v1.24：悬浮窗消息（气泡文案自定义：空闲 / 思考 / 调用工具 / 结束）。
+     * 负数哨兵理由同上 —— 自定义页从 5 起编号，内置页不占用。
+     */
+    private static final int PAGE_OVERLAY_MSG = -105;
     /** 会话列表（null = 还没加载过）。 */
     private SessionAdmin.ListResult conAdminList;
     /** 回收站列表。 */
@@ -11805,6 +11815,99 @@ public class MainActivity extends Activity {
                 conToast(lr.headline());
             }});
         }}, "dsh-session-admin-list").start();
+    }
+
+    // ===================== v1.24：悬浮窗消息（气泡文案自定义） =====================
+    /**
+     * 「悬浮窗消息」页：小人气泡里说什么，由用户自己定。
+     *
+     * 文案真源在 {@link OverlayService} 的静态字段 + prefs（键见那边的 KEY_MSG_*）；
+     * 这里只负责编辑、保存、预览 —— 保存后**立刻**对悬浮窗生效（不必重启引擎或服务）。
+     * 判类规则见 {@link OverlayService#classifyBubble}：App 把内核侧插件送来的原文只当
+     * 判类依据，再用这里的模板渲染，所以**不动插件**也能自定义（插件在 payload 里，
+     * 改它要走"发 npm → 重打 payload → 上游发版"，代价太大）。
+     */
+    private void renderConsoleOverlayMsg() {
+        LinearLayout col = consoleBody;
+        col.addView(conBackRow(t("card.overlaymsg", "悬浮窗消息")));
+        col.addView(cNote(t("desc.overlaymsgPage",
+                "这些文字显示在悬浮窗小人的气泡里（展开面板的「任务：」一行同源）。"
+              + "留空 = 用默认值；「调用工具」那条支持 {tool} 占位符，会换成真正的工具名。"
+              + "「预览」会立刻推一条示例气泡 —— 悬浮窗没在跑就看不到，先启动引擎。")), cTop(cGap(8)));
+
+        final EditText eIdle  = cMsgInput(OverlayService.msgIdle(),  "摸鱼中…");
+        final EditText eThink = cMsgInput(OverlayService.msgThink(), "思考中…");
+        final EditText eTool  = cMsgInput(OverlayService.msgTool(),  "正在调用 {tool}…");
+        final EditText eDone  = cMsgInput(OverlayService.msgDone(),  "任务已完成");
+
+        LinearLayout box = cCardBox();
+        box.addView(cMsgRow(t("title.bubbleIdle", "空闲时"), eIdle, OverlayService.KIND_IDLE));
+        box.addView(cCardSep());
+        box.addView(cMsgRow(t("title.bubbleThink", "思考时"), eThink, OverlayService.KIND_THINK));
+        box.addView(cCardSep());
+        box.addView(cMsgRow(t("title.bubbleTool", "调用工具时"), eTool, OverlayService.KIND_TOOL));
+        box.addView(cCardSep());
+        box.addView(cMsgRow(t("title.bubbleDone", "结束时"), eDone, OverlayService.KIND_DONE));
+        col.addView(box, cTop(cGap(10)));
+
+        col.addView(cNote(t("desc.bubbleDefaults",
+                "默认：空闲「摸鱼中…」· 思考「思考中…」· 工具「正在调用 {tool}…」· 结束「任务已完成」。"
+              + "「结束」同时管插件发来的「任务已完成」与「会话已结束」两条；"
+              + "认不出的文案（例如「正在向用户提问…」「出错」）原样显示，不会被改。")), cTop(cGap(8)));
+
+        LinearLayout acts = new LinearLayout(this);
+        acts.setOrientation(LinearLayout.HORIZONTAL);
+        Button save = cButton(t("btn.bubbleSave", "保存"), true);
+        save.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
+            OverlayService.saveMessages(MainActivity.this,
+                    eIdle.getText().toString(), eThink.getText().toString(),
+                    eTool.getText().toString(), eDone.getText().toString());
+            conToast("已保存 · 悬浮窗下次刷新就用新文案");
+            renderConsole();          // 重绘：留空的会显示成默认值
+        }});
+        acts.addView(save, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        Button reset = cButton(t("btn.bubbleReset", "恢复默认"), false);
+        reset.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
+            OverlayService.resetMessages(MainActivity.this);
+            conToast("已恢复默认文案");
+            renderConsole();
+        }});
+        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        rlp.leftMargin = dp(8);
+        acts.addView(reset, rlp);
+        col.addView(acts, cTop(cGap(14)));
+    }
+
+    /** 一行：标题 + 输入框 + 「预览」。 */
+    private View cMsgRow(String label, final EditText input, final int kind) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        TextView l = cText(label, 13f, cText(), true);
+        l.setWidth(dp(78));
+        row.addView(l);
+        row.addView(input, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView pv = cText(t("btn.bubblePreview", "预览"), 13f, cAccent(), true);
+        pv.setPadding(dp(12), dp(8), dp(2), dp(8));
+        pv.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
+            OverlayService.previewBubble(input.getText().toString(), kind);
+        }});
+        row.addView(pv);
+        return row;
+    }
+
+    /** 单行输入框（跟控制台同一套配色；留空 = 用默认值）。 */
+    private EditText cMsgInput(String value, String hint) {
+        EditText e = new EditText(this);
+        e.setText(value);
+        e.setHint(hint);
+        e.setSingleLine(true);
+        e.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f * conFontScale());
+        e.setTextColor(cText());
+        e.setHintTextColor(cSub());
+        e.setBackground(cShape(chromeBg(), cLine(), 1, 8));
+        e.setPadding(dp(10), dp(8), dp(10), dp(8));
+        return e;
     }
 
     /** 会话管理页。 */
