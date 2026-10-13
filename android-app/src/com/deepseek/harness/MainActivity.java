@@ -916,6 +916,44 @@ public class MainActivity extends Activity {
     }
 
     /**
+     * v1.25（W2）：镜像源开关 —— **控制台可关**。
+     * 默认开：走 config/mirrors.env（随包为 bin/mirrors.env）里的国内源。
+     * 关掉：完全不注入 NPM_CONFIG_REGISTRY / PIP_* ，各工具回落到自己的官方默认源。
+     */
+    static final String KEY_MIRRORS_OFF = "mirrors_off";
+    private boolean mirrorsEnabled() {
+        try { return !prefs().getBoolean(KEY_MIRRORS_OFF, false); } catch (Throwable t) { return true; }
+    }
+
+    /**
+     * 解析随包的镜像配置（KEY="VALUE" 形式，允许 # 注释与空行）。
+     * 单一真源是仓库里的 config/mirrors.env —— 构建期原样复制到 payload 的 bin/mirrors.env，
+     * 所以这里读到的就是"当前这次构建用的那套源"，不会与脚本侧脱节。
+     */
+    private java.util.Map<String, String> readMirrorsEnv(File f) {
+        java.util.HashMap<String, String> out = new java.util.HashMap<String, String>();
+        if (f == null || !f.isFile()) return out;
+        try {
+            BufferedReader r = new BufferedReader(new InputStreamReader(new FileInputStream(f), "UTF-8"));
+            String line;
+            while ((line = r.readLine()) != null) {
+                line = line.trim();
+                if (line.isEmpty() || line.startsWith("#")) continue;
+                int eq = line.indexOf('=');
+                if (eq <= 0) continue;
+                String k = line.substring(0, eq).trim();
+                String v = line.substring(eq + 1).trim();
+                if (v.length() >= 2 && (v.startsWith("\"") && v.endsWith("\""))) {
+                    v = v.substring(1, v.length() - 1);
+                }
+                if (!k.isEmpty() && !v.isEmpty()) out.put(k, v);
+            }
+            r.close();
+        } catch (Throwable ignored) {}
+        return out;
+    }
+
+    /**
      * v1.21（Q1 第 3 批）：权限向导展示期间后台预热 payload（首次解压 1.5 万条目 / ~290MB）。
      *
      * 复用「只解压、不启动」的既有路径（{@code extractOnlyMode} + {@code startEngine(true)}）：
@@ -1493,6 +1531,26 @@ public class MainActivity extends Activity {
                 env.put("DSH_HOME", home.getAbsolutePath());
                 env.put("TMPDIR", tmp.getAbsolutePath());
                 env.put("TERM", "xterm");
+        // v1.25（W2）：镜像注入 —— 单一真源是随包的 bin/mirrors.env（= 仓库 config/mirrors.env）。
+        // payload 里已有 .npmrc（管 npm/pnpm），这里补 env：pip 只认 env，而部分工具链更认 env 而非 rc。
+        if (mirrorsEnabled()) {
+            java.util.Map<String, String> mv = readMirrorsEnv(new File(bin, "mirrors.env"));
+            String npmReg = mv.get("NPM_REGISTRY_PRIMARY");
+            if (npmReg != null) {
+                env.put("NPM_CONFIG_REGISTRY", npmReg);
+                // npm/pnpm 对大小写敏感度不一致（npm 读 NPM_CONFIG_*，部分工具读小写）→ 两个都给
+                env.put("npm_config_registry", npmReg);
+            }
+            String pipIdx = mv.get("PIP_INDEX_PRIMARY");
+            if (pipIdx != null) env.put("PIP_INDEX_URL", pipIdx);
+            String pipHost = mv.get("PIP_TRUSTED_HOST_PRIMARY");
+            if (pipHost != null) env.put("PIP_TRUSTED_HOST", pipHost);
+        }
+        env.put("PIP_DISABLE_PIP_VERSION_CHECK", "1");
+        // v1.25（W3）：less/clear 之类要 terminfo 数据库 —— 随运行时资产在 runtime/share/terminfo。
+        // 不给 TERMINFO 时 less 会去 /system/etc/terminfo 找不到条目并退化（甚至报 "terminals database is inaccessible"）。
+        File terminfoDir = new File(payload, "runtime/share/terminfo");
+        if (terminfoDir.isDirectory()) env.put("TERMINFO", terminfoDir.getAbsolutePath());
                 env.put("SHELL", new File(bin, "bash").getAbsolutePath());
                 env.put("DSH_BASH_PATH", new File(bin, "bash").getAbsolutePath());
                 pb.redirectErrorStream(true);

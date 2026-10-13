@@ -126,6 +126,43 @@ bash tools/build-apk.sh        # 社区版（唯一变体；公开密钥签名�
 迁移步骤：控制台 →「导出全部数据」→ 卸载 → 安装新包 → 「从备份导入还原」。
 `/sdcard/<变体目录>` 下的外部内容（截图、主题、日志）不受卸载影响。
 
+### 安装后自证（W6：装完必须核对"装进去的到底是哪个包"）
+
+安装**必须由用户点确认**（`pm install` 在应用 uid 下会要求确认；有 Shizuku/root 时可以静默，
+但仍应让用户知情）。装完后**不要凭"看到图标变了"就宣布成功** —— 读已安装的 `base.apk` 逐项核对：
+
+```bash
+PKG=com.deepseek.harness.community
+P=/data/data/$PKG/files/payload
+APK="$(pm path $PKG | head -1 | sed 's/package://')"     # 已安装的 base.apk（可直接读）
+BUILT=/sdcard/DeepSeekHarnessCommunity/DeepSeekHarness-community.apk   # 你构建出来的那个
+
+# ① 版本号（最便宜、最先看）
+dumpsys package $PKG | grep -E 'versionCode|versionName' | head -2
+
+# ② 证书 SHA-256：证明"装的是我签的那份"，不是被换过的旧包
+"$P/runtime/bin/apksigner" verify --print-certs "$APK"     | grep 'SHA-256 digest'
+"$P/runtime/bin/apksigner" verify --print-certs "$BUILT"   | grep 'SHA-256 digest'
+
+# ③ 关键资源条目：图标 + resources.arsc（换包名/换图标最容易出错的就这几项）
+for e in resources.arsc $( "$P/runtime/bin/unzip" -Z1 "$BUILT" | grep -E '^res/.*(mipmap|drawable).*\.(png|xml)$' | head -5 ); do
+  a=$( "$P/runtime/bin/unzip" -v "$APK"   "$e" 2>/dev/null | awk '/CRC-32/{print $1, $3}' )
+  b=$( "$P/runtime/bin/unzip" -v "$BUILT" "$e" 2>/dev/null | awk '/CRC-32/{print $1, $3}' )
+  [ "$a" = "$b" ] && echo "OK   $e  ($a)" || echo "差异 $e  已装=$a 构建=$b"
+done
+
+# ④ 安装后数据是否保留（换签名才需要卸载；同签名覆盖安装会保留）
+ls "$P/dshhome" >/dev/null 2>&1 && echo "payload 在位 ✓"
+```
+
+要点：
+
+- **`apksigner` / `unzip` / `sha256sum` 都在 payload 里**（v1.19.3 起内置 apksig；
+  `runtime/bin/unzip` 来自 W3 的 GNU 工具集）→ 设备端就能自证，**不需要 PC**。
+- 装完 App 会**重启**；`/sdcard/<变体目录>` 与 `<filesDir>/payload` 都不受影响（卸载才会丢内部数据）。
+- 若 ② 的指纹与你构建时用的密钥不一致 → **装的是别的包**（旧版本或官方包），别继续往下走。
+- 若 ③ 里 `resources.arsc` 有差异，通常意味着**不是同一个构建产物**（改了资源没重打，或装到了旧包）。
+
 ## 3. 路线 C：改 dshroot 内核 JS（能做，但不持久）
 
 - **能做**：引擎以应用 uid 运行，对 `<filesDir>/payload/dshroot/**` 有写权限，改完重启引擎即生效
