@@ -1053,6 +1053,9 @@ _sum_bytes() {
 _PAYLOAD_FILES=$(find "$P/staging" -type f | wc -l | tr -d ' ')
 _PAYLOAD_BYTES=$(_sum_bytes "$P/staging")
 _LINKS_N=$(grep -cv '^[[:space:]]*$' "$P/staging/runtime/lib/LINKS.txt" 2>/dev/null || echo 0)
+# v1.25（W3）：bin 的别名同样由设备端重建，也要计入期望值（coreutils 的 100 个多调用别名 + awk 等）
+_LINKS_BIN_N=$(grep -cv '^[[:space:]]*$' "$P/staging/runtime/bin/LINKS.txt" 2>/dev/null || echo 0)
+_LINKS_N=$((_LINKS_N + _LINKS_BIN_N))
 # 每个目录算一行：files / bytes
 _subtree_line() {  # $1=相对路径
   echo "subtree $1 files=$(_count "$P/staging/$1") bytes=$(_sum_bytes "$P/staging/$1")"

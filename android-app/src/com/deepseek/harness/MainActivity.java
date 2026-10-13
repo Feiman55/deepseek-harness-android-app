@@ -5373,8 +5373,16 @@ public class MainActivity extends Activity {
     }
 
     private void applyLinks(File payload) throws IOException {
-        File lib = new File(payload, "runtime/lib");
-        File linksFile = new File(lib, "LINKS.txt");
+        applyLinksIn(new File(payload, "runtime/lib"));
+        // v1.25（W3）：runtime/bin 也有一份别名清单 —— Termux 的 coreutils 是「1 个多调用二进制 +
+        // 100 个别名」，包内只留那一个二进制，别名在这里按 LINKS.txt 重建（与 soname 别名同构）。
+        // 不处理的话设备上 awk / coreutils 各命令（sort/head/stat/…）全缺，只剩 toybox 那套。
+        applyLinksIn(new File(payload, "runtime/bin"));
+    }
+
+    /** 按 dir/LINKS.txt 重建别名：硬链 → 软链 → 复制兜底（与 v1.18 的 soname 处理完全一致）。 */
+    private void applyLinksIn(File dir) throws IOException {
+        File linksFile = new File(dir, "LINKS.txt");
         if (!linksFile.exists()) return;
         BufferedReader r = new BufferedReader(new InputStreamReader(new FileInputStream(linksFile), "UTF-8"));
         String line;
@@ -5386,8 +5394,8 @@ public class MainActivity extends Activity {
             if (parts.length < 2) continue;
             String linkName = parts[0].trim();
             String target = parts[1].trim();
-            File link = new File(lib, linkName);
-            File src = new File(lib, target);
+            File link = new File(dir, linkName);
+            File src = new File(dir, target);
             if (!src.exists()) continue;
             if (link.exists()) {
                 // v1.18（B9 自愈）：别名若与目标**不是同一个 inode**，说明它是旧版打包"实体化"出来的
@@ -5460,6 +5468,16 @@ public class MainActivity extends Activity {
         for (String p : execs) {
             File f = new File(payload, p);
             if (f.exists()) f.setExecutable(true, false);
+        }
+        // v1.25（W3）：runtime/bin 里现在是一整套 GNU 工具（grep/sed/gawk/coreutils/…）与设备内
+        // 构建链（aapt2/ecj/dx）。逐个列名字不现实，直接整目录给执行位 —— payload.zip 的
+        // unix 权限全为 0（external_attr=0），不给 x 位这些工具会报"找不到命令"。
+        File binDir = new File(payload, "runtime/bin");
+        File[] bins = binDir.listFiles();
+        if (bins != null) {
+            for (File b : bins) {
+                if (b.isFile()) b.setExecutable(true, false);
+            }
         }
     }
 
@@ -10254,20 +10272,10 @@ public class MainActivity extends Activity {
             // ① 别名（LINKS.txt 里的名字）必须排除在字节统计之外：
             //    File.length() 会跟随软链返回**目标大小**，硬链也会各自计一次 —— 不排除就会把
             //    一份库算成三份（首版检查就是这么误报 +81MB 的）。
-            java.util.HashSet<String> aliases = new java.util.HashSet<String>();
-            File lf = new File(payloadDir(), "runtime/lib/LINKS.txt");
-            if (lf.exists()) {
-                java.io.BufferedReader lr = new java.io.BufferedReader(new java.io.InputStreamReader(
-                        new java.io.FileInputStream(lf), "UTF-8"));
-                String ln;
-                while ((ln = lr.readLine()) != null) {
-                    ln = ln.trim();
-                    if (ln.isEmpty() || ln.startsWith("#")) continue;
-                    String[] parts = ln.split("\\t+");
-                    if (parts.length >= 2) aliases.add(parts[0].trim());
-                }
-                lr.close();
-            }
+            //    v1.25（W3）：runtime/bin 也有一份别名清单（coreutils 的多调用别名 + awk 等），
+            //    同样要排除，否则设备上会误报"文件数不符"。
+            java.util.HashMap<String, String> libAliases = readLinks(new File(payloadDir(), "runtime/lib/LINKS.txt"));
+            java.util.HashMap<String, String> binAliases = readLinks(new File(payloadDir(), "runtime/bin/LINKS.txt"));
             // ② 遍历 runtime/：非别名文件计字节；别名单独统计"是否存在"与"是否独立 inode"
             File runtimeDir = new File(payloadDir(), "runtime");
             long files = 0, bytes = 0, aliasSeen = 0, aliasIndependent = 0;
@@ -10283,12 +10291,19 @@ public class MainActivity extends Activity {
                     // 运行期**生成**的两个文件（合成 CA bundle / git 证书配置）不在包里，不该算差异；
                     // runtime/etc/openssl.cnf 是包内文件，必须照常计数。
                     if (rel.equals("etc/cacert.pem") || rel.equals("etc/gitconfig")) continue;
-                    // LINKS.txt 里的名字是 **runtime/lib 下**的裸名；rel 是相对 runtime/ 的路径 → 去前缀再比对
-                    String aliasKey = rel.startsWith("lib/") ? rel.substring(4) : rel;
-                    if (aliases.contains(aliasKey)) {
+                    // LINKS.txt 里的名字是**该目录下**的裸名；rel 是相对 runtime/ 的路径 → 去前缀再比对
+                    java.util.HashMap<String, String> aliasMap = null;
+                    File aliasBase = null;
+                    String aliasKey = null;
+                    if (rel.startsWith("lib/")) {
+                        aliasMap = libAliases; aliasBase = new File(runtimeDir, "lib"); aliasKey = rel.substring(4);
+                    } else if (rel.startsWith("bin/")) {
+                        aliasMap = binAliases; aliasBase = new File(runtimeDir, "bin"); aliasKey = rel.substring(4);
+                    }
+                    if (aliasMap != null && aliasMap.containsKey(aliasKey)) {
                         aliasSeen++;
-                        String tgt = linkTargetOf(aliases, aliasKey);
-                        if (tgt != null && isIndependentCopy(cs[i], new File(new File(runtimeDir, "lib"), tgt))) {
+                        String tgt = aliasMap.get(aliasKey);
+                        if (tgt != null && isIndependentCopy(cs[i], new File(aliasBase, tgt))) {
                             aliasIndependent++;
                         }
                         continue;
@@ -10338,22 +10353,26 @@ public class MainActivity extends Activity {
         return f.getName();
     }
 
-    /** 从别名集合里反查目标名（重新读一遍 LINKS.txt 太浪费，这里只在检查里用一次）。 */
-    private String linkTargetOf(java.util.HashSet<String> aliases, String rel) {
+    /**
+     * 读一份 LINKS.txt → 别名名 → 目标名（v1.25：lib 与 bin 各一份，所以返回 map 而不是 set）。
+     * 只按 Tab 切分（与 applyLinks / build.sh 的规范化口径一致）。
+     */
+    private java.util.HashMap<String, String> readLinks(File linksFile) {
+        java.util.HashMap<String, String> out = new java.util.HashMap<String, String>();
+        if (!linksFile.exists()) return out;
         try {
-            File lf = new File(payloadDir(), "runtime/lib/LINKS.txt");
             java.io.BufferedReader lr = new java.io.BufferedReader(new java.io.InputStreamReader(
-                    new java.io.FileInputStream(lf), "UTF-8"));
+                    new java.io.FileInputStream(linksFile), "UTF-8"));
             String ln;
             while ((ln = lr.readLine()) != null) {
                 ln = ln.trim();
                 if (ln.isEmpty() || ln.startsWith("#")) continue;
                 String[] parts = ln.split("\\t+");
-                if (parts.length >= 2 && parts[0].trim().equals(rel)) { lr.close(); return parts[1].trim(); }
+                if (parts.length >= 2) out.put(parts[0].trim(), parts[1].trim());
             }
             lr.close();
         } catch (Throwable ignored) {}
-        return null;
+        return out;
     }
 
     /** 两个路径是否指向**不同**的 inode（软链会跟随，所以软链/硬链都判为同一 inode）。 */
