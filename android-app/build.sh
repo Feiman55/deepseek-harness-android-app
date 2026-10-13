@@ -263,7 +263,7 @@ OVERLAY_LIB="$P/../dsh-patches/overlay/lib"
 OVL_LIST="$(mktemp)"
 ( cd "$OVERLAY_LIB" && find . -type f ) > "$OVL_LIST"
 OVL_N=$(wc -l < "$OVL_LIST" | tr -d ' ')
-# 「新增」白名单：这些路径在干净内核树里本来就没有（我们自己的插件、node-pty、给既有包新增的文件），
+# 「新增」白名单：这些路径在干净内核树里本来就没有（plugins/ 里的上游插件、node-pty、给既有包新增的文件），
 # 找不到不算 stale。语义与维护说明见该文件头部注释。
 OVL_ADD_FILE="$P/../dsh-patches/overlay-additions.txt"
 OVL_ADD=""
@@ -332,14 +332,21 @@ else
 fi
 
 # ============================================================================
-# v1.24：把**本仓库自己的插件**同步进 staging（插件补丁的唯一生效路径）。
+# v1.24：把 `plugins/` 下的插件同步进 staging（插件补丁的唯一生效路径）。
 #
-# 为什么必须有这一步：staging 的 dshroot 树来自上游 Release APK 的 payload（只读输入），
+# ⚠ 归属说明（v1.25 更正）：`plugins/dsh-tool-*` 是**上游源码的副本**，不是本项目自研 ——
+#   它们是随 `3819e7d「v1.19.0：同步源码」` 进来的（那条提交信息里就列了
+#   "浏览器工具插件：plugins/dsh-tool-browser/" 与"四个插件 accessibility/android/shizuku/vscreen"）。
+#   之所以在本仓库里"多出来"，是因为本仓库 pin 的 payload 是上游 v1.17.3，而 plugins/ 跟着
+#   v1.19.0 的源码走 —— 构建用 plugins/ 覆盖内核树，等于把上游较新的插件代码贴到旧 payload /
+#   官方 npm 内核之上。因此：**plugins/ 是这些插件在本仓库的事实标准**，上游再变要重新同步。
+#
+# 为什么必须有这一步：staging 的内核树来自上游 Release APK 的 payload 或官方 npm 包（只读输入），
 # 而 `dsh-patches/overlay` 是「替换已有文件」的快照层 —— 上游的 `dsh-patches/apply.sh`
 # 只在**设备端**重贴它，本仓库的构建流程原本并不应用 overlay。于是"改了插件却不生效"
 # 会**静默**发生（构建成功、装机后还是旧行为）。
 #
-# 这里只同步我们自己的插件包 `plugins/dsh-tool-*` 的 lib/：
+# 这里只同步 `plugins/dsh-tool-*` 的 lib/：
 #   · 覆盖两个解析位置（hoisted 与 dsh 内嵌套），与 app 侧 apply.sh 的处理保持一致；
 #   · **不碰内核文件** —— 避免旧快照把内核降级（见 tools/overlay-recapture.py 的说明）；
 #   · 真源是 `plugins/`，同一份内容也在 `dsh-patches/overlay/`（供设备端重贴补丁用），
@@ -351,7 +358,7 @@ for _pd in "$P"/../plugins/dsh-tool-*; do
   _pn=$(basename "$_pd")
   for _dst in "$P/staging/dshroot/lib/node_modules/@deepseek-ai/$_pn" \
               "$P/staging/dshroot/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/$_pn"; do
-    # official 内核模式下这两处都不存在（官方包里没有我们的插件）→ 直接创建
+    # official 内核模式下这两处都不存在（官方 npm 包里没有这些插件）→ 直接创建
     mkdir -p "$_dst"
     rm -rf "$_dst/lib"
     cp -r "$_pd/lib" "$_dst/lib"

@@ -43,4 +43,27 @@
 ## 开发提示
 
 - peerDependencies：`@deepseek-ai/dsh-tools`、`@deepseek-ai/cordis`（版本见各 package.json）
-- 调试 rish：`app_process -Djava.class.path=<rish dex> /system/bin --nice-name=rish rikka.shizuku.shell.ShizukuShellLoader -c "<命令>"`，环境变量 `RISH_APPLICATION_ID=com.deepseek.harness`
+- 调试 rish：`app_process -Djava.class.path=<rish dex> /system/bin --system --nice-name=rish rikka.shizuku.shell.ShizukuShellLoader -c "<命令>"`，环境变量 `RISH_APPLICATION_ID=com.deepseek.harness`
+
+## 来源与维护（v1.25 补充，2026-10-14 核对）
+
+本目录是**上游源码的副本**，不是持续自研的插件目录 —— 这里的"上游"指 **Android 上游项目
+（`woaiys3/deepseek-harness-android-app`，本仓库按版本同步它的源码）**，而不是 DSH 官方内核。
+
+核对到的事实：
+
+| 事实 | 证据 |
+|---|---|
+| 本目录 5 个插件随 `3819e7d「v1.19.0：同步源码」` 进来 | 该提交信息列明「相对上一次源码同步（v1.17.3）的主要变化：… 浏览器工具插件：`plugins/dsh-tool-browser/`」「四个插件（accessibility / android / shizuku / vscreen）描述与实现对齐」|
+| `dsh-tool-browser` 是**上游 v1.19.0 引入**的（不是本项目新增） | 上面那条同步提交；且它**不在**本仓库 pin 的上游 payload v1.17.3 里（实测条目数 0），也没有对应的自研记录 |
+| accessibility / android / shizuku / vscreen 在**上游 v1.17.3 的 payload 里就有** | 实测 pristine payload 的 `dshroot/lib/node_modules/@deepseek-ai/` 下这 4 个目录各 4 条目 |
+| 这 5 个包都**不属于 DSH 官方内核** | 官方 `deepseek-ai/deepseek-harness @ dsh-v0.2.0-rc.2` 的 338 个 `@deepseek-ai/*` 包里，`dsh-tool-*` 一族只有 ask-user / bash / fs / web / terminal / todo 等 24 个，android / shizuku / accessibility / vscreen / browser 一个都没有；npm 上 `@deepseek-ai/dsh-tool-browser` 也是 404 |
+| 上游最新 Release 是 **v1.19.0**（2026-10-05），本仓库 pin 的 payload 是 **v1.17.3**（2026-10-03） | GitHub Releases API 实测 |
+
+**维护不变量**：`plugins/` 是这些插件在**本仓库的事实标准**——构建（`android-app/build.sh` 的
+「插件同步」段）会用 `plugins/dsh-tool-*` 覆盖内核树里同名包（hoisted 与 dsh 内嵌套两处）。
+因此上游再更新这些插件时，必须重新同步进 `plugins/`；否则构建出来的包仍是本目录里的旧副本。
+
+> 说明：上文第 1 节「本项目给 DeepSeek Harness 增加的**两个** Android 专属能力插件」是早期说法
+> （本项目早期是独立 Android 构建，后来转为跟随上游源码按版本同步）。就目前能核对到的证据，
+> 无法区分"哪些是本项目原创、哪些是上游原创、哪些是两边都有"；**以本节的实测事实为准**。
