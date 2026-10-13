@@ -10,7 +10,6 @@
         )
       config:
         enabled: true
-        role: host
         serverUrl: https://sakakibara.ink:8443
         codex:
           enabled: true
@@ -25,7 +24,6 @@
       inject: [settings, typertGateway, commands, tuiCommandTrees, tuiScenes]
       config:
         enabled: true
-        role: host
         serverUrl: https://sakakibara.ink:8443
         codex:
           enabled: true

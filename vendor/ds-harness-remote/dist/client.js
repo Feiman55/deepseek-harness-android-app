@@ -1,1627 +1,5 @@
 "use strict";
 (() => {
-  var __create = Object.create;
-  var __defProp = Object.defineProperty;
-  var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
-  var __getOwnPropNames = Object.getOwnPropertyNames;
-  var __getProtoOf = Object.getPrototypeOf, __hasOwnProp = Object.prototype.hasOwnProperty;
-  var __commonJS = (cb, mod) => function() {
-    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
-  };
-  var __copyProps = (to, from, except, desc) => {
-    if (from && typeof from == "object" || typeof from == "function")
-      for (let key of __getOwnPropNames(from))
-        !__hasOwnProp.call(to, key) && key !== except && __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
-    return to;
-  };
-  var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
-    // If the importer is in node compatibility mode or this is not an ESM
-    // file that has been converted to a CommonJS file using a Babel-
-    // compatible transform (i.e. "__esModule" has not been set), then set
-    // "default" to the CommonJS "module.exports" for node compatibility.
-    isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: !0 }) : target,
-    mod
-  ));
-
-  // ../../node_modules/qrcode/lib/can-promise.js
-  var require_can_promise = __commonJS({
-    "../../node_modules/qrcode/lib/can-promise.js"(exports, module) {
-      module.exports = function() {
-        return typeof Promise == "function" && Promise.prototype && Promise.prototype.then;
-      };
-    }
-  });
-
-  // ../../node_modules/qrcode/lib/core/utils.js
-  var require_utils = __commonJS({
-    "../../node_modules/qrcode/lib/core/utils.js"(exports) {
-      var toSJISFunction, CODEWORDS_COUNT = [
-        0,
-        // Not used
-        26,
-        44,
-        70,
-        100,
-        134,
-        172,
-        196,
-        242,
-        292,
-        346,
-        404,
-        466,
-        532,
-        581,
-        655,
-        733,
-        815,
-        901,
-        991,
-        1085,
-        1156,
-        1258,
-        1364,
-        1474,
-        1588,
-        1706,
-        1828,
-        1921,
-        2051,
-        2185,
-        2323,
-        2465,
-        2611,
-        2761,
-        2876,
-        3034,
-        3196,
-        3362,
-        3532,
-        3706
-      ];
-      exports.getSymbolSize = function(version) {
-        if (!version) throw new Error('"version" cannot be null or undefined');
-        if (version < 1 || version > 40) throw new Error('"version" should be in range from 1 to 40');
-        return version * 4 + 17;
-      };
-      exports.getSymbolTotalCodewords = function(version) {
-        return CODEWORDS_COUNT[version];
-      };
-      exports.getBCHDigit = function(data) {
-        let digit = 0;
-        for (; data !== 0; )
-          digit++, data >>>= 1;
-        return digit;
-      };
-      exports.setToSJISFunction = function(f) {
-        if (typeof f != "function")
-          throw new Error('"toSJISFunc" is not a valid function.');
-        toSJISFunction = f;
-      };
-      exports.isKanjiModeEnabled = function() {
-        return typeof toSJISFunction < "u";
-      };
-      exports.toSJIS = function(kanji) {
-        return toSJISFunction(kanji);
-      };
-    }
-  });
-
-  // ../../node_modules/qrcode/lib/core/error-correction-level.js
-  var require_error_correction_level = __commonJS({
-    "../../node_modules/qrcode/lib/core/error-correction-level.js"(exports) {
-      exports.L = { bit: 1 };
-      exports.M = { bit: 0 };
-      exports.Q = { bit: 3 };
-      exports.H = { bit: 2 };
-      function fromString(string) {
-        if (typeof string != "string")
-          throw new Error("Param is not a string");
-        switch (string.toLowerCase()) {
-          case "l":
-          case "low":
-            return exports.L;
-          case "m":
-          case "medium":
-            return exports.M;
-          case "q":
-          case "quartile":
-            return exports.Q;
-          case "h":
-          case "high":
-            return exports.H;
-          default:
-            throw new Error("Unknown EC Level: " + string);
-        }
-      }
-      exports.isValid = function(level) {
-        return level && typeof level.bit < "u" && level.bit >= 0 && level.bit < 4;
-      };
-      exports.from = function(value, defaultValue) {
-        if (exports.isValid(value))
-          return value;
-        try {
-          return fromString(value);
-        } catch {
-          return defaultValue;
-        }
-      };
-    }
-  });
-
-  // ../../node_modules/qrcode/lib/core/bit-buffer.js
-  var require_bit_buffer = __commonJS({
-    "../../node_modules/qrcode/lib/core/bit-buffer.js"(exports, module) {
-      function BitBuffer() {
-        this.buffer = [], this.length = 0;
-      }
-      BitBuffer.prototype = {
-        get: function(index) {
-          let bufIndex = Math.floor(index / 8);
-          return (this.buffer[bufIndex] >>> 7 - index % 8 & 1) === 1;
-        },
-        put: function(num, length) {
-          for (let i = 0; i < length; i++)
-            this.putBit((num >>> length - i - 1 & 1) === 1);
-        },
-        getLengthInBits: function() {
-          return this.length;
-        },
-        putBit: function(bit) {
-          let bufIndex = Math.floor(this.length / 8);
-          this.buffer.length <= bufIndex && this.buffer.push(0), bit && (this.buffer[bufIndex] |= 128 >>> this.length % 8), this.length++;
-        }
-      };
-      module.exports = BitBuffer;
-    }
-  });
-
-  // ../../node_modules/qrcode/lib/core/bit-matrix.js
-  var require_bit_matrix = __commonJS({
-    "../../node_modules/qrcode/lib/core/bit-matrix.js"(exports, module) {
-      function BitMatrix(size) {
-        if (!size || size < 1)
-          throw new Error("BitMatrix size must be defined and greater than 0");
-        this.size = size, this.data = new Uint8Array(size * size), this.reservedBit = new Uint8Array(size * size);
-      }
-      BitMatrix.prototype.set = function(row, col, value, reserved) {
-        let index = row * this.size + col;
-        this.data[index] = value, reserved && (this.reservedBit[index] = !0);
-      };
-      BitMatrix.prototype.get = function(row, col) {
-        return this.data[row * this.size + col];
-      };
-      BitMatrix.prototype.xor = function(row, col, value) {
-        this.data[row * this.size + col] ^= value;
-      };
-      BitMatrix.prototype.isReserved = function(row, col) {
-        return this.reservedBit[row * this.size + col];
-      };
-      module.exports = BitMatrix;
-    }
-  });
-
-  // ../../node_modules/qrcode/lib/core/alignment-pattern.js
-  var require_alignment_pattern = __commonJS({
-    "../../node_modules/qrcode/lib/core/alignment-pattern.js"(exports) {
-      var getSymbolSize = require_utils().getSymbolSize;
-      exports.getRowColCoords = function(version) {
-        if (version === 1) return [];
-        let posCount = Math.floor(version / 7) + 2, size = getSymbolSize(version), intervals = size === 145 ? 26 : Math.ceil((size - 13) / (2 * posCount - 2)) * 2, positions = [size - 7];
-        for (let i = 1; i < posCount - 1; i++)
-          positions[i] = positions[i - 1] - intervals;
-        return positions.push(6), positions.reverse();
-      };
-      exports.getPositions = function(version) {
-        let coords = [], pos = exports.getRowColCoords(version), posLength = pos.length;
-        for (let i = 0; i < posLength; i++)
-          for (let j = 0; j < posLength; j++)
-            i === 0 && j === 0 || // top-left
-            i === 0 && j === posLength - 1 || // bottom-left
-            i === posLength - 1 && j === 0 || coords.push([pos[i], pos[j]]);
-        return coords;
-      };
-    }
-  });
-
-  // ../../node_modules/qrcode/lib/core/finder-pattern.js
-  var require_finder_pattern = __commonJS({
-    "../../node_modules/qrcode/lib/core/finder-pattern.js"(exports) {
-      var getSymbolSize = require_utils().getSymbolSize, FINDER_PATTERN_SIZE = 7;
-      exports.getPositions = function(version) {
-        let size = getSymbolSize(version);
-        return [
-          // top-left
-          [0, 0],
-          // top-right
-          [size - FINDER_PATTERN_SIZE, 0],
-          // bottom-left
-          [0, size - FINDER_PATTERN_SIZE]
-        ];
-      };
-    }
-  });
-
-  // ../../node_modules/qrcode/lib/core/mask-pattern.js
-  var require_mask_pattern = __commonJS({
-    "../../node_modules/qrcode/lib/core/mask-pattern.js"(exports) {
-      exports.Patterns = {
-        PATTERN000: 0,
-        PATTERN001: 1,
-        PATTERN010: 2,
-        PATTERN011: 3,
-        PATTERN100: 4,
-        PATTERN101: 5,
-        PATTERN110: 6,
-        PATTERN111: 7
-      };
-      var PenaltyScores = {
-        N1: 3,
-        N2: 3,
-        N3: 40,
-        N4: 10
-      };
-      exports.isValid = function(mask) {
-        return mask != null && mask !== "" && !isNaN(mask) && mask >= 0 && mask <= 7;
-      };
-      exports.from = function(value) {
-        return exports.isValid(value) ? parseInt(value, 10) : void 0;
-      };
-      exports.getPenaltyN1 = function(data) {
-        let size = data.size, points = 0, sameCountCol = 0, sameCountRow = 0, lastCol = null, lastRow = null;
-        for (let row = 0; row < size; row++) {
-          sameCountCol = sameCountRow = 0, lastCol = lastRow = null;
-          for (let col = 0; col < size; col++) {
-            let module2 = data.get(row, col);
-            module2 === lastCol ? sameCountCol++ : (sameCountCol >= 5 && (points += PenaltyScores.N1 + (sameCountCol - 5)), lastCol = module2, sameCountCol = 1), module2 = data.get(col, row), module2 === lastRow ? sameCountRow++ : (sameCountRow >= 5 && (points += PenaltyScores.N1 + (sameCountRow - 5)), lastRow = module2, sameCountRow = 1);
-          }
-          sameCountCol >= 5 && (points += PenaltyScores.N1 + (sameCountCol - 5)), sameCountRow >= 5 && (points += PenaltyScores.N1 + (sameCountRow - 5));
-        }
-        return points;
-      };
-      exports.getPenaltyN2 = function(data) {
-        let size = data.size, points = 0;
-        for (let row = 0; row < size - 1; row++)
-          for (let col = 0; col < size - 1; col++) {
-            let last = data.get(row, col) + data.get(row, col + 1) + data.get(row + 1, col) + data.get(row + 1, col + 1);
-            (last === 4 || last === 0) && points++;
-          }
-        return points * PenaltyScores.N2;
-      };
-      exports.getPenaltyN3 = function(data) {
-        let size = data.size, points = 0, bitsCol = 0, bitsRow = 0;
-        for (let row = 0; row < size; row++) {
-          bitsCol = bitsRow = 0;
-          for (let col = 0; col < size; col++)
-            bitsCol = bitsCol << 1 & 2047 | data.get(row, col), col >= 10 && (bitsCol === 1488 || bitsCol === 93) && points++, bitsRow = bitsRow << 1 & 2047 | data.get(col, row), col >= 10 && (bitsRow === 1488 || bitsRow === 93) && points++;
-        }
-        return points * PenaltyScores.N3;
-      };
-      exports.getPenaltyN4 = function(data) {
-        let darkCount = 0, modulesCount = data.data.length;
-        for (let i = 0; i < modulesCount; i++) darkCount += data.data[i];
-        return Math.abs(Math.ceil(darkCount * 100 / modulesCount / 5) - 10) * PenaltyScores.N4;
-      };
-      function getMaskAt(maskPattern, i, j) {
-        switch (maskPattern) {
-          case exports.Patterns.PATTERN000:
-            return (i + j) % 2 === 0;
-          case exports.Patterns.PATTERN001:
-            return i % 2 === 0;
-          case exports.Patterns.PATTERN010:
-            return j % 3 === 0;
-          case exports.Patterns.PATTERN011:
-            return (i + j) % 3 === 0;
-          case exports.Patterns.PATTERN100:
-            return (Math.floor(i / 2) + Math.floor(j / 3)) % 2 === 0;
-          case exports.Patterns.PATTERN101:
-            return i * j % 2 + i * j % 3 === 0;
-          case exports.Patterns.PATTERN110:
-            return (i * j % 2 + i * j % 3) % 2 === 0;
-          case exports.Patterns.PATTERN111:
-            return (i * j % 3 + (i + j) % 2) % 2 === 0;
-          default:
-            throw new Error("bad maskPattern:" + maskPattern);
-        }
-      }
-      exports.applyMask = function(pattern, data) {
-        let size = data.size;
-        for (let col = 0; col < size; col++)
-          for (let row = 0; row < size; row++)
-            data.isReserved(row, col) || data.xor(row, col, getMaskAt(pattern, row, col));
-      };
-      exports.getBestMask = function(data, setupFormatFunc) {
-        let numPatterns = Object.keys(exports.Patterns).length, bestPattern = 0, lowerPenalty = 1 / 0;
-        for (let p = 0; p < numPatterns; p++) {
-          setupFormatFunc(p), exports.applyMask(p, data);
-          let penalty = exports.getPenaltyN1(data) + exports.getPenaltyN2(data) + exports.getPenaltyN3(data) + exports.getPenaltyN4(data);
-          exports.applyMask(p, data), penalty < lowerPenalty && (lowerPenalty = penalty, bestPattern = p);
-        }
-        return bestPattern;
-      };
-    }
-  });
-
-  // ../../node_modules/qrcode/lib/core/error-correction-code.js
-  var require_error_correction_code = __commonJS({
-    "../../node_modules/qrcode/lib/core/error-correction-code.js"(exports) {
-      var ECLevel = require_error_correction_level(), EC_BLOCKS_TABLE = [
-        // L  M  Q  H
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        1,
-        2,
-        2,
-        1,
-        2,
-        2,
-        4,
-        1,
-        2,
-        4,
-        4,
-        2,
-        4,
-        4,
-        4,
-        2,
-        4,
-        6,
-        5,
-        2,
-        4,
-        6,
-        6,
-        2,
-        5,
-        8,
-        8,
-        4,
-        5,
-        8,
-        8,
-        4,
-        5,
-        8,
-        11,
-        4,
-        8,
-        10,
-        11,
-        4,
-        9,
-        12,
-        16,
-        4,
-        9,
-        16,
-        16,
-        6,
-        10,
-        12,
-        18,
-        6,
-        10,
-        17,
-        16,
-        6,
-        11,
-        16,
-        19,
-        6,
-        13,
-        18,
-        21,
-        7,
-        14,
-        21,
-        25,
-        8,
-        16,
-        20,
-        25,
-        8,
-        17,
-        23,
-        25,
-        9,
-        17,
-        23,
-        34,
-        9,
-        18,
-        25,
-        30,
-        10,
-        20,
-        27,
-        32,
-        12,
-        21,
-        29,
-        35,
-        12,
-        23,
-        34,
-        37,
-        12,
-        25,
-        34,
-        40,
-        13,
-        26,
-        35,
-        42,
-        14,
-        28,
-        38,
-        45,
-        15,
-        29,
-        40,
-        48,
-        16,
-        31,
-        43,
-        51,
-        17,
-        33,
-        45,
-        54,
-        18,
-        35,
-        48,
-        57,
-        19,
-        37,
-        51,
-        60,
-        19,
-        38,
-        53,
-        63,
-        20,
-        40,
-        56,
-        66,
-        21,
-        43,
-        59,
-        70,
-        22,
-        45,
-        62,
-        74,
-        24,
-        47,
-        65,
-        77,
-        25,
-        49,
-        68,
-        81
-      ], EC_CODEWORDS_TABLE = [
-        // L  M  Q  H
-        7,
-        10,
-        13,
-        17,
-        10,
-        16,
-        22,
-        28,
-        15,
-        26,
-        36,
-        44,
-        20,
-        36,
-        52,
-        64,
-        26,
-        48,
-        72,
-        88,
-        36,
-        64,
-        96,
-        112,
-        40,
-        72,
-        108,
-        130,
-        48,
-        88,
-        132,
-        156,
-        60,
-        110,
-        160,
-        192,
-        72,
-        130,
-        192,
-        224,
-        80,
-        150,
-        224,
-        264,
-        96,
-        176,
-        260,
-        308,
-        104,
-        198,
-        288,
-        352,
-        120,
-        216,
-        320,
-        384,
-        132,
-        240,
-        360,
-        432,
-        144,
-        280,
-        408,
-        480,
-        168,
-        308,
-        448,
-        532,
-        180,
-        338,
-        504,
-        588,
-        196,
-        364,
-        546,
-        650,
-        224,
-        416,
-        600,
-        700,
-        224,
-        442,
-        644,
-        750,
-        252,
-        476,
-        690,
-        816,
-        270,
-        504,
-        750,
-        900,
-        300,
-        560,
-        810,
-        960,
-        312,
-        588,
-        870,
-        1050,
-        336,
-        644,
-        952,
-        1110,
-        360,
-        700,
-        1020,
-        1200,
-        390,
-        728,
-        1050,
-        1260,
-        420,
-        784,
-        1140,
-        1350,
-        450,
-        812,
-        1200,
-        1440,
-        480,
-        868,
-        1290,
-        1530,
-        510,
-        924,
-        1350,
-        1620,
-        540,
-        980,
-        1440,
-        1710,
-        570,
-        1036,
-        1530,
-        1800,
-        570,
-        1064,
-        1590,
-        1890,
-        600,
-        1120,
-        1680,
-        1980,
-        630,
-        1204,
-        1770,
-        2100,
-        660,
-        1260,
-        1860,
-        2220,
-        720,
-        1316,
-        1950,
-        2310,
-        750,
-        1372,
-        2040,
-        2430
-      ];
-      exports.getBlocksCount = function(version, errorCorrectionLevel) {
-        switch (errorCorrectionLevel) {
-          case ECLevel.L:
-            return EC_BLOCKS_TABLE[(version - 1) * 4 + 0];
-          case ECLevel.M:
-            return EC_BLOCKS_TABLE[(version - 1) * 4 + 1];
-          case ECLevel.Q:
-            return EC_BLOCKS_TABLE[(version - 1) * 4 + 2];
-          case ECLevel.H:
-            return EC_BLOCKS_TABLE[(version - 1) * 4 + 3];
-          default:
-            return;
-        }
-      };
-      exports.getTotalCodewordsCount = function(version, errorCorrectionLevel) {
-        switch (errorCorrectionLevel) {
-          case ECLevel.L:
-            return EC_CODEWORDS_TABLE[(version - 1) * 4 + 0];
-          case ECLevel.M:
-            return EC_CODEWORDS_TABLE[(version - 1) * 4 + 1];
-          case ECLevel.Q:
-            return EC_CODEWORDS_TABLE[(version - 1) * 4 + 2];
-          case ECLevel.H:
-            return EC_CODEWORDS_TABLE[(version - 1) * 4 + 3];
-          default:
-            return;
-        }
-      };
-    }
-  });
-
-  // ../../node_modules/qrcode/lib/core/galois-field.js
-  var require_galois_field = __commonJS({
-    "../../node_modules/qrcode/lib/core/galois-field.js"(exports) {
-      var EXP_TABLE = new Uint8Array(512), LOG_TABLE = new Uint8Array(256);
-      (function() {
-        let x = 1;
-        for (let i = 0; i < 255; i++)
-          EXP_TABLE[i] = x, LOG_TABLE[x] = i, x <<= 1, x & 256 && (x ^= 285);
-        for (let i = 255; i < 512; i++)
-          EXP_TABLE[i] = EXP_TABLE[i - 255];
-      })();
-      exports.log = function(n) {
-        if (n < 1) throw new Error("log(" + n + ")");
-        return LOG_TABLE[n];
-      };
-      exports.exp = function(n) {
-        return EXP_TABLE[n];
-      };
-      exports.mul = function(x, y) {
-        return x === 0 || y === 0 ? 0 : EXP_TABLE[LOG_TABLE[x] + LOG_TABLE[y]];
-      };
-    }
-  });
-
-  // ../../node_modules/qrcode/lib/core/polynomial.js
-  var require_polynomial = __commonJS({
-    "../../node_modules/qrcode/lib/core/polynomial.js"(exports) {
-      var GF = require_galois_field();
-      exports.mul = function(p1, p2) {
-        let coeff = new Uint8Array(p1.length + p2.length - 1);
-        for (let i = 0; i < p1.length; i++)
-          for (let j = 0; j < p2.length; j++)
-            coeff[i + j] ^= GF.mul(p1[i], p2[j]);
-        return coeff;
-      };
-      exports.mod = function(divident, divisor) {
-        let result = new Uint8Array(divident);
-        for (; result.length - divisor.length >= 0; ) {
-          let coeff = result[0];
-          for (let i = 0; i < divisor.length; i++)
-            result[i] ^= GF.mul(divisor[i], coeff);
-          let offset = 0;
-          for (; offset < result.length && result[offset] === 0; ) offset++;
-          result = result.slice(offset);
-        }
-        return result;
-      };
-      exports.generateECPolynomial = function(degree) {
-        let poly = new Uint8Array([1]);
-        for (let i = 0; i < degree; i++)
-          poly = exports.mul(poly, new Uint8Array([1, GF.exp(i)]));
-        return poly;
-      };
-    }
-  });
-
-  // ../../node_modules/qrcode/lib/core/reed-solomon-encoder.js
-  var require_reed_solomon_encoder = __commonJS({
-    "../../node_modules/qrcode/lib/core/reed-solomon-encoder.js"(exports, module) {
-      var Polynomial = require_polynomial();
-      function ReedSolomonEncoder(degree) {
-        this.genPoly = void 0, this.degree = degree, this.degree && this.initialize(this.degree);
-      }
-      ReedSolomonEncoder.prototype.initialize = function(degree) {
-        this.degree = degree, this.genPoly = Polynomial.generateECPolynomial(this.degree);
-      };
-      ReedSolomonEncoder.prototype.encode = function(data) {
-        if (!this.genPoly)
-          throw new Error("Encoder not initialized");
-        let paddedData = new Uint8Array(data.length + this.degree);
-        paddedData.set(data);
-        let remainder = Polynomial.mod(paddedData, this.genPoly), start = this.degree - remainder.length;
-        if (start > 0) {
-          let buff = new Uint8Array(this.degree);
-          return buff.set(remainder, start), buff;
-        }
-        return remainder;
-      };
-      module.exports = ReedSolomonEncoder;
-    }
-  });
-
-  // ../../node_modules/qrcode/lib/core/version-check.js
-  var require_version_check = __commonJS({
-    "../../node_modules/qrcode/lib/core/version-check.js"(exports) {
-      exports.isValid = function(version) {
-        return !isNaN(version) && version >= 1 && version <= 40;
-      };
-    }
-  });
-
-  // ../../node_modules/qrcode/lib/core/regex.js
-  var require_regex = __commonJS({
-    "../../node_modules/qrcode/lib/core/regex.js"(exports) {
-      var numeric = "[0-9]+", alphanumeric = "[A-Z $%*+\\-./:]+", kanji = "(?:[u3000-u303F]|[u3040-u309F]|[u30A0-u30FF]|[uFF00-uFFEF]|[u4E00-u9FAF]|[u2605-u2606]|[u2190-u2195]|u203B|[u2010u2015u2018u2019u2025u2026u201Cu201Du2225u2260]|[u0391-u0451]|[u00A7u00A8u00B1u00B4u00D7u00F7])+";
-      kanji = kanji.replace(/u/g, "\\u");
-      var byte = "(?:(?![A-Z0-9 $%*+\\-./:]|" + kanji + `)(?:.|[\r
-]))+`;
-      exports.KANJI = new RegExp(kanji, "g");
-      exports.BYTE_KANJI = new RegExp("[^A-Z0-9 $%*+\\-./:]+", "g");
-      exports.BYTE = new RegExp(byte, "g");
-      exports.NUMERIC = new RegExp(numeric, "g");
-      exports.ALPHANUMERIC = new RegExp(alphanumeric, "g");
-      var TEST_KANJI = new RegExp("^" + kanji + "$"), TEST_NUMERIC = new RegExp("^" + numeric + "$"), TEST_ALPHANUMERIC = new RegExp("^[A-Z0-9 $%*+\\-./:]+$");
-      exports.testKanji = function(str) {
-        return TEST_KANJI.test(str);
-      };
-      exports.testNumeric = function(str) {
-        return TEST_NUMERIC.test(str);
-      };
-      exports.testAlphanumeric = function(str) {
-        return TEST_ALPHANUMERIC.test(str);
-      };
-    }
-  });
-
-  // ../../node_modules/qrcode/lib/core/mode.js
-  var require_mode = __commonJS({
-    "../../node_modules/qrcode/lib/core/mode.js"(exports) {
-      var VersionCheck = require_version_check(), Regex = require_regex();
-      exports.NUMERIC = {
-        id: "Numeric",
-        bit: 1,
-        ccBits: [10, 12, 14]
-      };
-      exports.ALPHANUMERIC = {
-        id: "Alphanumeric",
-        bit: 2,
-        ccBits: [9, 11, 13]
-      };
-      exports.BYTE = {
-        id: "Byte",
-        bit: 4,
-        ccBits: [8, 16, 16]
-      };
-      exports.KANJI = {
-        id: "Kanji",
-        bit: 8,
-        ccBits: [8, 10, 12]
-      };
-      exports.MIXED = {
-        bit: -1
-      };
-      exports.getCharCountIndicator = function(mode, version) {
-        if (!mode.ccBits) throw new Error("Invalid mode: " + mode);
-        if (!VersionCheck.isValid(version))
-          throw new Error("Invalid version: " + version);
-        return version >= 1 && version < 10 ? mode.ccBits[0] : version < 27 ? mode.ccBits[1] : mode.ccBits[2];
-      };
-      exports.getBestModeForData = function(dataStr) {
-        return Regex.testNumeric(dataStr) ? exports.NUMERIC : Regex.testAlphanumeric(dataStr) ? exports.ALPHANUMERIC : Regex.testKanji(dataStr) ? exports.KANJI : exports.BYTE;
-      };
-      exports.toString = function(mode) {
-        if (mode && mode.id) return mode.id;
-        throw new Error("Invalid mode");
-      };
-      exports.isValid = function(mode) {
-        return mode && mode.bit && mode.ccBits;
-      };
-      function fromString(string) {
-        if (typeof string != "string")
-          throw new Error("Param is not a string");
-        switch (string.toLowerCase()) {
-          case "numeric":
-            return exports.NUMERIC;
-          case "alphanumeric":
-            return exports.ALPHANUMERIC;
-          case "kanji":
-            return exports.KANJI;
-          case "byte":
-            return exports.BYTE;
-          default:
-            throw new Error("Unknown mode: " + string);
-        }
-      }
-      exports.from = function(value, defaultValue) {
-        if (exports.isValid(value))
-          return value;
-        try {
-          return fromString(value);
-        } catch {
-          return defaultValue;
-        }
-      };
-    }
-  });
-
-  // ../../node_modules/qrcode/lib/core/version.js
-  var require_version = __commonJS({
-    "../../node_modules/qrcode/lib/core/version.js"(exports) {
-      var Utils = require_utils(), ECCode = require_error_correction_code(), ECLevel = require_error_correction_level(), Mode = require_mode(), VersionCheck = require_version_check(), G18 = 7973, G18_BCH = Utils.getBCHDigit(G18);
-      function getBestVersionForDataLength(mode, length, errorCorrectionLevel) {
-        for (let currentVersion = 1; currentVersion <= 40; currentVersion++)
-          if (length <= exports.getCapacity(currentVersion, errorCorrectionLevel, mode))
-            return currentVersion;
-      }
-      function getReservedBitsCount(mode, version) {
-        return Mode.getCharCountIndicator(mode, version) + 4;
-      }
-      function getTotalBitsFromDataArray(segments, version) {
-        let totalBits = 0;
-        return segments.forEach(function(data) {
-          let reservedBits = getReservedBitsCount(data.mode, version);
-          totalBits += reservedBits + data.getBitsLength();
-        }), totalBits;
-      }
-      function getBestVersionForMixedData(segments, errorCorrectionLevel) {
-        for (let currentVersion = 1; currentVersion <= 40; currentVersion++)
-          if (getTotalBitsFromDataArray(segments, currentVersion) <= exports.getCapacity(currentVersion, errorCorrectionLevel, Mode.MIXED))
-            return currentVersion;
-      }
-      exports.from = function(value, defaultValue) {
-        return VersionCheck.isValid(value) ? parseInt(value, 10) : defaultValue;
-      };
-      exports.getCapacity = function(version, errorCorrectionLevel, mode) {
-        if (!VersionCheck.isValid(version))
-          throw new Error("Invalid QR Code version");
-        typeof mode > "u" && (mode = Mode.BYTE);
-        let totalCodewords = Utils.getSymbolTotalCodewords(version), ecTotalCodewords = ECCode.getTotalCodewordsCount(version, errorCorrectionLevel), dataTotalCodewordsBits = (totalCodewords - ecTotalCodewords) * 8;
-        if (mode === Mode.MIXED) return dataTotalCodewordsBits;
-        let usableBits = dataTotalCodewordsBits - getReservedBitsCount(mode, version);
-        switch (mode) {
-          case Mode.NUMERIC:
-            return Math.floor(usableBits / 10 * 3);
-          case Mode.ALPHANUMERIC:
-            return Math.floor(usableBits / 11 * 2);
-          case Mode.KANJI:
-            return Math.floor(usableBits / 13);
-          case Mode.BYTE:
-          default:
-            return Math.floor(usableBits / 8);
-        }
-      };
-      exports.getBestVersionForData = function(data, errorCorrectionLevel) {
-        let seg, ecl = ECLevel.from(errorCorrectionLevel, ECLevel.M);
-        if (Array.isArray(data)) {
-          if (data.length > 1)
-            return getBestVersionForMixedData(data, ecl);
-          if (data.length === 0)
-            return 1;
-          seg = data[0];
-        } else
-          seg = data;
-        return getBestVersionForDataLength(seg.mode, seg.getLength(), ecl);
-      };
-      exports.getEncodedBits = function(version) {
-        if (!VersionCheck.isValid(version) || version < 7)
-          throw new Error("Invalid QR Code version");
-        let d = version << 12;
-        for (; Utils.getBCHDigit(d) - G18_BCH >= 0; )
-          d ^= G18 << Utils.getBCHDigit(d) - G18_BCH;
-        return version << 12 | d;
-      };
-    }
-  });
-
-  // ../../node_modules/qrcode/lib/core/format-info.js
-  var require_format_info = __commonJS({
-    "../../node_modules/qrcode/lib/core/format-info.js"(exports) {
-      var Utils = require_utils(), G15 = 1335, G15_MASK = 21522, G15_BCH = Utils.getBCHDigit(G15);
-      exports.getEncodedBits = function(errorCorrectionLevel, mask) {
-        let data = errorCorrectionLevel.bit << 3 | mask, d = data << 10;
-        for (; Utils.getBCHDigit(d) - G15_BCH >= 0; )
-          d ^= G15 << Utils.getBCHDigit(d) - G15_BCH;
-        return (data << 10 | d) ^ G15_MASK;
-      };
-    }
-  });
-
-  // ../../node_modules/qrcode/lib/core/numeric-data.js
-  var require_numeric_data = __commonJS({
-    "../../node_modules/qrcode/lib/core/numeric-data.js"(exports, module) {
-      var Mode = require_mode();
-      function NumericData(data) {
-        this.mode = Mode.NUMERIC, this.data = data.toString();
-      }
-      NumericData.getBitsLength = function(length) {
-        return 10 * Math.floor(length / 3) + (length % 3 ? length % 3 * 3 + 1 : 0);
-      };
-      NumericData.prototype.getLength = function() {
-        return this.data.length;
-      };
-      NumericData.prototype.getBitsLength = function() {
-        return NumericData.getBitsLength(this.data.length);
-      };
-      NumericData.prototype.write = function(bitBuffer) {
-        let i, group, value;
-        for (i = 0; i + 3 <= this.data.length; i += 3)
-          group = this.data.substr(i, 3), value = parseInt(group, 10), bitBuffer.put(value, 10);
-        let remainingNum = this.data.length - i;
-        remainingNum > 0 && (group = this.data.substr(i), value = parseInt(group, 10), bitBuffer.put(value, remainingNum * 3 + 1));
-      };
-      module.exports = NumericData;
-    }
-  });
-
-  // ../../node_modules/qrcode/lib/core/alphanumeric-data.js
-  var require_alphanumeric_data = __commonJS({
-    "../../node_modules/qrcode/lib/core/alphanumeric-data.js"(exports, module) {
-      var Mode = require_mode(), ALPHA_NUM_CHARS = [
-        "0",
-        "1",
-        "2",
-        "3",
-        "4",
-        "5",
-        "6",
-        "7",
-        "8",
-        "9",
-        "A",
-        "B",
-        "C",
-        "D",
-        "E",
-        "F",
-        "G",
-        "H",
-        "I",
-        "J",
-        "K",
-        "L",
-        "M",
-        "N",
-        "O",
-        "P",
-        "Q",
-        "R",
-        "S",
-        "T",
-        "U",
-        "V",
-        "W",
-        "X",
-        "Y",
-        "Z",
-        " ",
-        "$",
-        "%",
-        "*",
-        "+",
-        "-",
-        ".",
-        "/",
-        ":"
-      ];
-      function AlphanumericData(data) {
-        this.mode = Mode.ALPHANUMERIC, this.data = data;
-      }
-      AlphanumericData.getBitsLength = function(length) {
-        return 11 * Math.floor(length / 2) + 6 * (length % 2);
-      };
-      AlphanumericData.prototype.getLength = function() {
-        return this.data.length;
-      };
-      AlphanumericData.prototype.getBitsLength = function() {
-        return AlphanumericData.getBitsLength(this.data.length);
-      };
-      AlphanumericData.prototype.write = function(bitBuffer) {
-        let i;
-        for (i = 0; i + 2 <= this.data.length; i += 2) {
-          let value = ALPHA_NUM_CHARS.indexOf(this.data[i]) * 45;
-          value += ALPHA_NUM_CHARS.indexOf(this.data[i + 1]), bitBuffer.put(value, 11);
-        }
-        this.data.length % 2 && bitBuffer.put(ALPHA_NUM_CHARS.indexOf(this.data[i]), 6);
-      };
-      module.exports = AlphanumericData;
-    }
-  });
-
-  // ../../node_modules/qrcode/lib/core/byte-data.js
-  var require_byte_data = __commonJS({
-    "../../node_modules/qrcode/lib/core/byte-data.js"(exports, module) {
-      var Mode = require_mode();
-      function ByteData(data) {
-        this.mode = Mode.BYTE, typeof data == "string" ? this.data = new TextEncoder().encode(data) : this.data = new Uint8Array(data);
-      }
-      ByteData.getBitsLength = function(length) {
-        return length * 8;
-      };
-      ByteData.prototype.getLength = function() {
-        return this.data.length;
-      };
-      ByteData.prototype.getBitsLength = function() {
-        return ByteData.getBitsLength(this.data.length);
-      };
-      ByteData.prototype.write = function(bitBuffer) {
-        for (let i = 0, l = this.data.length; i < l; i++)
-          bitBuffer.put(this.data[i], 8);
-      };
-      module.exports = ByteData;
-    }
-  });
-
-  // ../../node_modules/qrcode/lib/core/kanji-data.js
-  var require_kanji_data = __commonJS({
-    "../../node_modules/qrcode/lib/core/kanji-data.js"(exports, module) {
-      var Mode = require_mode(), Utils = require_utils();
-      function KanjiData(data) {
-        this.mode = Mode.KANJI, this.data = data;
-      }
-      KanjiData.getBitsLength = function(length) {
-        return length * 13;
-      };
-      KanjiData.prototype.getLength = function() {
-        return this.data.length;
-      };
-      KanjiData.prototype.getBitsLength = function() {
-        return KanjiData.getBitsLength(this.data.length);
-      };
-      KanjiData.prototype.write = function(bitBuffer) {
-        let i;
-        for (i = 0; i < this.data.length; i++) {
-          let value = Utils.toSJIS(this.data[i]);
-          if (value >= 33088 && value <= 40956)
-            value -= 33088;
-          else if (value >= 57408 && value <= 60351)
-            value -= 49472;
-          else
-            throw new Error(
-              "Invalid SJIS character: " + this.data[i] + `
-Make sure your charset is UTF-8`
-            );
-          value = (value >>> 8 & 255) * 192 + (value & 255), bitBuffer.put(value, 13);
-        }
-      };
-      module.exports = KanjiData;
-    }
-  });
-
-  // ../../node_modules/dijkstrajs/dijkstra.js
-  var require_dijkstra = __commonJS({
-    "../../node_modules/dijkstrajs/dijkstra.js"(exports, module) {
-      "use strict";
-      var dijkstra = {
-        single_source_shortest_paths: function(graph, s, d) {
-          var predecessors = {}, costs = {};
-          costs[s] = 0;
-          var open = dijkstra.PriorityQueue.make();
-          open.push(s, 0);
-          for (var closest, u, v, cost_of_s_to_u, adjacent_nodes, cost_of_e, cost_of_s_to_u_plus_cost_of_e, cost_of_s_to_v, first_visit; !open.empty(); ) {
-            closest = open.pop(), u = closest.value, cost_of_s_to_u = closest.cost, adjacent_nodes = graph[u] || {};
-            for (v in adjacent_nodes)
-              adjacent_nodes.hasOwnProperty(v) && (cost_of_e = adjacent_nodes[v], cost_of_s_to_u_plus_cost_of_e = cost_of_s_to_u + cost_of_e, cost_of_s_to_v = costs[v], first_visit = typeof costs[v] > "u", (first_visit || cost_of_s_to_v > cost_of_s_to_u_plus_cost_of_e) && (costs[v] = cost_of_s_to_u_plus_cost_of_e, open.push(v, cost_of_s_to_u_plus_cost_of_e), predecessors[v] = u));
-          }
-          if (typeof d < "u" && typeof costs[d] > "u") {
-            var msg = ["Could not find a path from ", s, " to ", d, "."].join("");
-            throw new Error(msg);
-          }
-          return predecessors;
-        },
-        extract_shortest_path_from_predecessor_list: function(predecessors, d) {
-          for (var nodes = [], u = d, predecessor; u; )
-            nodes.push(u), predecessor = predecessors[u], u = predecessors[u];
-          return nodes.reverse(), nodes;
-        },
-        find_path: function(graph, s, d) {
-          var predecessors = dijkstra.single_source_shortest_paths(graph, s, d);
-          return dijkstra.extract_shortest_path_from_predecessor_list(
-            predecessors,
-            d
-          );
-        },
-        /**
-         * A very naive priority queue implementation.
-         */
-        PriorityQueue: {
-          make: function(opts) {
-            var T = dijkstra.PriorityQueue, t = {}, key;
-            opts = opts || {};
-            for (key in T)
-              T.hasOwnProperty(key) && (t[key] = T[key]);
-            return t.queue = [], t.sorter = opts.sorter || T.default_sorter, t;
-          },
-          default_sorter: function(a, b) {
-            return a.cost - b.cost;
-          },
-          /**
-           * Add a new item to the queue and ensure the highest priority element
-           * is at the front of the queue.
-           */
-          push: function(value, cost) {
-            var item = { value, cost };
-            this.queue.push(item), this.queue.sort(this.sorter);
-          },
-          /**
-           * Return the highest priority element in the queue.
-           */
-          pop: function() {
-            return this.queue.shift();
-          },
-          empty: function() {
-            return this.queue.length === 0;
-          }
-        }
-      };
-      typeof module < "u" && (module.exports = dijkstra);
-    }
-  });
-
-  // ../../node_modules/qrcode/lib/core/segments.js
-  var require_segments = __commonJS({
-    "../../node_modules/qrcode/lib/core/segments.js"(exports) {
-      var Mode = require_mode(), NumericData = require_numeric_data(), AlphanumericData = require_alphanumeric_data(), ByteData = require_byte_data(), KanjiData = require_kanji_data(), Regex = require_regex(), Utils = require_utils(), dijkstra = require_dijkstra();
-      function getStringByteLength(str) {
-        return unescape(encodeURIComponent(str)).length;
-      }
-      function getSegments(regex, mode, str) {
-        let segments = [], result;
-        for (; (result = regex.exec(str)) !== null; )
-          segments.push({
-            data: result[0],
-            index: result.index,
-            mode,
-            length: result[0].length
-          });
-        return segments;
-      }
-      function getSegmentsFromString(dataStr) {
-        let numSegs = getSegments(Regex.NUMERIC, Mode.NUMERIC, dataStr), alphaNumSegs = getSegments(Regex.ALPHANUMERIC, Mode.ALPHANUMERIC, dataStr), byteSegs, kanjiSegs;
-        return Utils.isKanjiModeEnabled() ? (byteSegs = getSegments(Regex.BYTE, Mode.BYTE, dataStr), kanjiSegs = getSegments(Regex.KANJI, Mode.KANJI, dataStr)) : (byteSegs = getSegments(Regex.BYTE_KANJI, Mode.BYTE, dataStr), kanjiSegs = []), numSegs.concat(alphaNumSegs, byteSegs, kanjiSegs).sort(function(s1, s2) {
-          return s1.index - s2.index;
-        }).map(function(obj) {
-          return {
-            data: obj.data,
-            mode: obj.mode,
-            length: obj.length
-          };
-        });
-      }
-      function getSegmentBitsLength(length, mode) {
-        switch (mode) {
-          case Mode.NUMERIC:
-            return NumericData.getBitsLength(length);
-          case Mode.ALPHANUMERIC:
-            return AlphanumericData.getBitsLength(length);
-          case Mode.KANJI:
-            return KanjiData.getBitsLength(length);
-          case Mode.BYTE:
-            return ByteData.getBitsLength(length);
-        }
-      }
-      function mergeSegments(segs) {
-        return segs.reduce(function(acc, curr) {
-          let prevSeg = acc.length - 1 >= 0 ? acc[acc.length - 1] : null;
-          return prevSeg && prevSeg.mode === curr.mode ? (acc[acc.length - 1].data += curr.data, acc) : (acc.push(curr), acc);
-        }, []);
-      }
-      function buildNodes(segs) {
-        let nodes = [];
-        for (let i = 0; i < segs.length; i++) {
-          let seg = segs[i];
-          switch (seg.mode) {
-            case Mode.NUMERIC:
-              nodes.push([
-                seg,
-                { data: seg.data, mode: Mode.ALPHANUMERIC, length: seg.length },
-                { data: seg.data, mode: Mode.BYTE, length: seg.length }
-              ]);
-              break;
-            case Mode.ALPHANUMERIC:
-              nodes.push([
-                seg,
-                { data: seg.data, mode: Mode.BYTE, length: seg.length }
-              ]);
-              break;
-            case Mode.KANJI:
-              nodes.push([
-                seg,
-                { data: seg.data, mode: Mode.BYTE, length: getStringByteLength(seg.data) }
-              ]);
-              break;
-            case Mode.BYTE:
-              nodes.push([
-                { data: seg.data, mode: Mode.BYTE, length: getStringByteLength(seg.data) }
-              ]);
-          }
-        }
-        return nodes;
-      }
-      function buildGraph(nodes, version) {
-        let table = {}, graph = { start: {} }, prevNodeIds = ["start"];
-        for (let i = 0; i < nodes.length; i++) {
-          let nodeGroup = nodes[i], currentNodeIds = [];
-          for (let j = 0; j < nodeGroup.length; j++) {
-            let node = nodeGroup[j], key = "" + i + j;
-            currentNodeIds.push(key), table[key] = { node, lastCount: 0 }, graph[key] = {};
-            for (let n = 0; n < prevNodeIds.length; n++) {
-              let prevNodeId = prevNodeIds[n];
-              table[prevNodeId] && table[prevNodeId].node.mode === node.mode ? (graph[prevNodeId][key] = getSegmentBitsLength(table[prevNodeId].lastCount + node.length, node.mode) - getSegmentBitsLength(table[prevNodeId].lastCount, node.mode), table[prevNodeId].lastCount += node.length) : (table[prevNodeId] && (table[prevNodeId].lastCount = node.length), graph[prevNodeId][key] = getSegmentBitsLength(node.length, node.mode) + 4 + Mode.getCharCountIndicator(node.mode, version));
-            }
-          }
-          prevNodeIds = currentNodeIds;
-        }
-        for (let n = 0; n < prevNodeIds.length; n++)
-          graph[prevNodeIds[n]].end = 0;
-        return { map: graph, table };
-      }
-      function buildSingleSegment(data, modesHint) {
-        let mode, bestMode = Mode.getBestModeForData(data);
-        if (mode = Mode.from(modesHint, bestMode), mode !== Mode.BYTE && mode.bit < bestMode.bit)
-          throw new Error('"' + data + '" cannot be encoded with mode ' + Mode.toString(mode) + `.
- Suggested mode is: ` + Mode.toString(bestMode));
-        switch (mode === Mode.KANJI && !Utils.isKanjiModeEnabled() && (mode = Mode.BYTE), mode) {
-          case Mode.NUMERIC:
-            return new NumericData(data);
-          case Mode.ALPHANUMERIC:
-            return new AlphanumericData(data);
-          case Mode.KANJI:
-            return new KanjiData(data);
-          case Mode.BYTE:
-            return new ByteData(data);
-        }
-      }
-      exports.fromArray = function(array) {
-        return array.reduce(function(acc, seg) {
-          return typeof seg == "string" ? acc.push(buildSingleSegment(seg, null)) : seg.data && acc.push(buildSingleSegment(seg.data, seg.mode)), acc;
-        }, []);
-      };
-      exports.fromString = function(data, version) {
-        let segs = getSegmentsFromString(data, Utils.isKanjiModeEnabled()), nodes = buildNodes(segs), graph = buildGraph(nodes, version), path = dijkstra.find_path(graph.map, "start", "end"), optimizedSegs = [];
-        for (let i = 1; i < path.length - 1; i++)
-          optimizedSegs.push(graph.table[path[i]].node);
-        return exports.fromArray(mergeSegments(optimizedSegs));
-      };
-      exports.rawSplit = function(data) {
-        return exports.fromArray(
-          getSegmentsFromString(data, Utils.isKanjiModeEnabled())
-        );
-      };
-    }
-  });
-
-  // ../../node_modules/qrcode/lib/core/qrcode.js
-  var require_qrcode = __commonJS({
-    "../../node_modules/qrcode/lib/core/qrcode.js"(exports) {
-      var Utils = require_utils(), ECLevel = require_error_correction_level(), BitBuffer = require_bit_buffer(), BitMatrix = require_bit_matrix(), AlignmentPattern = require_alignment_pattern(), FinderPattern = require_finder_pattern(), MaskPattern = require_mask_pattern(), ECCode = require_error_correction_code(), ReedSolomonEncoder = require_reed_solomon_encoder(), Version = require_version(), FormatInfo = require_format_info(), Mode = require_mode(), Segments = require_segments();
-      function setupFinderPattern(matrix, version) {
-        let size = matrix.size, pos = FinderPattern.getPositions(version);
-        for (let i = 0; i < pos.length; i++) {
-          let row = pos[i][0], col = pos[i][1];
-          for (let r = -1; r <= 7; r++)
-            if (!(row + r <= -1 || size <= row + r))
-              for (let c = -1; c <= 7; c++)
-                col + c <= -1 || size <= col + c || (r >= 0 && r <= 6 && (c === 0 || c === 6) || c >= 0 && c <= 6 && (r === 0 || r === 6) || r >= 2 && r <= 4 && c >= 2 && c <= 4 ? matrix.set(row + r, col + c, !0, !0) : matrix.set(row + r, col + c, !1, !0));
-        }
-      }
-      function setupTimingPattern(matrix) {
-        let size = matrix.size;
-        for (let r = 8; r < size - 8; r++) {
-          let value = r % 2 === 0;
-          matrix.set(r, 6, value, !0), matrix.set(6, r, value, !0);
-        }
-      }
-      function setupAlignmentPattern(matrix, version) {
-        let pos = AlignmentPattern.getPositions(version);
-        for (let i = 0; i < pos.length; i++) {
-          let row = pos[i][0], col = pos[i][1];
-          for (let r = -2; r <= 2; r++)
-            for (let c = -2; c <= 2; c++)
-              r === -2 || r === 2 || c === -2 || c === 2 || r === 0 && c === 0 ? matrix.set(row + r, col + c, !0, !0) : matrix.set(row + r, col + c, !1, !0);
-        }
-      }
-      function setupVersionInfo(matrix, version) {
-        let size = matrix.size, bits = Version.getEncodedBits(version), row, col, mod;
-        for (let i = 0; i < 18; i++)
-          row = Math.floor(i / 3), col = i % 3 + size - 8 - 3, mod = (bits >> i & 1) === 1, matrix.set(row, col, mod, !0), matrix.set(col, row, mod, !0);
-      }
-      function setupFormatInfo(matrix, errorCorrectionLevel, maskPattern) {
-        let size = matrix.size, bits = FormatInfo.getEncodedBits(errorCorrectionLevel, maskPattern), i, mod;
-        for (i = 0; i < 15; i++)
-          mod = (bits >> i & 1) === 1, i < 6 ? matrix.set(i, 8, mod, !0) : i < 8 ? matrix.set(i + 1, 8, mod, !0) : matrix.set(size - 15 + i, 8, mod, !0), i < 8 ? matrix.set(8, size - i - 1, mod, !0) : i < 9 ? matrix.set(8, 15 - i - 1 + 1, mod, !0) : matrix.set(8, 15 - i - 1, mod, !0);
-        matrix.set(size - 8, 8, 1, !0);
-      }
-      function setupData(matrix, data) {
-        let size = matrix.size, inc = -1, row = size - 1, bitIndex = 7, byteIndex = 0;
-        for (let col = size - 1; col > 0; col -= 2)
-          for (col === 6 && col--; ; ) {
-            for (let c = 0; c < 2; c++)
-              if (!matrix.isReserved(row, col - c)) {
-                let dark = !1;
-                byteIndex < data.length && (dark = (data[byteIndex] >>> bitIndex & 1) === 1), matrix.set(row, col - c, dark), bitIndex--, bitIndex === -1 && (byteIndex++, bitIndex = 7);
-              }
-            if (row += inc, row < 0 || size <= row) {
-              row -= inc, inc = -inc;
-              break;
-            }
-          }
-      }
-      function createData(version, errorCorrectionLevel, segments) {
-        let buffer = new BitBuffer();
-        segments.forEach(function(data) {
-          buffer.put(data.mode.bit, 4), buffer.put(data.getLength(), Mode.getCharCountIndicator(data.mode, version)), data.write(buffer);
-        });
-        let totalCodewords = Utils.getSymbolTotalCodewords(version), ecTotalCodewords = ECCode.getTotalCodewordsCount(version, errorCorrectionLevel), dataTotalCodewordsBits = (totalCodewords - ecTotalCodewords) * 8;
-        for (buffer.getLengthInBits() + 4 <= dataTotalCodewordsBits && buffer.put(0, 4); buffer.getLengthInBits() % 8 !== 0; )
-          buffer.putBit(0);
-        let remainingByte = (dataTotalCodewordsBits - buffer.getLengthInBits()) / 8;
-        for (let i = 0; i < remainingByte; i++)
-          buffer.put(i % 2 ? 17 : 236, 8);
-        return createCodewords(buffer, version, errorCorrectionLevel);
-      }
-      function createCodewords(bitBuffer, version, errorCorrectionLevel) {
-        let totalCodewords = Utils.getSymbolTotalCodewords(version), ecTotalCodewords = ECCode.getTotalCodewordsCount(version, errorCorrectionLevel), dataTotalCodewords = totalCodewords - ecTotalCodewords, ecTotalBlocks = ECCode.getBlocksCount(version, errorCorrectionLevel), blocksInGroup2 = totalCodewords % ecTotalBlocks, blocksInGroup1 = ecTotalBlocks - blocksInGroup2, totalCodewordsInGroup1 = Math.floor(totalCodewords / ecTotalBlocks), dataCodewordsInGroup1 = Math.floor(dataTotalCodewords / ecTotalBlocks), dataCodewordsInGroup2 = dataCodewordsInGroup1 + 1, ecCount = totalCodewordsInGroup1 - dataCodewordsInGroup1, rs = new ReedSolomonEncoder(ecCount), offset = 0, dcData = new Array(ecTotalBlocks), ecData = new Array(ecTotalBlocks), maxDataSize = 0, buffer = new Uint8Array(bitBuffer.buffer);
-        for (let b = 0; b < ecTotalBlocks; b++) {
-          let dataSize = b < blocksInGroup1 ? dataCodewordsInGroup1 : dataCodewordsInGroup2;
-          dcData[b] = buffer.slice(offset, offset + dataSize), ecData[b] = rs.encode(dcData[b]), offset += dataSize, maxDataSize = Math.max(maxDataSize, dataSize);
-        }
-        let data = new Uint8Array(totalCodewords), index = 0, i, r;
-        for (i = 0; i < maxDataSize; i++)
-          for (r = 0; r < ecTotalBlocks; r++)
-            i < dcData[r].length && (data[index++] = dcData[r][i]);
-        for (i = 0; i < ecCount; i++)
-          for (r = 0; r < ecTotalBlocks; r++)
-            data[index++] = ecData[r][i];
-        return data;
-      }
-      function createSymbol(data, version, errorCorrectionLevel, maskPattern) {
-        let segments;
-        if (Array.isArray(data))
-          segments = Segments.fromArray(data);
-        else if (typeof data == "string") {
-          let estimatedVersion = version;
-          if (!estimatedVersion) {
-            let rawSegments = Segments.rawSplit(data);
-            estimatedVersion = Version.getBestVersionForData(rawSegments, errorCorrectionLevel);
-          }
-          segments = Segments.fromString(data, estimatedVersion || 40);
-        } else
-          throw new Error("Invalid data");
-        let bestVersion = Version.getBestVersionForData(segments, errorCorrectionLevel);
-        if (!bestVersion)
-          throw new Error("The amount of data is too big to be stored in a QR Code");
-        if (!version)
-          version = bestVersion;
-        else if (version < bestVersion)
-          throw new Error(
-            `
-The chosen QR Code version cannot contain this amount of data.
-Minimum version required to store current data is: ` + bestVersion + `.
-`
-          );
-        let dataBits = createData(version, errorCorrectionLevel, segments), moduleCount = Utils.getSymbolSize(version), modules = new BitMatrix(moduleCount);
-        return setupFinderPattern(modules, version), setupTimingPattern(modules), setupAlignmentPattern(modules, version), setupFormatInfo(modules, errorCorrectionLevel, 0), version >= 7 && setupVersionInfo(modules, version), setupData(modules, dataBits), isNaN(maskPattern) && (maskPattern = MaskPattern.getBestMask(
-          modules,
-          setupFormatInfo.bind(null, modules, errorCorrectionLevel)
-        )), MaskPattern.applyMask(maskPattern, modules), setupFormatInfo(modules, errorCorrectionLevel, maskPattern), {
-          modules,
-          version,
-          errorCorrectionLevel,
-          maskPattern,
-          segments
-        };
-      }
-      exports.create = function(data, options) {
-        if (typeof data > "u" || data === "")
-          throw new Error("No input text");
-        let errorCorrectionLevel = ECLevel.M, version, mask;
-        return typeof options < "u" && (errorCorrectionLevel = ECLevel.from(options.errorCorrectionLevel, ECLevel.M), version = Version.from(options.version), mask = MaskPattern.from(options.maskPattern), options.toSJISFunc && Utils.setToSJISFunction(options.toSJISFunc)), createSymbol(data, version, errorCorrectionLevel, mask);
-      };
-    }
-  });
-
-  // ../../node_modules/qrcode/lib/renderer/utils.js
-  var require_utils2 = __commonJS({
-    "../../node_modules/qrcode/lib/renderer/utils.js"(exports) {
-      function hex2rgba(hex) {
-        if (typeof hex == "number" && (hex = hex.toString()), typeof hex != "string")
-          throw new Error("Color should be defined as hex string");
-        let hexCode = hex.slice().replace("#", "").split("");
-        if (hexCode.length < 3 || hexCode.length === 5 || hexCode.length > 8)
-          throw new Error("Invalid hex color: " + hex);
-        (hexCode.length === 3 || hexCode.length === 4) && (hexCode = Array.prototype.concat.apply([], hexCode.map(function(c) {
-          return [c, c];
-        }))), hexCode.length === 6 && hexCode.push("F", "F");
-        let hexValue = parseInt(hexCode.join(""), 16);
-        return {
-          r: hexValue >> 24 & 255,
-          g: hexValue >> 16 & 255,
-          b: hexValue >> 8 & 255,
-          a: hexValue & 255,
-          hex: "#" + hexCode.slice(0, 6).join("")
-        };
-      }
-      exports.getOptions = function(options) {
-        options || (options = {}), options.color || (options.color = {});
-        let margin = typeof options.margin > "u" || options.margin === null || options.margin < 0 ? 4 : options.margin, width = options.width && options.width >= 21 ? options.width : void 0, scale = options.scale || 4;
-        return {
-          width,
-          scale: width ? 4 : scale,
-          margin,
-          color: {
-            dark: hex2rgba(options.color.dark || "#000000ff"),
-            light: hex2rgba(options.color.light || "#ffffffff")
-          },
-          type: options.type,
-          rendererOpts: options.rendererOpts || {}
-        };
-      };
-      exports.getScale = function(qrSize, opts) {
-        return opts.width && opts.width >= qrSize + opts.margin * 2 ? opts.width / (qrSize + opts.margin * 2) : opts.scale;
-      };
-      exports.getImageWidth = function(qrSize, opts) {
-        let scale = exports.getScale(qrSize, opts);
-        return Math.floor((qrSize + opts.margin * 2) * scale);
-      };
-      exports.qrToImageData = function(imgData, qr, opts) {
-        let size = qr.modules.size, data = qr.modules.data, scale = exports.getScale(size, opts), symbolSize = Math.floor((size + opts.margin * 2) * scale), scaledMargin = opts.margin * scale, palette = [opts.color.light, opts.color.dark];
-        for (let i = 0; i < symbolSize; i++)
-          for (let j = 0; j < symbolSize; j++) {
-            let posDst = (i * symbolSize + j) * 4, pxColor = opts.color.light;
-            if (i >= scaledMargin && j >= scaledMargin && i < symbolSize - scaledMargin && j < symbolSize - scaledMargin) {
-              let iSrc = Math.floor((i - scaledMargin) / scale), jSrc = Math.floor((j - scaledMargin) / scale);
-              pxColor = palette[data[iSrc * size + jSrc] ? 1 : 0];
-            }
-            imgData[posDst++] = pxColor.r, imgData[posDst++] = pxColor.g, imgData[posDst++] = pxColor.b, imgData[posDst] = pxColor.a;
-          }
-      };
-    }
-  });
-
-  // ../../node_modules/qrcode/lib/renderer/canvas.js
-  var require_canvas = __commonJS({
-    "../../node_modules/qrcode/lib/renderer/canvas.js"(exports) {
-      var Utils = require_utils2();
-      function clearCanvas(ctx, canvas, size) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height), canvas.style || (canvas.style = {}), canvas.height = size, canvas.width = size, canvas.style.height = size + "px", canvas.style.width = size + "px";
-      }
-      function getCanvasElement() {
-        try {
-          return document.createElement("canvas");
-        } catch {
-          throw new Error("You need to specify a canvas element");
-        }
-      }
-      exports.render = function(qrData, canvas, options) {
-        let opts = options, canvasEl = canvas;
-        typeof opts > "u" && (!canvas || !canvas.getContext) && (opts = canvas, canvas = void 0), canvas || (canvasEl = getCanvasElement()), opts = Utils.getOptions(opts);
-        let size = Utils.getImageWidth(qrData.modules.size, opts), ctx = canvasEl.getContext("2d"), image = ctx.createImageData(size, size);
-        return Utils.qrToImageData(image.data, qrData, opts), clearCanvas(ctx, canvasEl, size), ctx.putImageData(image, 0, 0), canvasEl;
-      };
-      exports.renderToDataURL = function(qrData, canvas, options) {
-        let opts = options;
-        typeof opts > "u" && (!canvas || !canvas.getContext) && (opts = canvas, canvas = void 0), opts || (opts = {});
-        let canvasEl = exports.render(qrData, canvas, opts), type = opts.type || "image/png", rendererOpts = opts.rendererOpts || {};
-        return canvasEl.toDataURL(type, rendererOpts.quality);
-      };
-    }
-  });
-
-  // ../../node_modules/qrcode/lib/renderer/svg-tag.js
-  var require_svg_tag = __commonJS({
-    "../../node_modules/qrcode/lib/renderer/svg-tag.js"(exports) {
-      var Utils = require_utils2();
-      function getColorAttrib(color, attrib) {
-        let alpha = color.a / 255, str = attrib + '="' + color.hex + '"';
-        return alpha < 1 ? str + " " + attrib + '-opacity="' + alpha.toFixed(2).slice(1) + '"' : str;
-      }
-      function svgCmd(cmd, x, y) {
-        let str = cmd + x;
-        return typeof y < "u" && (str += " " + y), str;
-      }
-      function qrToPath(data, size, margin) {
-        let path = "", moveBy = 0, newRow = !1, lineLength = 0;
-        for (let i = 0; i < data.length; i++) {
-          let col = Math.floor(i % size), row = Math.floor(i / size);
-          !col && !newRow && (newRow = !0), data[i] ? (lineLength++, i > 0 && col > 0 && data[i - 1] || (path += newRow ? svgCmd("M", col + margin, 0.5 + row + margin) : svgCmd("m", moveBy, 0), moveBy = 0, newRow = !1), col + 1 < size && data[i + 1] || (path += svgCmd("h", lineLength), lineLength = 0)) : moveBy++;
-        }
-        return path;
-      }
-      exports.render = function(qrData, options, cb) {
-        let opts = Utils.getOptions(options), size = qrData.modules.size, data = qrData.modules.data, qrcodesize = size + opts.margin * 2, bg = opts.color.light.a ? "<path " + getColorAttrib(opts.color.light, "fill") + ' d="M0 0h' + qrcodesize + "v" + qrcodesize + 'H0z"/>' : "", path = "<path " + getColorAttrib(opts.color.dark, "stroke") + ' d="' + qrToPath(data, size, opts.margin) + '"/>', viewBox = 'viewBox="0 0 ' + qrcodesize + " " + qrcodesize + '"', svgTag = '<svg xmlns="http://www.w3.org/2000/svg" ' + (opts.width ? 'width="' + opts.width + '" height="' + opts.width + '" ' : "") + viewBox + ' shape-rendering="crispEdges">' + bg + path + `</svg>
-`;
-        return typeof cb == "function" && cb(null, svgTag), svgTag;
-      };
-    }
-  });
-
-  // ../../node_modules/qrcode/lib/browser.js
-  var require_browser = __commonJS({
-    "../../node_modules/qrcode/lib/browser.js"(exports) {
-      var canPromise = require_can_promise(), QRCode2 = require_qrcode(), CanvasRenderer = require_canvas(), SvgRenderer = require_svg_tag();
-      function renderCanvas(renderFunc, canvas, text, opts, cb) {
-        let args = [].slice.call(arguments, 1), argsNum = args.length, isLastArgCb = typeof args[argsNum - 1] == "function";
-        if (!isLastArgCb && !canPromise())
-          throw new Error("Callback required as last argument");
-        if (isLastArgCb) {
-          if (argsNum < 2)
-            throw new Error("Too few arguments provided");
-          argsNum === 2 ? (cb = text, text = canvas, canvas = opts = void 0) : argsNum === 3 && (canvas.getContext && typeof cb > "u" ? (cb = opts, opts = void 0) : (cb = opts, opts = text, text = canvas, canvas = void 0));
-        } else {
-          if (argsNum < 1)
-            throw new Error("Too few arguments provided");
-          return argsNum === 1 ? (text = canvas, canvas = opts = void 0) : argsNum === 2 && !canvas.getContext && (opts = text, text = canvas, canvas = void 0), new Promise(function(resolve, reject) {
-            try {
-              let data = QRCode2.create(text, opts);
-              resolve(renderFunc(data, canvas, opts));
-            } catch (e) {
-              reject(e);
-            }
-          });
-        }
-        try {
-          let data = QRCode2.create(text, opts);
-          cb(null, renderFunc(data, canvas, opts));
-        } catch (e) {
-          cb(e);
-        }
-      }
-      exports.create = QRCode2.create;
-      exports.toCanvas = renderCanvas.bind(null, CanvasRenderer.render);
-      exports.toDataURL = renderCanvas.bind(null, CanvasRenderer.renderToDataURL);
-      exports.toString = renderCanvas.bind(null, function(data, _, opts) {
-        return SvgRenderer.render(data, opts);
-      });
-    }
-  });
-
-  // src/client.ts
-  var import_qrcode = __toESM(require_browser(), 1);
-
   // src/remote-file-content-provider.ts
   function shouldUseRemoteFileViewer(status) {
     return status.mode === "remote" && status.remoteFeatures?.fileViewer === !0;
@@ -1754,12 +132,7 @@ Minimum version required to store current data is: ` + bestVersion + `.
   var DEFAULT_REMOTE_SERVER_URL = "https://sakakibara.ink:8443";
 
   // src/client.ts
-  var clientModuleId = "@blue-soda/dsh-remote", pendingWorkspaceSelectionKey = "dsh-remote:pending-workspace-selection", deepSeekWorkspaceIcon = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAMAAACdt4HsAAAACVBMVEUAAADy8vXx8fUsA3vyAAAAAXRSTlMAQObYZgAAAOxJREFUWMPtlsEOwyAMQxP+/6OnTZMGxHGcot3wDYgfhkJbs6urprzveGtu9d1NgEdto8w93GuA7zPS2RFg7ynsCOAokbtAmLr2YaeKgJ6fxpT8jCAC0qSqPyNoO5DXdvyouj4ClFAdYaDxK09uiBDCIYBf6CxLesnR0uF2pG+JmhCqrUb0AOvjjoQaYDTCEAAgMg5grhAeAQIB+/M15IcKlnUIp4CkTCd0AKb4zVsRSJVGYEVzT0agK107IMGMEurvromEpaX4wzk/IKw378kq4LafED6Oowxfk7AP2q8W16EdM3p29Eyvrv6vF0WIBfBziKyCAAAAAElFTkSuQmCC", gptWorkspaceIcon = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAMAAACdt4HsAAAAclBMVEX////v7+++wMf////s7O3k5OTExcrX2Ny6vMTv8PPW19yXmqRqboJmaHd3eoaqrLPs7fGMjpfb3eKlpq1eYXOxs7pWWWd+gY5HSVdRVGVub3k+QU74+Pg4OkcvMT1ISlUoKjUiIy4fICueoKkaGyUSFB21Bp+qAAAAAXRSTlMAQObYZgAABChJREFUWMPtl916qjoQhlsdEwIECEgMYCBxx/u/xT1DrFUL1LO1DtY8LSLJvPnmB4gfH//sr7TPDfvdebf/xXZbkE/4zZ0MVhGHd9zJDsv+7F3//Z69tT5wljAu3tXw+TIlzXKJlhflYmJ+5uF5WpWhb54X+C/zZCmT2wJA4dJZwus0UYjIGqWyMhVbEp4yKNRRqlv0opW5PJLJ4rFJXvP4JKDRMqturBZjkMVJFYjR6iHQDQDI4+k2k51wZbWrqwp4mR/1CVYATyko9TFGxBUqL5IvMbXSWt0T8bkGgFLqgqZBI/Uxbx5UAxLaNcCNLBpttM7wbCc1pmJOpWAsDtey68UaQMyrFgb9uxLPjqg3+nGluyKN0XUdWw0BJ0NvTFFqgzpr9J+Dh4w0Ga1qkqBNswagxdRgFPAbgHRQG5jumGWyMxrTIaRRa4AzFs0YrNMXgI4MJWnsKYFhGNMnIh/mBOPsV8CZBFjN9w8ArowxnZzDr5IcvxTaKpxJCVsoI3SWysz1UM4AqQdzlCgho1IKrK+x1mKFzisANtgEU8E7GwHDgOqxe4w9tnM166wbaA2xBMBLrTWcAGYGdCiYVUJUrMCF+7l6gklrW1RwPi8ByjuActANqhKzVWoYrFGcCFzbDgNaBrTWpncFQMcI2DfWoAiDqRCiHcYM/ZdCEKkZqfR8spj4F0CiJjv2gHL6URNoCQDaYacL6O1oFDO2eQDUFP7AKdCRdC4CRDZaNifbjA41l/uYb/SZMAFNTBGzY7sG4J2jTsJgToOzIzXF3HZqBpSOAGduXbkGEKV1OqVGqRJpRxtvwbSw5IqAiUJItwBCOT9R32FCGo3nCkAN3t0UTBRC6zDONcBeOee9pr4T+ASbnDOdc5OmtREwEEB5w8Wqgt4bOV5c7Lt9iiK8zdP/IsBbutUGX4gNwEVCqd3FUt/xYnRWt7BvPBYQjwjAGXa3ASguHVAZ/WXKlA3eZDX1wRegFsr7E2wAlB9xFbx/7MV70kFT8aqNgLL3F8nFBmA3hrn/IJHjKJOK2oj1WI4Z4FzwN/81AOhgYD6v2xbIvaZIurLC9AfvB1WLTYAoXejF1xeBL5cpBIyEbmxkZymIXwDQh1BAfOrhI1lfwtgz8tozF5T4ttf3+32AyxC6klwAgw/YVTHpoK82xYt3wLP/Bw4AAI4D7/01TLKXBj9NEz2wEuGiKpoy68S/FwCLMQAZ3gXhihaCa25vQo6RyToOz9PE6wYjJgGi1YnqZX8qMIK+TDlnargGzSv4NvFjlwXf/nfLLMrAB4O/Xl3BH0d+RIASFgDA8IYMIXgr2+cBsbDdPSwAAHjSZFmb3txETCKIxc0uWwI8rxsLJcTiVndNwyMgKljbbNN2/zcEAja2+4RgIDYN2Bu/WtAOaEodnu2dnzz/7I/Y/w/LaEcX/MdfAAAAAElFTkSuQmCC", ENABLED_QR_PROVIDERS = ["github"], QR_LOGIN_ENABLED = !1, QR_PROVIDER_LABELS = {
-    wechat: "wechatLogin",
-    github: "githubLogin",
-    zhihu: "zhihuLogin"
-  };
-  var defaultQrProvider = ENABLED_QR_PROVIDERS[0] ?? "wechat";
+  var clientModuleId = "@blue-soda/dsh-remote", pendingWorkspaceSelectionKey = "dsh-remote:pending-workspace-selection", deepSeekWorkspaceIcon = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAMAAACdt4HsAAAACVBMVEUAAADy8vXx8fUsA3vyAAAAAXRSTlMAQObYZgAAAOxJREFUWMPtlsEOwyAMQxP+/6OnTZMGxHGcot3wDYgfhkJbs6urprzveGtu9d1NgEdto8w93GuA7zPS2RFg7ynsCOAokbtAmLr2YaeKgJ6fxpT8jCAC0qSqPyNoO5DXdvyouj4ClFAdYaDxK09uiBDCIYBf6CxLesnR0uF2pG+JmhCqrUb0AOvjjoQaYDTCEAAgMg5grhAeAQIB+/M15IcKlnUIp4CkTCd0AKb4zVsRSJVGYEVzT0agK107IMGMEurvromEpaX4wzk/IKw378kq4LafED6Oowxfk7AP2q8W16EdM3p29Eyvrv6vF0WIBfBziKyCAAAAAElFTkSuQmCC", gptWorkspaceIcon = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAMAAACdt4HsAAAAclBMVEX////v7+++wMf////s7O3k5OTExcrX2Ny6vMTv8PPW19yXmqRqboJmaHd3eoaqrLPs7fGMjpfb3eKlpq1eYXOxs7pWWWd+gY5HSVdRVGVub3k+QU74+Pg4OkcvMT1ISlUoKjUiIy4fICueoKkaGyUSFB21Bp+qAAAAAXRSTlMAQObYZgAABChJREFUWMPtl916qjoQhlsdEwIECEgMYCBxx/u/xT1DrFUL1LO1DtY8LSLJvPnmB4gfH//sr7TPDfvdebf/xXZbkE/4zZ0MVhGHd9zJDsv+7F3//Z69tT5wljAu3tXw+TIlzXKJlhflYmJ+5uF5WpWhb54X+C/zZCmT2wJA4dJZwus0UYjIGqWyMhVbEp4yKNRRqlv0opW5PJLJ4rFJXvP4JKDRMqturBZjkMVJFYjR6iHQDQDI4+k2k51wZbWrqwp4mR/1CVYATyko9TFGxBUqL5IvMbXSWt0T8bkGgFLqgqZBI/Uxbx5UAxLaNcCNLBpttM7wbCc1pmJOpWAsDtey68UaQMyrFgb9uxLPjqg3+nGluyKN0XUdWw0BJ0NvTFFqgzpr9J+Dh4w0Ga1qkqBNswagxdRgFPAbgHRQG5jumGWyMxrTIaRRa4AzFs0YrNMXgI4MJWnsKYFhGNMnIh/mBOPsV8CZBFjN9w8ArowxnZzDr5IcvxTaKpxJCVsoI3SWysz1UM4AqQdzlCgho1IKrK+x1mKFzisANtgEU8E7GwHDgOqxe4w9tnM166wbaA2xBMBLrTWcAGYGdCiYVUJUrMCF+7l6gklrW1RwPi8ByjuActANqhKzVWoYrFGcCFzbDgNaBrTWpncFQMcI2DfWoAiDqRCiHcYM/ZdCEKkZqfR8spj4F0CiJjv2gHL6URNoCQDaYacL6O1oFDO2eQDUFP7AKdCRdC4CRDZaNifbjA41l/uYb/SZMAFNTBGzY7sG4J2jTsJgToOzIzXF3HZqBpSOAGduXbkGEKV1OqVGqRJpRxtvwbSw5IqAiUJItwBCOT9R32FCGo3nCkAN3t0UTBRC6zDONcBeOee9pr4T+ASbnDOdc5OmtREwEEB5w8Wqgt4bOV5c7Lt9iiK8zdP/IsBbutUGX4gNwEVCqd3FUt/xYnRWt7BvPBYQjwjAGXa3ASguHVAZ/WXKlA3eZDX1wRegFsr7E2wAlB9xFbx/7MV70kFT8aqNgLL3F8nFBmA3hrn/IJHjKJOK2oj1WI4Z4FzwN/81AOhgYD6v2xbIvaZIurLC9AfvB1WLTYAoXejF1xeBL5cpBIyEbmxkZymIXwDQh1BAfOrhI1lfwtgz8tozF5T4ttf3+32AyxC6klwAgw/YVTHpoK82xYt3wLP/Bw4AAI4D7/01TLKXBj9NEz2wEuGiKpoy68S/FwCLMQAZ3gXhihaCa25vQo6RyToOz9PE6wYjJgGi1YnqZX8qMIK+TDlnargGzSv4NvFjlwXf/nfLLMrAB4O/Xl3BH0d+RIASFgDA8IYMIXgr2+cBsbDdPSwAAHjSZFmb3txETCKIxc0uWwI8rxsLJcTiVndNwyMgKljbbNN2/zcEAja2+4RgIDYN2Bu/WtAOaEodnu2dnzz/7I/Y/w/LaEcX/MdfAAAAAElFTkSuQmCC", ENABLED_QR_PROVIDERS = ["github"], QR_LOGIN_ENABLED = !1, defaultQrProvider = ENABLED_QR_PROVIDERS[0] ?? "wechat";
   function isEnabledQrProvider(provider) {
     return ENABLED_QR_PROVIDERS.includes(provider);
   }
@@ -1821,7 +194,8 @@ Minimum version required to store current data is: ` + bestVersion + `.
     serverUrlHint: "HTTPS origin used for account authorization and encrypted relay.",
     serverSaved: "Server address saved. Restart DSH to apply it.",
     codexRemote: "Codex Remote",
-    codexRemoteHint: "Expose Codex projects through this Host. Restart DSH after changing this setting.",
+    codexStatusLine: "Current state: {state}",
+    codexControlAllow: "Allow other users to control Codex on this device",
     codexSaved: "Codex Remote setting saved. Restart DSH to apply it.",
     codexBinaryLabel: "Codex command or path",
     codexBinaryMissing: 'No Codex found automatically. Install the Codex desktop app, or enter the path to a Codex CLI that supports "codex app-server".',
@@ -1829,6 +203,17 @@ Minimum version required to store current data is: ` + bestVersion + `.
     codexBinaryAuto: "Use auto-discovery",
     codexBinaryPlaceholder: 'Path to a Codex CLI that supports "codex app-server"',
     codexBinaryPinned: "Set by hand. Clear the field and confirm to discover it automatically again.",
+    codexUnavailableAccount: "Codex cannot reach your account from this network (region not supported, or the sign-in expired). It returns as soon as the account can be refreshed.",
+    codexUnavailableSignIn: "Codex is not signed in on this host. Sign in with the Codex app, then restart DSH.",
+    codexUnavailableBinary: "The Codex CLI could not be started here. Install the Codex desktop app, or set the command or full path in the field below.",
+    codexUnavailableGeneric: "Codex is unavailable on this host ({code}).",
+    codexDisabled: "Codex is switched off on this device, so nobody can use it remotely.",
+    codexStarting: "Starting the Codex connection...",
+    codexUnavailableNoCode: "Codex is unavailable on this host.",
+    codexRecheck: "Re-check",
+    codexRemoteOff: "Codex is switched off on that device.",
+    codexRemoteNotProvided: "That device does not provide Codex.",
+    codexRemoteUnavailable: "Codex is currently unavailable on that device.",
     authorizeFromRemote: "Sign in from the Remote entry in the sidebar, then return here to manage this device.",
     authorizationMethod: "Authorization method",
     accountPassword: "Account password",
@@ -1859,6 +244,9 @@ Minimum version required to store current data is: ` + bestVersion + `.
     noRemoteHosts: "No authorized remote Host for this account.",
     online: "Online",
     offline: "Offline",
+    connectionControlDisabled: 'That device is not accepting control. Turn on "Allow control" on it.',
+    connectionHostOffline: "The selected Host is offline.",
+    hostRefusesControl: "Not accepting control",
     thisMachineHost: "This machine as Remote Host",
     connected: "Connected",
     connectedAs: "Connected as {account}",
@@ -1871,10 +259,10 @@ Minimum version required to store current data is: ` + bestVersion + `.
     reconnect: "Reconnect",
     reconnectingAction: "Reconnecting\u2026",
     reconnectStarted: "Reconnect requested.",
-    connectionAuthorizationExpired: "Authorization expired. Sign out and authorize this Host again.",
+    connectionAuthorizationExpired: "Authorization expired. Sign in again to authorize this device.",
     connectionReplaced: "Another instance is using this Host identity. Stop it or use a separate DSH_HOME before reconnecting.",
     connectionCredentialsBusy: "Credential refresh is locked. Stop other instances. After a crash, stop all instances before removing server-credentials.json.refresh-lock and authorizing again.",
-    connectionDeviceRevoked: "This Host was revoked on the Server. Sign out and authorize it again.",
+    connectionDeviceRevoked: "This device was removed on the Server. Sign in again to add it back.",
     connectionOwnershipRequired: "The Server no longer recognizes this Host as an owned device.",
     connectionRateLimited: "The Server is receiving too many requests. Automatic retry will continue.",
     connectionVersionMismatch: "The Plugin and Server protocol versions are incompatible.",
@@ -1941,7 +329,8 @@ Minimum version required to store current data is: ` + bestVersion + `.
     confirmAddWorkspace: "Add and open",
     showAllWorkspaces: "Show all DSH workspaces",
     showAllCodexWorkspaces: "Show all CodeX workspaces",
-    remoteModePrefix: "Remote mode \xB7 ",
+    remoteModeDsh: "Remote DSH \xB7 ",
+    remoteModeCodex: "Remote Codex \xB7 ",
     remoteNetworkP2p: "P2P",
     remoteNetworkTurn: "TURN",
     remoteNetworkRelay: "Relay",
@@ -2020,6 +409,8 @@ Minimum version required to store current data is: ` + bestVersion + `.
     noConnectedClients: "No devices are currently connected to this Host.",
     unknownDevice: "Unknown device",
     exitRemoteAccount: "Sign out",
+    revokeThisDevice: "Remove this device",
+    revokeDeviceImpact: "Removes this device from the account. Signing in again brings it back with the same device id.",
     cancel: "Cancel",
     signOutImpact: "Signing out disconnects this plugin and also signs DSH out of your DeepSeek account.",
     wechatLogin: "WeChat QR",
@@ -2077,7 +468,8 @@ Minimum version required to store current data is: ` + bestVersion + `.
     serverUrlHint: "\u7528\u4E8E\u8D26\u53F7\u6388\u6743\u548C\u52A0\u5BC6\u4E2D\u7EE7\u7684 HTTPS \u5730\u5740\u3002",
     serverSaved: "Server \u5730\u5740\u5DF2\u4FDD\u5B58\uFF0C\u91CD\u542F DSH \u540E\u751F\u6548\u3002",
     codexRemote: "Codex Remote",
-    codexRemoteHint: "\u901A\u8FC7\u8FD9\u53F0 Host \u63D0\u4F9B Codex \u9879\u76EE\uFF1B\u4FEE\u6539\u540E\u9700\u91CD\u542F DSH \u751F\u6548\u3002",
+    codexStatusLine: "\u5F53\u524D\u72B6\u6001\uFF1A{state}",
+    codexControlAllow: "\u5141\u8BB8\u5176\u4ED6\u7528\u6237\u63A7\u5236\u672C\u8BBE\u5907Codex",
     codexSaved: "Codex Remote \u8BBE\u7F6E\u5DF2\u4FDD\u5B58\uFF0C\u91CD\u542F DSH \u540E\u751F\u6548\u3002",
     codexBinaryLabel: "Codex \u547D\u4EE4\u6216\u8DEF\u5F84",
     codexBinaryMissing: '\u672A\u81EA\u52A8\u53D1\u73B0 Codex\u3002\u8BF7\u5B89\u88C5 Codex \u684C\u9762\u5E94\u7528\uFF0C\u6216\u586B\u5199\u652F\u6301 "codex app-server" \u7684 Codex CLI \u8DEF\u5F84\u3002',
@@ -2085,6 +477,17 @@ Minimum version required to store current data is: ` + bestVersion + `.
     codexBinaryAuto: "\u6062\u590D\u81EA\u52A8\u53D1\u73B0",
     codexBinaryPlaceholder: '\u652F\u6301 "codex app-server" \u7684 Codex CLI \u8DEF\u5F84',
     codexBinaryPinned: "\u5F53\u524D\u4E3A\u624B\u52A8\u6307\u5B9A\uFF1B\u6E05\u7A7A\u540E\u786E\u8BA4\u5373\u53EF\u6062\u590D\u81EA\u52A8\u53D1\u73B0\u3002",
+    codexUnavailableAccount: "Codex \u65E0\u6CD5\u4ECE\u5F53\u524D\u7F51\u7EDC\u8BBF\u95EE\u4F60\u7684\u8D26\u53F7\uFF08\u533A\u57DF\u4E0D\u53D7\u652F\u6301\uFF0C\u6216\u767B\u5F55\u5DF2\u8FC7\u671F\uFF09\u3002\u8D26\u53F7\u6062\u590D\u53EF\u8FBE\u540E Codex \u5373\u56DE\u6765\u3002",
+    codexUnavailableSignIn: "\u8FD9\u53F0 Host \u4E0A\u7684 Codex \u5C1A\u672A\u767B\u5F55\u3002\u8BF7\u5148\u7528 Codex \u5E94\u7528\u767B\u5F55\uFF0C\u7136\u540E\u91CD\u542F DSH\u3002",
+    codexUnavailableBinary: "\u8FD9\u91CC\u7684 Codex CLI \u65E0\u6CD5\u542F\u52A8\u3002\u8BF7\u5B89\u88C5 Codex \u684C\u9762\u5E94\u7528\uFF0C\u6216\u5728\u4E0B\u65B9\u586B\u5199\u53EF\u7528\u7684\u547D\u4EE4\u6216\u5B8C\u6574\u8DEF\u5F84\u3002",
+    codexUnavailableGeneric: "\u8FD9\u53F0 Host \u4E0A\u7684 Codex \u5F53\u524D\u4E0D\u53EF\u7528\uFF08{code}\uFF09\u3002",
+    codexDisabled: "\u672C\u8BBE\u5907\u7684 Codex \u5DF2\u5173\u95ED\uFF0C\u5176\u4ED6\u7528\u6237\u65E0\u6CD5\u8FDC\u7A0B\u4F7F\u7528\u3002",
+    codexStarting: "\u6B63\u5728\u542F\u52A8 Codex \u8FDE\u63A5\u2026",
+    codexUnavailableNoCode: "\u8FD9\u53F0 Host \u4E0A\u7684 Codex \u5F53\u524D\u4E0D\u53EF\u7528\u3002",
+    codexRecheck: "\u91CD\u65B0\u68C0\u67E5",
+    codexRemoteOff: "\u8BE5\u8BBE\u5907\u7684 Codex \u5DF2\u5173\u95ED\u3002",
+    codexRemoteNotProvided: "\u8BE5\u8BBE\u5907\u4E0D\u63D0\u4F9B Codex\u3002",
+    codexRemoteUnavailable: "\u8BE5\u8BBE\u5907\u7684 Codex \u5F53\u524D\u4E0D\u53EF\u7528\u3002",
     authorizeFromRemote: "\u8BF7\u4ECE\u4FA7\u680F Remote \u5165\u53E3\u767B\u5F55\uFF0C\u767B\u5F55\u540E\u53EF\u5728\u8FD9\u91CC\u7BA1\u7406\u5F53\u524D\u8BBE\u5907\u3002",
     authorizationMethod: "\u6388\u6743\u65B9\u5F0F",
     accountPassword: "\u8D26\u53F7\u5BC6\u7801",
@@ -2115,6 +518,9 @@ Minimum version required to store current data is: ` + bestVersion + `.
     noRemoteHosts: "\u6B64\u8D26\u53F7\u6CA1\u6709\u5DF2\u6388\u6743\u7684\u8FDC\u7A0B Host\u3002",
     online: "\u5728\u7EBF",
     offline: "\u79BB\u7EBF",
+    connectionControlDisabled: "\u8BE5\u8BBE\u5907\u5F53\u524D\u4E0D\u63A5\u53D7\u63A7\u5236\uFF0C\u8BF7\u5728\u5B83\u4E0A\u9762\u6253\u5F00\u300C\u5141\u8BB8\u63A7\u5236\u300D\u3002",
+    connectionHostOffline: "\u6240\u9009 Host \u5F53\u524D\u79BB\u7EBF\u3002",
+    hostRefusesControl: "\u4E0D\u63A5\u53D7\u63A7\u5236",
     thisMachineHost: "\u5C06\u6B64\u8BBE\u5907\u4F5C\u4E3A\u8FDC\u7A0B Host",
     connected: "\u5DF2\u8FDE\u63A5",
     connectedAs: "\u5DF2\u4F7F\u7528 {account} \u8FDE\u63A5",
@@ -2127,10 +533,10 @@ Minimum version required to store current data is: ` + bestVersion + `.
     reconnect: "\u624B\u52A8\u91CD\u8FDE",
     reconnectingAction: "\u6B63\u5728\u91CD\u8FDE\u2026",
     reconnectStarted: "\u5DF2\u53D1\u8D77\u91CD\u8FDE\u3002",
-    connectionAuthorizationExpired: "\u6388\u6743\u5DF2\u5931\u6548\uFF0C\u8BF7\u9000\u51FA\u6388\u6743\u540E\u91CD\u65B0\u8FDE\u63A5\u6B64 Host\u3002",
+    connectionAuthorizationExpired: "\u6388\u6743\u5DF2\u5931\u6548\uFF0C\u8BF7\u91CD\u65B0\u767B\u5F55\u4EE5\u91CD\u65B0\u6388\u6743\u6B64\u8BBE\u5907\u3002",
     connectionReplaced: "\u53E6\u4E00\u5B9E\u4F8B\u6B63\u5728\u4F7F\u7528\u6B64 Host \u8EAB\u4EFD\u3002\u8BF7\u505C\u6B62\u8BE5\u5B9E\u4F8B\uFF0C\u6216\u4F7F\u7528\u72EC\u7ACB\u7684 DSH_HOME \u540E\u91CD\u65B0\u8FDE\u63A5\u3002",
     connectionCredentialsBusy: "\u51ED\u636E\u5237\u65B0\u88AB\u9501\u5B9A\uFF0C\u8BF7\u505C\u6B62\u5176\u4ED6\u5B9E\u4F8B\u3002\u82E5\u6B64\u524D\u5F02\u5E38\u9000\u51FA\uFF0C\u8BF7\u505C\u6B62\u6240\u6709\u5B9E\u4F8B\u540E\u79FB\u9664 server-credentials.json.refresh-lock \u5E76\u91CD\u65B0\u6388\u6743\u3002",
-    connectionDeviceRevoked: "\u6B64 Host \u5DF2\u5728 Server \u4E0A\u88AB\u64A4\u9500\uFF0C\u8BF7\u9000\u51FA\u6388\u6743\u540E\u91CD\u65B0\u8FDE\u63A5\u3002",
+    connectionDeviceRevoked: "\u6B64\u8BBE\u5907\u5DF2\u5728 Server \u4E0A\u88AB\u79FB\u9664\uFF0C\u8BF7\u91CD\u65B0\u767B\u5F55\u4EE5\u91CD\u65B0\u6DFB\u52A0\u3002",
     connectionOwnershipRequired: "Server \u5DF2\u4E0D\u518D\u5C06\u6B64 Host \u8BC6\u522B\u4E3A\u5F53\u524D\u8D26\u53F7\u7684\u8BBE\u5907\u3002",
     connectionRateLimited: "Server \u8BF7\u6C42\u8FC7\u591A\uFF0C\u63D2\u4EF6\u5C06\u7EE7\u7EED\u81EA\u52A8\u91CD\u8BD5\u3002",
     connectionVersionMismatch: "Plugin \u4E0E Server \u7684\u534F\u8BAE\u7248\u672C\u4E0D\u517C\u5BB9\u3002",
@@ -2197,7 +603,8 @@ Minimum version required to store current data is: ` + bestVersion + `.
     confirmAddWorkspace: "\u786E\u8BA4\u5E76\u6253\u5F00",
     showAllWorkspaces: "\u663E\u793A\u5168\u90E8 DSH \u5DE5\u4F5C\u533A",
     showAllCodexWorkspaces: "\u663E\u793A\u5168\u90E8 CodeX \u5DE5\u4F5C\u533A",
-    remoteModePrefix: "\u8FDC\u7A0B\u6A21\u5F0F \xB7 ",
+    remoteModeDsh: "\u8FDC\u7A0BDSH \xB7 ",
+    remoteModeCodex: "\u8FDC\u7A0BCodex \xB7 ",
     remoteNetworkP2p: "P2P",
     remoteNetworkTurn: "TURN",
     remoteNetworkRelay: "\u4E2D\u7EE7",
@@ -2276,6 +683,8 @@ Minimum version required to store current data is: ` + bestVersion + `.
     noConnectedClients: "\u76EE\u524D\u6CA1\u6709\u8BBE\u5907\u8FDE\u63A5\u5230\u8FD9\u53F0\u4E3B\u673A\u3002",
     unknownDevice: "\u672A\u77E5\u8BBE\u5907",
     exitRemoteAccount: "\u9000\u51FA\u8D26\u53F7",
+    revokeThisDevice: "\u6CE8\u9500\u672C\u8BBE\u5907",
+    revokeDeviceImpact: "\u5C06\u4ECE\u8D26\u53F7\u4E2D\u79FB\u9664\u672C\u8BBE\u5907\uFF1B\u91CD\u65B0\u767B\u5F55\u4F1A\u4EE5\u540C\u4E00\u4E2A\u8BBE\u5907 ID \u56DE\u6765\u3002",
     cancel: "\u53D6\u6D88",
     signOutImpact: "\u9000\u51FA\u540E\u4F1A\u65AD\u5F00\u672C\u63D2\u4EF6\u7684\u8FDE\u63A5\uFF0C\u5E76\u4E14\u4F1A\u4E00\u5E76\u9000\u51FA DSH \u7684 DeepSeek \u8D26\u53F7\u767B\u5F55\u3002",
     wechatLogin: "\u5FAE\u4FE1\u626B\u7801",
@@ -2292,7 +701,11 @@ Minimum version required to store current data is: ` + bestVersion + `.
     refreshQrCode: "\u5237\u65B0\u4E8C\u7EF4\u7801",
     codexVirtualWorkspace: "CodeX \u5DE5\u4F5C\u533A",
     codexVirtualSessions: "Sessions"
-  }, defaultPreferredTransports = ["lan", "p2p", "turn", "relay"], controlRouteBackoffStepsMs = [1e3, 2e3, 5e3, 1e4, 3e4], ControlRouteUnavailableError = class extends Error {
+  };
+  function codexUnavailableKey(code) {
+    return code === "CODEX_ACCOUNT_UNREACHABLE" ? "codexUnavailableAccount" : code === "CODEX_AUTH_REQUIRED" ? "codexUnavailableSignIn" : code === "CODEX_BINARY_UNAVAILABLE" || code === "CODEX_START_TIMEOUT" ? "codexUnavailableBinary" : "codexUnavailableGeneric";
+  }
+  var defaultPreferredTransports = ["lan", "p2p", "turn", "relay"], controlRouteBackoffStepsMs = [1e3, 2e3, 5e3, 1e4, 3e4], ControlRouteUnavailableError = class extends Error {
     constructor(message) {
       super(message), this.name = "ControlRouteUnavailableError";
     }
@@ -2397,7 +810,44 @@ Minimum version required to store current data is: ` + bestVersion + `.
     };
   }
   function connectionErrorMessage(code, t) {
-    return t(code === "ACCOUNT_AUTH_REQUIRED" || code === "AUTH_INVALID" || code === "TOKEN_EXPIRED" ? "connectionAuthorizationExpired" : code === "CONNECTION_REPLACED" ? "connectionReplaced" : code === "SERVER_CREDENTIALS_BUSY" ? "connectionCredentialsBusy" : code === "DEVICE_REVOKED" ? "connectionDeviceRevoked" : code === "DEVICE_OWNERSHIP_REQUIRED" ? "connectionOwnershipRequired" : code === "RATE_LIMITED" ? "connectionRateLimited" : code === "UNSUPPORTED_VERSION" ? "connectionVersionMismatch" : code === "INVALID_MESSAGE" ? "connectionInvalidResponse" : code === "CONNECTION_FAILED" || code === "SERVER_NOT_CONFIGURED" ? "connectionReachability" : "connectionUnexpected");
+    return t(code === "ACCOUNT_AUTH_REQUIRED" || code === "AUTH_INVALID" || code === "TOKEN_EXPIRED" ? "connectionAuthorizationExpired" : code === "CONNECTION_REPLACED" ? "connectionReplaced" : code === "CONTROL_DISABLED" ? "connectionControlDisabled" : code === "HOST_OFFLINE" ? "connectionHostOffline" : code === "SERVER_CREDENTIALS_BUSY" ? "connectionCredentialsBusy" : code === "DEVICE_REVOKED" ? "connectionDeviceRevoked" : code === "DEVICE_OWNERSHIP_REQUIRED" ? "connectionOwnershipRequired" : code === "RATE_LIMITED" ? "connectionRateLimited" : code === "UNSUPPORTED_VERSION" ? "connectionVersionMismatch" : code === "INVALID_MESSAGE" ? "connectionInvalidResponse" : code === "CONNECTION_FAILED" || code === "SERVER_NOT_CONFIGURED" ? "connectionReachability" : "connectionUnexpected");
+  }
+  var localisedRemoteCodes = /* @__PURE__ */ new Set([
+    "ACCOUNT_AUTH_REQUIRED",
+    "AUTH_INVALID",
+    "TOKEN_EXPIRED",
+    "MEMBERSHIP_REQUIRED",
+    "CONNECTION_REPLACED",
+    "CONTROL_DISABLED",
+    "HOST_OFFLINE",
+    "SERVER_CREDENTIALS_BUSY",
+    "DEVICE_REVOKED",
+    "DEVICE_OWNERSHIP_REQUIRED",
+    "RATE_LIMITED",
+    "UNSUPPORTED_VERSION",
+    "CONNECTION_FAILED",
+    "SERVER_NOT_CONFIGURED",
+    "CODEX_DISABLED",
+    "CODEX_NOT_PROVIDED",
+    "CODEX_UNAVAILABLE"
+  ]);
+  function controlFailure(error, t) {
+    let code = error?.details?.remoteCode;
+    return Object.assign(new Error(error?.message ?? t("remoteRequestFailed")), {
+      ...code === void 0 ? {} : { code },
+      retryable: error?.details?.retryable === !0
+    });
+  }
+  function remoteErrorMessage(reason, t) {
+    let code = reason instanceof Error && "code" in reason && typeof reason.code == "string" ? reason.code : void 0;
+    if (code !== void 0) {
+      if (code === "MEMBERSHIP_REQUIRED") return t("connectionOwnershipRequired");
+      if (code === "CODEX_DISABLED") return t("codexRemoteOff");
+      if (code === "CODEX_NOT_PROVIDED") return t("codexRemoteNotProvided");
+      if (code === "CODEX_UNAVAILABLE") return t("codexRemoteUnavailable");
+      if (localisedRemoteCodes.has(code)) return connectionErrorMessage(code, t);
+    }
+    return reason instanceof Error ? reason.message : String(reason);
   }
   async function setDeviceControl(control, enabled, authorized) {
     return enabled && !authorized ? await control("host.authorization.set", { enabled: !0 }) : await control("host.connection.set", { connected: enabled });
@@ -2489,7 +939,7 @@ Minimum version required to store current data is: ` + bestVersion + `.
         }
       }
       function RemotePluginOptions(props) {
-        let { t } = props, [open, setOpen] = React.useState(props.view === "page"), [serverUrl, setServerUrl] = React.useState(""), [codexEnabled, setCodexEnabled] = React.useState(!0), [codexBinary, setCodexBinary] = React.useState("codex"), [portsBusy, setPortsBusy] = React.useState(!1), [previewPorts, setPreviewPorts] = React.useState(""), role = "host", [registrationCode, setRegistrationCode] = React.useState(""), [associations, setAssociations] = React.useState({}), [loaded, setLoaded] = React.useState(!1), [writable, setWritable] = React.useState(!1), [busy, setBusy] = React.useState(!1), [terminalEnabled, setTerminalEnabled] = React.useState(!1), [terminalBusy, setTerminalBusy] = React.useState(!1), [codexBusy, setCodexBusy] = React.useState(!1), [acpBackends, setAcpBackends] = React.useState([]), [acpAvailability, setAcpAvailability] = React.useState({}), [acpChecking, setAcpChecking] = React.useState({}), [acpCheckResults, setAcpCheckResults] = React.useState({}), [addingAcp, setAddingAcp] = React.useState(!1), [acpName, setAcpName] = React.useState(""), [acpCommand, setAcpCommand] = React.useState(""), [acpArguments, setAcpArguments] = React.useState("acp"), [reconnectBusy, setReconnectBusy] = React.useState(!1), [hostStatus, setHostStatus] = React.useState(void 0), [hostName, setHostName] = React.useState(""), [hostDeviceId, setHostDeviceId] = React.useState(""), [notice, setNotice] = React.useState(void 0), [error, setError] = React.useState(void 0), [settingsView, setSettingsView] = React.useState(void 0), persistedServerUrl = settingsView?.config.serverUrl ?? DEFAULT_REMOTE_SERVER_URL, association = associations.client ?? associations.host, serverDirty = settingsView !== void 0 && serverUrl !== persistedServerUrl, draftDirty = serverDirty, applyView = (view) => {
+        let { t } = props, [open, setOpen] = React.useState(props.view === "page"), [serverUrl, setServerUrl] = React.useState(""), [codexEnabled, setCodexEnabled] = React.useState(!0), [codexBinary, setCodexBinary] = React.useState("codex"), [portsBusy, setPortsBusy] = React.useState(!1), [previewPorts, setPreviewPorts] = React.useState(""), [associations, setAssociations] = React.useState({}), [loaded, setLoaded] = React.useState(!1), [writable, setWritable] = React.useState(!1), [busy, setBusy] = React.useState(!1), [terminalEnabled, setTerminalEnabled] = React.useState(!1), [terminalBusy, setTerminalBusy] = React.useState(!1), [codexBusy, setCodexBusy] = React.useState(!1), [acpBackends, setAcpBackends] = React.useState([]), [acpAvailability, setAcpAvailability] = React.useState({}), [acpChecking, setAcpChecking] = React.useState({}), [acpCheckResults, setAcpCheckResults] = React.useState({}), [addingAcp, setAddingAcp] = React.useState(!1), [acpName, setAcpName] = React.useState(""), [acpCommand, setAcpCommand] = React.useState(""), [acpArguments, setAcpArguments] = React.useState("acp"), [reconnectBusy, setReconnectBusy] = React.useState(!1), [hostStatus, setHostStatus] = React.useState(void 0), [hostName, setHostName] = React.useState(""), [hostDeviceId, setHostDeviceId] = React.useState(""), [notice, setNotice] = React.useState(void 0), [error, setError] = React.useState(void 0), [settingsView, setSettingsView] = React.useState(void 0), persistedServerUrl = settingsView?.config.serverUrl ?? DEFAULT_REMOTE_SERVER_URL, association = associations.client ?? associations.host, serverDirty = settingsView !== void 0 && serverUrl !== persistedServerUrl, draftDirty = serverDirty, applyView = (view) => {
           setSettingsView(view), setServerUrl(view.config.serverUrl ?? DEFAULT_REMOTE_SERVER_URL), setCodexEnabled(view.config.codex?.enabled ?? !0), setCodexBinary(view.config.codex?.binary ?? "codex"), setTerminalEnabled(view.config.terminal?.enabled ?? !0), setPreviewPorts((view.config.loopback?.ports ?? []).join(", ")), setAcpBackends((view.config.acp?.backends ?? []).map((item) => ({ id: item.id, enabled: item.enabled !== !1 }))), setAcpAvailability(view.acpAvailability ?? {}), setAssociations(view.associations ?? (view.association === void 0 ? {} : { host: view.association })), setWritable(view.writable), setLoaded(!0);
         }, load = async () => {
           let [view, status] = await Promise.all([
@@ -2525,7 +975,7 @@ Minimum version required to store current data is: ` + bestVersion + `.
           setBusy(!0), setError(void 0), setNotice(void 0);
           try {
             let view = await props.control("settings.logout");
-            applyView(view), setRegistrationCode(""), setNotice({ key: view.deepseekSignedOut === !0 ? "signedOutDeepseek" : "signedOut" });
+            applyView(view), setNotice({ key: view.deepseekSignedOut === !0 ? "signedOutDeepseek" : "signedOut" });
           } catch (reason) {
             setError(messageOf(reason));
           } finally {
@@ -2633,7 +1083,7 @@ Minimum version required to store current data is: ` + bestVersion + `.
             setBusy(!1);
           }
         }, discard = () => {
-          settingsView !== void 0 && applyView(settingsView), setRegistrationCode(""), setNotice(void 0), setError(void 0);
+          settingsView !== void 0 && applyView(settingsView), setNotice(void 0), setError(void 0);
         }, developmentSetting = React.createElement(
           "section",
           { className: "dshRemoteDevelopmentSettings" },
@@ -2678,62 +1128,25 @@ Minimum version required to store current data is: ` + bestVersion + `.
             ),
             React.createElement("small", null, t("previewPortsHint"))
           )
-        ), codexBinaryConfigured = settingsView?.config.codex?.binary ?? "codex", codexBinaryDiscovered = settingsView?.discoveredCodexBinary, codexBinaryPinned = codexBinaryConfigured !== "codex", codexBinaryEditable = codexBinaryPinned || codexBinaryDiscovered === void 0, codexSetting = React.createElement(
-          React.Fragment,
-          null,
-          React.createElement(
-            "div",
-            { className: "dshRemoteAuthorizationSetting" },
-            React.createElement(
-              "div",
-              null,
-              React.createElement("strong", null, t("codexRemote")),
-              React.createElement("p", null, t("codexRemoteHint"))
-            ),
-            React.createElement("input", {
-              type: "checkbox",
-              role: "switch",
-              disabled: busy || codexBusy || !writable,
-              "aria-label": t("codexRemote"),
-              checked: codexEnabled,
-              onChange: (event) => void setCodexRemote(event.target.checked)
-            })
-          ),
-          React.createElement(
-            "div",
-            { className: "dshRemoteCodexBinary" },
-            React.createElement("input", {
-              type: "text",
-              value: codexBinaryEditable ? codexBinary : codexBinaryDiscovered ?? "",
-              readOnly: !codexBinaryEditable,
-              disabled: busy || codexBusy || !writable,
-              className: codexBinaryEditable ? "" : "isDiscovered",
-              placeholder: codexBinaryEditable ? t("codexBinaryPlaceholder") : void 0,
-              "aria-label": t("codexBinaryLabel"),
-              onChange: (event) => setCodexBinary(event.target.value),
-              onKeyDown: (event) => {
-                event.key === "Enter" && codexBinaryEditable && setCodexBinaryPath(codexBinary);
-              }
-            }),
-            codexBinaryEditable ? React.createElement("button", {
-              type: "button",
-              className: "dshRemoteDiscard",
-              disabled: busy || codexBusy || !writable,
-              onClick: () => void setCodexBinaryPath(codexBinary)
-            }, t("codexBinaryConfirm")) : null,
-            codexBinaryPinned ? React.createElement("button", {
-              type: "button",
-              className: "dshRemoteDiscard",
-              disabled: busy || codexBusy || !writable,
-              onClick: () => {
-                setCodexBinary(""), setCodexBinaryPath("");
-              }
-            }, t("codexBinaryAuto")) : null,
-            // The greyed field already shows the discovered path, so the only line
-            // worth printing is the one that asks the user for something.
-            codexBinaryPinned || codexBinaryDiscovered === void 0 ? React.createElement("p", null, t(codexBinaryPinned ? "codexBinaryPinned" : "codexBinaryMissing")) : null
-          )
-        ), acpSetting = React.createElement(
+        ), codexBinaryConfigured = settingsView?.config.codex?.binary ?? "codex", codexBinaryDiscovered = settingsView?.discoveredCodexBinary, codexBinaryPinned = codexBinaryConfigured !== "codex", codexBinaryEditable = codexBinaryPinned || codexBinaryDiscovered === void 0, codexDomainStatus = settingsView?.codexStatus, codexUnavailable = codexDomainStatus !== void 0 && codexDomainStatus.available === !1, codexSetting = React.createElement(CodexConnectionFields, {
+          t,
+          enabled: codexEnabled,
+          onEnabledChange: (next) => void setCodexRemote(next),
+          busy: busy || codexBusy,
+          writable,
+          unavailable: codexUnavailable,
+          state: codexDomainStatus?.state,
+          reasonCode: codexDomainStatus?.error,
+          editable: codexBinaryEditable,
+          pinned: codexBinaryPinned,
+          discovered: codexBinaryDiscovered,
+          value: codexBinary,
+          onValueChange: (next) => setCodexBinary(next),
+          onConfirm: () => void setCodexBinaryPath(codexBinary),
+          onUseAuto: () => {
+            setCodexBinary(""), setCodexBinaryPath("");
+          }
+        }), acpSetting = React.createElement(
           "details",
           { className: "dshRemoteAuthorizationSetting dshRemoteAcpSetting" },
           React.createElement(
@@ -2908,7 +1321,9 @@ Minimum version required to store current data is: ` + bestVersion + `.
                 React.createElement("button", {
                   type: "button",
                   className: "dshRemoteReconnect",
-                  disabled: reconnectBusy || hostStatus?.configured === !1,
+                  // A paused Host is not a broken one: there is nothing to reconnect, and the switch is the
+                  // only control that may turn reachability back on.
+                  disabled: reconnectBusy || hostStatus?.configured === !1 || hostStatus?.paused === !0,
                   onClick: () => void reconnectHost()
                 }, t(reconnectBusy ? "reconnectingAction" : "reconnect"))
               ),
@@ -2990,9 +1405,9 @@ Minimum version required to store current data is: ` + bestVersion + `.
         );
       }
       function RemoteWorkspaceAction(props) {
-        let { t } = props, [open, setOpen] = React.useState(!1), [status, setStatus] = React.useState(void 0), [devices, setDevices] = React.useState([]), [selectedHost, setSelectedHost] = React.useState(void 0), [connectingHost, setConnectingHost] = React.useState(void 0), [workspaces, setWorkspaces] = React.useState([]), [codexWorkspaces, setCodexWorkspaces] = React.useState([]), [workspaceBackend, setWorkspaceBackend] = React.useState("harness"), [codexWorkspaceId, setCodexWorkspaceId] = React.useState(void 0), [directory, setDirectory] = React.useState(void 0), [path, setPath] = React.useState(""), [addingWorkspace, setAddingWorkspace] = React.useState(!1), [showAllWorkspaces, setShowAllWorkspaces] = React.useState(!1), [showAllCodexWorkspaces, setShowAllCodexWorkspaces] = React.useState(!1), [devicesOpen, setDevicesOpen] = React.useState(!1), workspaceListId = "dsh-remote-workspace-list", codexWorkspaceHeadingId = "dsh-remote-codex-workspace-heading", codexWorkspaceListId = "dsh-remote-codex-workspace-list", [busy, setBusy] = React.useState(!1), [needsAuthorization, setNeedsAuthorization] = React.useState(!1), [authorizationResolved, setAuthorizationResolved] = React.useState(!1), [email, setEmail] = React.useState(""), [password, setPassword] = React.useState(""), [loginServerUrl, setLoginServerUrl] = React.useState(DEFAULT_REMOTE_SERVER_URL), [editingServerUrl, setEditingServerUrl] = React.useState(!1), [awaitingDeepSeek, setAwaitingDeepSeek] = React.useState(!1), [pendingAuthorizeUrl, setPendingAuthorizeUrl] = React.useState(void 0), [loginMethod, setLoginMethod] = React.useState(
+        let { t } = props, [open, setOpen] = React.useState(!1), [status, setStatus] = React.useState(void 0), [devices, setDevices] = React.useState([]), [selectedHost, setSelectedHost] = React.useState(void 0), [connectingHost, setConnectingHost] = React.useState(void 0), [workspaces, setWorkspaces] = React.useState([]), [codexWorkspaces, setCodexWorkspaces] = React.useState([]), [codexNotice, setCodexNotice] = React.useState(void 0), [codexAvailable, setCodexAvailable] = React.useState(!1), codexProbeAvailable = React.useRef(!1), [codexOpen, setCodexOpen] = React.useState(!1), [workspaceBackend, setWorkspaceBackend] = React.useState("harness"), [codexWorkspaceId, setCodexWorkspaceId] = React.useState(void 0), [directory, setDirectory] = React.useState(void 0), [path, setPath] = React.useState(""), [addingWorkspace, setAddingWorkspace] = React.useState(!1), [showAllWorkspaces, setShowAllWorkspaces] = React.useState(!1), [showAllCodexWorkspaces, setShowAllCodexWorkspaces] = React.useState(!1), [devicesOpen, setDevicesOpen] = React.useState(!1), workspaceListId = "dsh-remote-workspace-list", codexWorkspaceHeadingId = "dsh-remote-codex-workspace-heading", codexWorkspaceListId = "dsh-remote-codex-workspace-list", [busy, setBusy] = React.useState(!1), [needsAuthorization, setNeedsAuthorization] = React.useState(!1), [authorizationResolved, setAuthorizationResolved] = React.useState(!1), [loginServerUrl, setLoginServerUrl] = React.useState(DEFAULT_REMOTE_SERVER_URL), [editingServerUrl, setEditingServerUrl] = React.useState(!1), [awaitingDeepSeek, setAwaitingDeepSeek] = React.useState(!1), [pendingAuthorizeUrl, setPendingAuthorizeUrl] = React.useState(void 0), [loginMethod] = React.useState(
           isEnabledQrProvider(props.preferredQrProvider) ? props.preferredQrProvider : defaultQrProvider
-        ), [loginMethodManuallySelected, setLoginMethodManuallySelected] = React.useState(!1), [qrSession, setQrSession] = React.useState(void 0), [qrImage, setQrImage] = React.useState(void 0), [qrExpired, setQrExpired] = React.useState(!1), [progress, setProgress] = React.useState(void 0), progressRun = React.useRef(0), qrFlowRun = React.useRef(0), [notice, setNotice] = React.useState(void 0), [confirmingSignOut, setConfirmingSignOut] = React.useState(!1), [error, setError] = React.useState(void 0);
+        ), [qrSession, setQrSession] = React.useState(void 0), [qrExpired, setQrExpired] = React.useState(!1), [progress, setProgress] = React.useState(void 0), progressRun = React.useRef(0), qrFlowRun = React.useRef(0), [notice, setNotice] = React.useState(void 0), [confirmingSignOut, setConfirmingSignOut] = React.useState(!1), [confirmingRevoke, setConfirmingRevoke] = React.useState(!1), [error, setError] = React.useState(void 0);
         React.useEffect(() => {
           open || setDevicesOpen(!1);
         }, [open]), React.useEffect(() => {
@@ -3039,13 +1454,9 @@ Minimum version required to store current data is: ` + bestVersion + `.
           let run = ++qrFlowRun.current;
           setBusy(!0), setError(void 0), setQrExpired(!1);
           try {
-            let session = await props.control("client.account.qr.start", { provider }), image = await import_qrcode.default.toDataURL(session.scanUrl, {
-              width: 184,
-              margin: 1,
-              errorCorrectionLevel: "L"
-            });
+            let session = await props.control("client.account.qr.start", { provider });
             if (run !== qrFlowRun.current) return;
-            setQrSession(session), setQrImage(image);
+            setQrSession(session);
           } catch (reason) {
             run === qrFlowRun.current && setError(messageOf(reason));
           } finally {
@@ -3070,9 +1481,9 @@ Minimum version required to store current data is: ` + bestVersion + `.
                   } catch (reason) {
                     active && run === qrFlowRun.current && setError(messageOf(reason));
                   } finally {
-                    run === qrFlowRun.current && (setQrSession(void 0), setQrImage(void 0), setBusy(!1));
+                    run === qrFlowRun.current && (setQrSession(void 0), setBusy(!1));
                   }
-                } else result.status === "expired" && (settled = !0, timer !== void 0 && window.clearInterval(timer), setQrExpired(!0), setQrSession(void 0), setQrImage(void 0));
+                } else result.status === "expired" && (settled = !0, timer !== void 0 && window.clearInterval(timer), setQrExpired(!0), setQrSession(void 0));
             }).catch((reason) => {
               active && !settled && run === qrFlowRun.current && setError(messageOf(reason));
             }).finally(() => {
@@ -3082,23 +1493,9 @@ Minimum version required to store current data is: ` + bestVersion + `.
           return poll(), timer = window.setInterval(poll, 1500), () => {
             active = !1, timer !== void 0 && window.clearInterval(timer);
           };
-        }, [open, loginMethod, qrSession]), React.useEffect(() => {
-          loginMethodManuallySelected || loginMethod === props.preferredQrProvider || (qrFlowRun.current += 1, setLoginMethod(props.preferredQrProvider), setQrSession(void 0), setQrImage(void 0), setQrExpired(!1), setError(void 0));
-        }, [props.preferredQrProvider, loginMethodManuallySelected]);
-        let selectLoginMethod = (method) => {
-          setLoginMethodManuallySelected(!0), method !== loginMethod && (qrFlowRun.current += 1, setLoginMethod(method), setQrSession(void 0), setQrImage(void 0), setQrExpired(!1), setError(void 0));
-        }, orderedQrProviders = ENABLED_QR_PROVIDERS, qrLoginTab = (provider) => React.createElement("button", {
-          key: provider,
-          type: "button",
-          role: "tab",
-          id: `dsh-remote-${provider}-tab`,
-          "aria-selected": loginMethod === provider,
-          "aria-controls": `dsh-remote-${provider}-panel`,
-          className: loginMethod === provider ? "isActive" : "",
-          disabled: busy,
-          onClick: () => selectLoginMethod(provider)
-        }, t(QR_PROVIDER_LABELS[provider])), selectHost = async (host) => {
-          setBusy(!0), setError(void 0), setConnectingHost(host), setCodexWorkspaces([]), setShowAllWorkspaces(!1), setShowAllCodexWorkspaces(!1);
+        }, [open, loginMethod, qrSession]);
+        let selectHost = async (host) => {
+          setBusy(!0), setError(void 0), setConnectingHost(host), setCodexWorkspaces([]), setCodexNotice(void 0), setShowAllWorkspaces(!1), setShowAllCodexWorkspaces(!1);
           try {
             let result = await runConnectHostProgress(
               status?.preferredTransports,
@@ -3110,21 +1507,38 @@ Minimum version required to store current data is: ` + bestVersion + `.
               async () => {
                 let nextWorkspaces = await props.control("workspaces.list", {
                   targetDeviceId: host.deviceId
-                }), nextCodexWorkspaces = await props.control("codex.workspaces.list", {
+                }), codexReason, nextCodexWorkspaces = await props.control("codex.workspaces.list", {
                   targetDeviceId: host.deviceId
-                }).catch(() => []), nextStatus = await props.control("status").catch(() => {
+                }).catch((reason) => (codexReason = remoteErrorMessage(reason, t), [])), nextStatus = await props.control("status").catch(() => {
                 });
-                return nextStatus !== void 0 && setStatus(nextStatus), { workspaces: nextWorkspaces, codexWorkspaces: nextCodexWorkspaces, status: nextStatus };
+                return nextStatus !== void 0 && setStatus(nextStatus), setCodexNotice(codexReason), { workspaces: nextWorkspaces, codexWorkspaces: nextCodexWorkspaces, status: nextStatus };
               },
               (result2) => connectedProgress(result2.status)
             );
-            setWorkspaces(result.workspaces), setCodexWorkspaces(result.codexWorkspaces), setWorkspaceBackend("harness"), setCodexWorkspaceId(void 0), setSelectedHost(host), setPath(""), setAddingWorkspace(!1), setDirectory(void 0);
+            setWorkspaces(result.workspaces), setCodexWorkspaces(result.codexWorkspaces), setCodexAvailable(result.status?.remoteFeatures?.codex === !0), codexProbeAvailable.current = result.status?.remoteFeatures?.codex === !0, setWorkspaceBackend("harness"), setCodexWorkspaceId(void 0), setSelectedHost(host), setPath(""), setAddingWorkspace(!1), setDirectory(void 0);
           } catch (reason) {
-            setError(messageOf(reason));
+            setError(remoteErrorMessage(reason, t));
           } finally {
             setConnectingHost(void 0), setBusy(!1);
           }
-        }, browseDirectory = async (nextPath) => {
+        };
+        async function loadHarnessWorkspaces(host) {
+          try {
+            setWorkspaces(await props.control("workspaces.list", { targetDeviceId: host.deviceId }));
+          } catch (reason) {
+            setError(remoteErrorMessage(reason, t));
+          }
+        }
+        async function loadCodexWorkspaces(host) {
+          try {
+            setCodexWorkspaces(await props.control("codex.workspaces.list", {
+              targetDeviceId: host.deviceId
+            })), setCodexNotice(void 0), setCodexAvailable(!0);
+          } catch (reason) {
+            setCodexWorkspaces([]), setCodexNotice(remoteErrorMessage(reason, t)), setCodexAvailable(!1);
+          }
+        }
+        let browseDirectory = async (nextPath) => {
           if (selectedHost !== void 0) {
             setBusy(!0), setError(void 0);
             try {
@@ -3134,7 +1548,7 @@ Minimum version required to store current data is: ` + bestVersion + `.
               });
               setDirectory(listing), setCodexWorkspaceId(void 0), setPath(listing.path);
             } catch (reason) {
-              setError(messageOf(reason));
+              setError(remoteErrorMessage(reason, t));
             } finally {
               setBusy(!1);
             }
@@ -3144,7 +1558,10 @@ Minimum version required to store current data is: ` + bestVersion + `.
         }, cancelAddingWorkspace = () => {
           setAddingWorkspace(!1), setWorkspaceBackend("harness"), setCodexWorkspaceId(void 0), setDirectory(void 0), setPath("");
         }, refreshRemote = async () => {
-          setBusy(!0), setNotice(void 0), setError(void 0);
+          setBusy(!0), setNotice(void 0), setError(void 0), props.control("settings.get").then(async (view) => {
+            view.config.codex?.enabled !== !1 && view.codexStatus?.available !== !0 && await props.control("settings.codex.set", { enabled: !0 });
+          }).catch(() => {
+          });
           try {
             let nextStatus = await props.control("status");
             if (setStatus(nextStatus), !nextStatus.available) {
@@ -3168,8 +1585,10 @@ Minimum version required to store current data is: ` + bestVersion + `.
             } catch {
               setDevices([]), setNeedsAuthorization(!0), setSelectedHost(void 0), setWorkspaces([]), setCodexWorkspaces([]), setShowAllWorkspaces(!1), setShowAllCodexWorkspaces(!1), setWorkspaceBackend("harness"), setCodexWorkspaceId(void 0), setPath(""), setAddingWorkspace(!1), setDirectory(void 0);
             }
+            selectedHost !== void 0 && (await props.control("remote.session.recover").then((next) => setStatus(next)).catch(() => {
+            }), await Promise.all([loadHarnessWorkspaces(selectedHost), loadCodexWorkspaces(selectedHost)]));
           } catch (reason) {
-            setError(messageOf(reason)), setAuthorizationResolved(!0);
+            setError(remoteErrorMessage(reason, t)), setAuthorizationResolved(!0);
           } finally {
             setBusy(!1);
           }
@@ -3179,12 +1598,31 @@ Minimum version required to store current data is: ` + bestVersion + `.
         React.useEffect(() => {
           if (!(!open || selectedHost !== void 0))
             return props.statusFeed.subscribe(setStatus);
+        }, [open, selectedHost]), React.useEffect(() => {
+          if (!open || selectedHost === void 0) return;
+          let cancelled = !1, probe = async () => {
+            let result = await props.control("remote.features.probe").catch(() => {
+            });
+            if (cancelled || result === void 0 || result.targetDeviceId !== void 0 && result.targetDeviceId !== selectedHost.deviceId) return;
+            let nextStatus = await props.control("status").catch(() => {
+            });
+            if (cancelled) return;
+            nextStatus !== void 0 && setStatus(nextStatus);
+            let available = result.connected === !0 && result.features?.codex === !0;
+            available !== codexProbeAvailable.current && await loadCodexWorkspaces(selectedHost), codexProbeAvailable.current = available;
+          };
+          probe();
+          let timer = window.setInterval(() => void probe(), 5e3);
+          return () => {
+            cancelled = !0, window.clearInterval(timer);
+          };
         }, [open, selectedHost]);
         let chooseAnotherHost = () => {
-          setSelectedHost(void 0), setWorkspaces([]), setCodexWorkspaces([]), setShowAllWorkspaces(!1), setShowAllCodexWorkspaces(!1), setWorkspaceBackend("harness"), setCodexWorkspaceId(void 0), setDirectory(void 0), setPath(""), setAddingWorkspace(!1), setError(void 0);
+          setSelectedHost(void 0), setWorkspaces([]), setCodexWorkspaces([]), setCodexNotice(void 0), setCodexAvailable(!1), codexProbeAvailable.current = !1, setShowAllWorkspaces(!1), setShowAllCodexWorkspaces(!1), setWorkspaceBackend("harness"), setCodexWorkspaceId(void 0), setDirectory(void 0), setPath(""), setAddingWorkspace(!1), setError(void 0);
         }, requestDeepSeekSignIn = async () => {
           let transport = globalThis.__DSH_TRANSPORT__, callbackOrigin = transport?.streamBaseUrl !== void 0 ? new URL(transport.streamBaseUrl).origin : window.location.origin, result = await props.control("settings.configure", {
-            role: "client",
+            // No `role`: a device has one identity, and the control writes only the Server address plus this
+            // sign-in. Sending a role here was the last thing that made one look like a runtime switch.
             serverUrl: loginServerUrl.trim(),
             provider: "deepseek",
             callbackOrigin,
@@ -3219,9 +1657,9 @@ Minimum version required to store current data is: ` + bestVersion + `.
               if (state.pending) throw new Error(t("deepseekSignInTimeout"));
             } else
               tab?.close();
-            setDevices(await props.control("devices")), setStatus(await props.control("status")), setNeedsAuthorization(!1), setAuthorizationResolved(!0), setPassword(""), setNotice(void 0);
+            setDevices(await props.control("devices")), setStatus(await props.control("status")), setNeedsAuthorization(!1), setAuthorizationResolved(!0), setNotice(void 0);
           } catch (reason) {
-            setError(messageOf(reason));
+            setError(remoteErrorMessage(reason, t));
           } finally {
             setAwaitingDeepSeek(!1), setPendingAuthorizeUrl(void 0), setBusy(!1);
           }
@@ -3230,23 +1668,32 @@ Minimum version required to store current data is: ` + bestVersion + `.
           try {
             await props.control("mode.set", { mode: "local" }), window.location.reload();
           } catch (reason) {
-            setError(messageOf(reason)), setBusy(!1);
+            setError(remoteErrorMessage(reason, t)), setBusy(!1);
           }
         }, setCurrentDeviceControl = async (enabled) => {
           setBusy(!0), setError(void 0);
           try {
             setStatus(await setDeviceControl(props.control, enabled, status?.host?.authorized === !0));
           } catch (reason) {
-            setError(messageOf(reason));
+            setError(remoteErrorMessage(reason, t));
           } finally {
             setBusy(!1);
+          }
+        }, revokeRemote = async () => {
+          setBusy(!0), setError(void 0), setNotice(void 0);
+          try {
+            await props.control("client.device.revoke"), setDevices([]), setNeedsAuthorization(!0), setStatus(await props.control("status"));
+          } catch (reason) {
+            setError(remoteErrorMessage(reason, t));
+          } finally {
+            setConfirmingRevoke(!1), setBusy(!1);
           }
         }, logoutRemote = async () => {
           setBusy(!0), setError(void 0), setNotice(void 0);
           try {
-            await props.control("settings.logout"), setDevices([]), setNeedsAuthorization(!0), setQrSession(void 0), setQrImage(void 0), setQrExpired(!1), setStatus(await props.control("status"));
+            await props.control("settings.logout"), setDevices([]), setNeedsAuthorization(!0), setQrSession(void 0), setQrExpired(!1), setStatus(await props.control("status"));
           } catch (reason) {
-            setError(messageOf(reason));
+            setError(remoteErrorMessage(reason, t));
           } finally {
             setConfirmingSignOut(!1), setBusy(!1);
           }
@@ -3267,10 +1714,10 @@ Minimum version required to store current data is: ` + bestVersion + `.
               }));
               setStatus(nextStatus), nextStatus.workspaceSelection !== void 0 && window.sessionStorage.setItem(pendingWorkspaceSelectionKey, JSON.stringify(nextStatus.workspaceSelection)), window.location.reload();
             } catch (reason) {
-              setError(messageOf(reason)), setBusy(!1);
+              setError(remoteErrorMessage(reason, t)), setBusy(!1);
             }
           }
-        }, remoteLabel = status?.mode === "remote" ? t("activeRemote", { name: status.target?.name ?? t("host") }) : t("remoteEntry"), visibleWorkspaces = showAllWorkspaces ? workspaces : workspaces.slice(0, 3), visibleCodexWorkspaces = showAllCodexWorkspaces ? codexWorkspaces : codexWorkspaces.slice(0, 3), codexAvailable = status?.remoteFeatures?.codex === !0, selectedHostDetails = selectedHost === void 0 ? void 0 : [
+        }, remoteLabel = status?.mode === "remote" ? t("activeRemote", { name: status.target?.name ?? t("host") }) : t("remoteEntry"), visibleWorkspaces = showAllWorkspaces ? workspaces : workspaces.slice(0, 3), visibleCodexWorkspaces = showAllCodexWorkspaces ? codexWorkspaces : codexWorkspaces.slice(0, 3), selectedHostDetails = selectedHost === void 0 ? void 0 : [
           formatPlatform(selectedHost.platform),
           selectedHost.harnessVersion === void 0 ? void 0 : t("harnessVersion", { version: selectedHost.harnessVersion }),
           selectedHost.clientVersion === void 0 ? void 0 : t("pluginVersion", { version: selectedHost.clientVersion })
@@ -3496,9 +1943,29 @@ Minimum version required to store current data is: ` + bestVersion + `.
                             onChange: (event) => void setCurrentDeviceControl(event.target.checked)
                           })
                         ) : null,
+                        React.createElement(
+                          "div",
+                          { className: "dshRemotePageActions" },
+                          React.createElement("button", {
+                            type: "button",
+                            className: "dshRemotePageRefresh",
+                            disabled: busy,
+                            // Match the "allow control" label exactly: 12px/18px in the secondary label colour, so it
+                            // reads as the same kind of control instead of a page-level action.
+                            style: { fontWeight: "normal", fontSize: "12px", lineHeight: "18px", height: "auto", minWidth: "0", padding: "0 4px", color: "var(--dsw-alias-label-secondary)" },
+                            title: t("codexRemote"),
+                            "aria-label": t("codexRemote"),
+                            onClick: () => setCodexOpen(!0)
+                          }, t("codexRemote"))
+                        ),
                         connectedMenu
                       )
                     ),
+                    codexOpen ? React.createElement(CodexConnectionDetails, {
+                      control: props.control,
+                      t,
+                      onClose: () => setCodexOpen(!1)
+                    }) : null,
                     React.createElement("div", {
                       className: `dshRemoteHostList${connectingHost === void 0 ? "" : " isCollapsed"}`,
                       "aria-busy": connectingHost === void 0 ? void 0 : !0
@@ -3521,7 +1988,7 @@ Minimum version required to store current data is: ` + bestVersion + `.
                           device.clientVersion === void 0 ? void 0 : t("pluginVersion", { version: device.clientVersion })
                         ].filter(Boolean).join(" \xB7 "))
                       ),
-                      React.createElement("small", null, t(device.online ? "online" : "offline"))
+                      React.createElement("small", null, [t(device.online ? "online" : "offline"), device.hostControl === !1 ? t("hostRefusesControl") : void 0].filter(Boolean).join(" \xB7 "))
                     )))
                   ) : null,
                   React.createElement(RemoteProgressView, { progress, t }),
@@ -3531,7 +1998,7 @@ Minimum version required to store current data is: ` + bestVersion + `.
                     React.createElement(
                       "p",
                       { className: "dshRemoteHint" },
-                      t(confirmingSignOut ? "signOutImpact" : "selectHostHint")
+                      t(confirmingRevoke ? "revokeDeviceImpact" : confirmingSignOut ? "signOutImpact" : "selectHostHint")
                     ),
                     React.createElement(
                       "footer",
@@ -3555,6 +2022,27 @@ Minimum version required to store current data is: ` + bestVersion + `.
                         React.Fragment,
                         null,
                         React.createElement("span", null, status?.host?.account ?? t("account")),
+                        confirmingRevoke ? React.createElement(
+                          React.Fragment,
+                          null,
+                          React.createElement("button", {
+                            type: "button",
+                            className: "dshRemoteDiscard",
+                            disabled: busy,
+                            onClick: () => setConfirmingRevoke(!1)
+                          }, t("cancel")),
+                          React.createElement("button", {
+                            type: "button",
+                            className: "dshRemoteAccountExit",
+                            disabled: busy,
+                            onClick: () => void revokeRemote()
+                          }, t("revokeThisDevice"))
+                        ) : React.createElement("button", {
+                          type: "button",
+                          className: "dshRemoteAccountExit",
+                          disabled: busy,
+                          onClick: () => setConfirmingRevoke(!0)
+                        }, t("revokeThisDevice")),
                         React.createElement("button", {
                           type: "button",
                           className: "dshRemoteAccountExit",
@@ -3649,7 +2137,7 @@ Minimum version required to store current data is: ` + bestVersion + `.
                           }, React.createElement("span", { "aria-hidden": !0 }, "\u2026"))
                         )
                       ),
-                      !codexAvailable && codexWorkspaces.length === 0 ? null : React.createElement(
+                      React.createElement(
                         "section",
                         { className: "dshRemoteCodexWorkspaceGroup" },
                         React.createElement(
@@ -3681,7 +2169,7 @@ Minimum version required to store current data is: ` + bestVersion + `.
                           id: codexWorkspaceListId,
                           className: "dshRemoteDirectoryList dshRemoteCodexWorkspaceList",
                           "aria-labelledby": codexWorkspaceHeadingId
-                        }, visibleCodexWorkspaces.length === 0 ? React.createElement("p", null, t("noCodexWorkspaces")) : visibleCodexWorkspaces.map((workspace) => React.createElement(
+                        }, visibleCodexWorkspaces.length === 0 ? React.createElement("p", null, codexNotice ?? t("noCodexWorkspaces")) : visibleCodexWorkspaces.map((workspace) => React.createElement(
                           "button",
                           {
                             type: "button",
@@ -3731,153 +2219,162 @@ Minimum version required to store current data is: ` + bestVersion + `.
           )) : null
         );
       }
-      function RemoteModeAction(props) {
-        let { t } = props, [open, setOpen] = React.useState(!1), [status, setStatus] = React.useState(void 0), [devices, setDevices] = React.useState([]), [hostRegistrationCode, setHostRegistrationCode] = React.useState(""), [email, setEmail] = React.useState(""), [password, setPassword] = React.useState(""), [busy, setBusy] = React.useState(!1), [progress, setProgress] = React.useState(void 0), progressRun = React.useRef(0), [error, setError] = React.useState(void 0), [supported, setSupported] = React.useState(!0), refresh = async () => {
-          let [nextStatus, nextDevices] = await Promise.all([
-            props.control("status"),
-            props.control("devices").catch(() => [])
-          ]);
-          setStatus(nextStatus), setDevices(nextDevices);
-        }, refreshStatus = async () => {
-          setStatus(await props.control("status"));
-        };
-        React.useEffect(() => {
-          refresh().catch((reason) => {
-            setError(messageOf(reason)), setSupported(!1);
-          });
-        }, []), React.useEffect(() => {
-          if (open)
-            return props.statusFeed.subscribe(setStatus);
-        }, [open]);
-        let switchMode = async (mode, targetDeviceId) => {
-          setBusy(!0), setError(void 0);
-          try {
-            let action = () => props.control("mode.set", { mode, ...targetDeviceId === void 0 ? {} : { targetDeviceId } });
-            setStatus(mode === "remote" && targetDeviceId !== void 0 ? await runConnectHostProgress(
-              status?.preferredTransports,
-              targetDeviceId,
-              props.control,
-              { label: "remoteProgressSwitchingWorkspace", detail: "remoteProgressSwitchingWorkspaceDetail" },
-              setProgress,
-              progressRun,
-              action,
-              connectedProgress
-            ) : await action()), window.location.reload();
-          } catch (reason) {
-            setError(messageOf(reason)), setBusy(!1);
-          }
-        }, loginHost = async () => {
-          if (!(email.trim() === "" || password === "")) {
-            setBusy(!0), setError(void 0);
-            try {
-              await props.control("host.account.login", { email: email.trim(), password }), await refreshStatus();
-            } catch (reason) {
-              setError(messageOf(reason));
-            } finally {
-              setPassword(""), setBusy(!1);
-            }
-          }
-        }, registerHostWithCode = async () => {
-          if (hostRegistrationCode.trim() !== "") {
-            setBusy(!0), setError(void 0);
-            try {
-              await props.control("host.registration-code.submit", { code: hostRegistrationCode.trim() }), setHostRegistrationCode(""), await refreshStatus();
-            } catch (reason) {
-              setError(messageOf(reason));
-            } finally {
-              setBusy(!1);
-            }
-          }
-        }, label = status?.mode === "remote" ? t("remoteTarget", { name: status.target?.name ?? t("host") }) : t("local");
-        return supported ? React.createElement(
+      function CodexConnectionFields(props) {
+        let { t, busy, writable, unavailable, editable, pinned, discovered, value } = props;
+        return React.createElement(
           React.Fragment,
           null,
-          React.createElement("button", {
-            type: "button",
-            className: "dshRemoteModeButton",
-            title: t("switchTarget"),
-            "aria-label": t("switchTarget"),
-            onClick: () => setOpen(!0)
-          }, React.createElement("span", { "aria-hidden": !0 }, "\u25CE"), props.wide ? React.createElement("span", null, label) : null),
-          open ? React.createElement(
+          React.createElement(
             "div",
-            { className: "dshRemoteBackdrop", role: "presentation" },
+            { className: "dshRemoteAuthorizationSetting" },
             React.createElement(
-              "section",
-              {
-                className: "dshRemoteDialog",
-                role: "dialog",
-                "aria-modal": !0,
-                "aria-label": t("harnessTarget")
-              },
+              "div",
+              null,
+              React.createElement("span", null, t("codexControlAllow"))
+            ),
+            React.createElement("input", {
+              type: "checkbox",
+              role: "switch",
+              // Only greyed out while it is ON and the domain cannot run. A switched-off Codex also reports
+              // available:false - that is the off state, not a failure - so treating it as "unavailable" locked the
+              // switch and left no way to turn Codex back on.
+              disabled: busy || !writable || unavailable && props.enabled,
+              "aria-label": t("codexRemote"),
+              checked: props.enabled,
+              onChange: (event) => props.onEnabledChange(event.target.checked)
+            })
+          ),
+          // A disabled Codex is a choice, not a fault, and neither is a launch in progress: available is false while the
+          // domain starts, which used to paint a red line reading UNKNOWN for the couple of seconds every switch takes.
+          // Red is for a real failure only, and a failure that carries no code says so in words instead of printing
+          // UNKNOWN as if it were a code.
+          props.enabled ? props.state === "starting" || props.state === "restarting" ? React.createElement("p", { className: "dshRemoteSettingsState" }, t("codexStarting")) : unavailable && props.state === "unavailable" ? React.createElement("p", { className: "dshRemoteError" }, props.reasonCode === void 0 ? t("codexUnavailableNoCode") : t(codexUnavailableKey(props.reasonCode), { code: props.reasonCode })) : null : React.createElement("p", { className: "dshRemoteSettingsState" }, t("codexDisabled")),
+          React.createElement(
+            "div",
+            { className: "dshRemoteCodexBinary" },
+            React.createElement("input", {
+              type: "text",
+              value: editable ? value : discovered ?? "",
+              readOnly: !editable,
+              // Never disabled for being unwritable: when the CLI cannot start, this field is the only way out, and a
+              // failed save reports itself in the dialog instead of leaving the user with a dead control.
+              disabled: busy,
+              className: editable ? "" : "isDiscovered",
+              placeholder: editable ? t("codexBinaryPlaceholder") : void 0,
+              "aria-label": t("codexBinaryLabel"),
+              onChange: (event) => props.onValueChange(event.target.value),
+              onKeyDown: (event) => {
+                event.key === "Enter" && editable && props.onConfirm();
+              }
+            }),
+            editable ? React.createElement("button", {
+              type: "button",
+              className: "dshRemoteDiscard",
+              disabled: busy,
+              onClick: () => props.onConfirm()
+            }, t("codexBinaryConfirm")) : null,
+            pinned ? React.createElement("button", {
+              type: "button",
+              className: "dshRemoteDiscard",
+              disabled: busy,
+              onClick: () => props.onUseAuto()
+            }, t("codexBinaryAuto")) : null,
+            pinned || discovered === void 0 ? React.createElement("p", null, t(pinned ? "codexBinaryPinned" : "codexBinaryMissing")) : null
+          )
+        );
+      }
+      function CodexConnectionDetails(props) {
+        let { control, t, onClose } = props, [view, setView] = React.useState(void 0), [enabled, setEnabled] = React.useState(!0), [binary, setBinary] = React.useState("codex"), [busy, setBusy] = React.useState(!1), [error, setError] = React.useState(void 0);
+        React.useEffect(() => {
+          let cancelled = !1;
+          return (async () => {
+            try {
+              let loaded = await control("settings.get");
+              if (cancelled) return;
+              setView(loaded), setEnabled(loaded.config.codex?.enabled ?? !0), setBinary(loaded.config.codex?.binary ?? "codex");
+            } catch (cause) {
+              cancelled || setError(cause instanceof Error ? cause.message : String(cause));
+            }
+          })(), () => {
+            cancelled = !0;
+          };
+        }, [control]);
+        let status = view?.codexStatus, unavailable = status !== void 0 && status.available === !1, settledState = status?.state;
+        React.useEffect(() => {
+          if (view === void 0 || busy || settledState === "ready" || settledState === "disabled") return;
+          let timer = setInterval(() => {
+            control("settings.get").then((next) => {
+              setView(next), setEnabled(next.config.codex?.enabled ?? !0), setBinary(next.config.codex?.binary ?? "codex");
+            }).catch(() => {
+            });
+          }, 2e3);
+          return () => {
+            clearInterval(timer);
+          };
+        }, [control, view, busy, settledState]);
+        let writable = view?.writable === !0, discovered = view?.discoveredCodexBinary, pinned = (view?.config.codex?.binary ?? "codex") !== "codex", editable = pinned || discovered === void 0, stateName = status === void 0 ? void 0 : `${(status.state ?? "unknown").slice(0, 1).toUpperCase()}${(status.state ?? "unknown").slice(1)}`, stateText = stateName === void 0 ? t("loadingSettings") : t("codexStatusLine", { state: `${stateName}${status?.error === void 0 ? "" : ` \xB7 ${status.error}`}` }), save = async (next) => {
+          setBusy(!0), setError(void 0);
+          try {
+            let updated = await control("settings.codex.set", {
+              enabled: next.enabled ?? enabled,
+              ...next.binary === void 0 ? {} : { binary: next.binary }
+            });
+            setView(updated), setEnabled(updated.config.codex?.enabled ?? enabled), setBinary(updated.config.codex?.binary ?? binary);
+          } catch (cause) {
+            setError(cause instanceof Error ? cause.message : String(cause));
+          } finally {
+            setBusy(!1);
+          }
+        };
+        return React.createElement(
+          "div",
+          { className: "dshRemoteBackdrop", role: "presentation" },
+          React.createElement(
+            "section",
+            {
+              className: "dshRemoteDialog",
+              role: "dialog",
+              "aria-modal": !0,
+              "aria-label": t("codexRemote")
+            },
+            React.createElement(
+              "div",
+              { className: "dshRemoteHeader" },
+              React.createElement("strong", null, t("codexRemote")),
+              React.createElement("button", { type: "button", onClick: onClose, "aria-label": t("close") }, "\xD7")
+            ),
+            view === void 0 ? React.createElement("p", { className: "dshRemoteSettingsState" }, error ?? t("loadingSettings")) : React.createElement(
+              React.Fragment,
+              null,
+              React.createElement("p", { className: "dshRemoteSettingsState" }, stateText),
+              React.createElement(CodexConnectionFields, {
+                t,
+                enabled,
+                onEnabledChange: (next) => void save({ enabled: next }),
+                busy,
+                writable,
+                unavailable,
+                state: status?.state,
+                reasonCode: status?.error,
+                editable,
+                pinned,
+                discovered,
+                value: binary,
+                onValueChange: (next) => setBinary(next),
+                onConfirm: () => void save({ binary }),
+                onUseAuto: () => void save({ binary: "" })
+              }),
+              // No confirm button: the switch and the command field save on their own, and a footer button could only
+              // re-send the state the dialog captured when it opened - which is how pressing it turned a starting Codex
+              // back off. The footer keeps the message line and nothing else.
               React.createElement(
                 "div",
-                { className: "dshRemoteHeader" },
-                React.createElement("strong", null, t("harnessTarget")),
-                React.createElement("button", { type: "button", onClick: () => setOpen(!1), "aria-label": t("close") }, "\xD7")
-              ),
-              React.createElement("button", {
-                type: "button",
-                disabled: busy || status?.mode === "local",
-                onClick: () => void switchMode("local")
-              }, t("thisMachineLocal")),
-              React.createElement("div", { className: "dshRemoteDevices" }, devices.length === 0 ? React.createElement("p", null, t("noRemoteHosts")) : devices.map((device) => React.createElement("button", {
-                type: "button",
-                key: device.deviceId,
-                disabled: busy || !device.online || status?.target?.deviceId === device.deviceId,
-                onClick: () => void switchMode("remote", device.deviceId)
-              }, `${device.name} \xB7 ${t(device.online ? "online" : "offline")}`))),
-              React.createElement(RemoteProgressView, { progress, t }),
-              status?.hostAuthorizationAvailable && status.host !== void 0 ? React.createElement(
-                "div",
-                { className: "dshRemoteHostAccount" },
-                React.createElement("strong", null, t("thisMachineHost")),
-                React.createElement("p", null, status.host.online ? status.host.account === void 0 ? t("connected") : t("connectedAs", { account: status.host.account }) : status.host.accountRequired ? t("hostSignInHint") : status.host.error === void 0 ? t("checkingHost") : t("hostUnavailable", { error: connectionErrorMessage(status.host.error, t) })),
-                status.host.accountRequired ? React.createElement(
-                  "div",
-                  { className: "dshRemoteLogin" },
-                  React.createElement("input", {
-                    type: "email",
-                    value: email,
-                    disabled: busy,
-                    autoComplete: "username",
-                    placeholder: t("serverAccountEmail"),
-                    "aria-label": t("serverAccountEmail"),
-                    onChange: (event) => setEmail(event.target.value)
-                  }),
-                  React.createElement("input", {
-                    type: "password",
-                    value: password,
-                    disabled: busy,
-                    autoComplete: "current-password",
-                    placeholder: t("password"),
-                    "aria-label": t("serverAccountPassword"),
-                    onChange: (event) => setPassword(event.target.value)
-                  }),
-                  React.createElement("button", {
-                    type: "button",
-                    disabled: busy || email.trim() === "" || password === "",
-                    onClick: () => void loginHost()
-                  }, t(busy ? "signingIn" : "signInRegisterHost")),
-                  React.createElement("input", {
-                    value: hostRegistrationCode,
-                    disabled: busy,
-                    autoComplete: "one-time-code",
-                    placeholder: t("hostRegistrationCode"),
-                    "aria-label": t("hostRegistrationCode"),
-                    onChange: (event) => setHostRegistrationCode(event.target.value)
-                  }),
-                  React.createElement("button", {
-                    type: "button",
-                    disabled: busy || hostRegistrationCode.trim() === "",
-                    onClick: () => void registerHostWithCode()
-                  }, t(busy ? "registering" : "useRegistrationCode"))
-                ) : null
-              ) : null,
-              error === void 0 ? null : React.createElement("p", { className: "dshRemoteError", role: "alert" }, error)
+                { className: "dshRemoteSettingsFooter" },
+                React.createElement("p", { className: error === void 0 ? "dshRemoteNotice" : "dshRemoteError" }, error ?? "")
+              )
             )
-          ) : null
-        ) : null;
+          )
+        );
       }
       function RemoteSessionHeaderAction(props) {
         let { t } = props, status = React.useSyncExternalStore(
@@ -3916,7 +2413,14 @@ Minimum version required to store current data is: ` + bestVersion + `.
             strokeLinejoin: "round",
             "aria-hidden": !0
           }, React.createElement("rect", { x: 3, y: 4, width: 18, height: 13, rx: 2 }), React.createElement("path", { d: "M8 21h8M12 17v4" })),
-          React.createElement("span", { className: "dshRemoteModePrefix" }, t("remoteModePrefix")),
+          // The label names the session being recovered when one is, because a Codex recovery has already
+          // switched the carriers to the local shell by then; reading the kind off `backend` alone said
+          // "remote DSH, reconnecting" for a Codex session.
+          React.createElement(
+            "span",
+            { className: "dshRemoteModePrefix" },
+            t((status.reconnecting?.kind ?? status.backend) === "codex" ? "remoteModeCodex" : "remoteModeDsh")
+          ),
           React.createElement(
             "span",
             { className: "dshRemoteSessionTarget" },
@@ -4156,7 +2660,7 @@ Minimum version required to store current data is: ` + bestVersion + `.
             if (controlRouteBackoffIndex += 1, controlRouteRetryAfter = Date.now() + delayMs, endpoint === "status") return controlRouteUnavailableStatus();
             throw new ControlRouteUnavailableError(t("remoteControlUnavailable"));
           }
-          if (!result.ok) throw new Error(result.error?.message ?? t("remoteRequestFailed"));
+          if (!result.ok) throw controlFailure(result.error, t);
           return result.value;
         }, statusFeed = createStatusFeed({
           url: STATUS_STREAM_PATH,

@@ -1,3 +1,52 @@
+## v1.19.3（未发布 · 2026-10-14）
+
+> **一句话**：构建流程收敛成**一条可复现路径**（内核来自官方 npm registry + 冻结 lock、运行时来自
+> 我们自己的 sha256 pin 资产），并把设备端 agent 反馈的坑一次性补上（GNU 工具集、设备内 apksig、
+> 镜像层、skill 入径）。**versionCode 58**，内核 DSH **0.2.0-rc.2**，内置 remote 插件升到 **0.5.0**。
+
+### 一、构建流程
+
+- **单一构建路径**：删掉"下载上游 APK → 抠 payload.zip → 组装 devhome"整条路；
+  内核树改由 `tools/fetch-kernel.sh` 从**官方 npm registry** 按 `android-app/kernel/package-lock.json`
+  （610 条、609 条带 integrity）冻结安装，并可缓存成 `cache/kernel/*.tar`（二次构建离线、12 秒）；
+  运行时改由 `tools/fetch-runtime.sh` 取我们自己的 sha256 pin 资产（多源：官方 → ghfast → gh-proxy，每路验 sha256）。
+- **默认且唯一变体 = community**：删掉 official / lite / compat 三变体与兼容版/救援版整条线
+  （`android-app/compat/`、`android-app-fix/`、`legacy-patch/`），`--variant` 参数取消。
+- **构建期合成全部补丁**：`dsh-patches/overlay`（45 文件，带 stale 检测）→ `plugins/dsh-tool-*`（10 处）
+  → node-pty **嵌套路径**覆盖（AArch64 自检）→ 前端补丁（mobile.css/js/viewport，打在 staging 上）。
+- **闸门**：LF（设备端/overlay 不得 CRLF 行尾）、Java 语法体检、BOM、清单 entries/bytes、15 条补丁签名、
+  产物签名；校验对象从 devhome 改为 **staging**（真正进包的树）。
+- **上游产品化说明**：`--original-look`（原版图标 + 原版悬浮窗）、`--emulator`（x86_64 适配）、
+  `--clean` / `--out` / `--keystore` / `--smoke` 保留。
+
+### 二、运行时资产（W3/W5）
+
+- 新资产 tag **`runtime-arm64-node26.4.0-tools1`**（111.2 MB）：并入 Termux aarch64 的
+  **GNU 工具集**（grep / sed / gawk / coreutils / findutils / diffutils / patch / less / tar / zip /
+  unzip / xz / zstd / jq / openssl）+ 设备内构建链（aapt2 / ecj / dx）；符号链接以 `LINKS.txt`
+  别名清单随包（设备端 `applyLinks` 重建，包内只留多调用二进制 → 不增加 APK 字节）。
+- **设备内 apksig**：构建期用 build-tools 的 `d8` 把 `lib/apksigner.jar` 编成 dex（~950 KB），
+  配 `runtime/bin/apksigner` 包装（自动补 `--ks-type PKCS12` / `--v1-signing-enabled false`，
+  dex 收 0444）→ 设备端**不需要 JVM** 就能 verify / sign（对比 Termux apksigner 要 305.8 MB 的 openjdk）。
+- `DSHROOT_LAYOUT` bump 到 `hoisted-2`（新增大批 runtime 文件必须全量重推，否则 App 走 fast 同步、新文件进不去）。
+- 模拟器包：排除 arm64-only 的新增文件 + 别名按目标存在性剪枝 + x86_64 覆盖改为**目录驱动**
+  （`.cache/x64libs` 里放几个就注入几个，含实测需要的 `liblzma.so.5.8.4`）。
+
+### 三、镜像与入径（W1/W2）
+
+- 仓库**默认分支切到 `master`**（`main` 是分叉旧树，skill 里注明废弃）；skill 增加分支说明、
+  固定取文件 URL、**开工自检**（缺 `tools/build-apk.sh` / `variants.sh` / `community.jks` 即停）与
+  取文件顺序（mirror-get → jsdelivr → api.github.com → ghfast → gh-proxy → raw）。
+- 新增单一真源 **`config/mirrors.env`**（npm 主/备、PyPI、Release 代理链、raw 模板链）；
+  `payload-extra/bin/mirror-get`（多源取文件，失败显式列源）；payload 内置 `.npmrc`
+  （npmmirror + `package-import-method=copy` + 关 audit/fund）；`tools/fetch-kernel.sh` 默认走国内 registry、
+  失败回落官方（lock 里有 integrity 兜底）。
+
+### 四、插件
+
+- `vendor/ds-harness-remote` 升级到 **`@blue-soda/dsh-remote@0.5.0`**（按构建期同口径裁剪：
+  丢 `*.map` / `*.d.ts` / test(s) → 3869 文件 49.6 MB）。
+
 ## v1.18（未发布 · 变体构建 + 社区版 · 2026-10-05）
 
 > **一句话**：**一份源码构建全部变体**（official / lite / compat / community），端口与外部目录

@@ -4249,27 +4249,15 @@ var identityKeySchema = external_exports.string().regex(/^[A-Za-z0-9_-]{42}[AEIM
 var deviceVersionSchema = boundedUtf8Schema(1, MAX_DEVICE_VERSION_LENGTH);
 var authTokenSchema = boundedUtf8Schema(16, MAX_AUTH_TOKEN_LENGTH);
 var expiresAtSchema = external_exports.number().int().positive().safe();
-var hostDeviceDescriptorSchema = external_exports.object({
+var accountDeviceDescriptorSchema = external_exports.object({
   deviceId: deviceIdSchema,
   name: deviceNameSchema,
-  role: external_exports.literal("host"),
   platform: devicePlatformSchema,
   identityKey: identityKeySchema,
   clientVersion: deviceVersionSchema,
   harnessVersion: deviceVersionSchema.optional()
-}).strict();
-var clientDeviceDescriptorSchema = external_exports.object({
-  deviceId: deviceIdSchema,
-  name: deviceNameSchema,
-  role: external_exports.literal("client"),
-  platform: devicePlatformSchema,
-  identityKey: identityKeySchema,
-  clientVersion: deviceVersionSchema
-}).strict();
-var accountDeviceDescriptorSchema = external_exports.union([
-  hostDeviceDescriptorSchema,
-  clientDeviceDescriptorSchema
-]);
+});
+var hostDeviceDescriptorSchema = accountDeviceDescriptorSchema;
 var deviceRegistrationRequestSchema = external_exports.object({
   v: external_exports.literal(PROTOCOL_VERSION),
   device: accountDeviceDescriptorSchema
@@ -13357,6 +13345,7 @@ var DEFAULT_REMOTE_SERVER_URL = "https://sakakibara.ink:8443";
 // src/config.ts
 var entryConfigSchema = s.object({
   enabled: s.boolean(),
+  // Accepted and ignored, for the same reason as in `configSchema`: an upgrade must not brick a profile.
   role: s.union(["host", "client", "both"]),
   serverUrl: s.string(),
   deviceName: s.string(),
@@ -13394,6 +13383,9 @@ var reconnectSchema = external_exports.union([
 ]);
 var configSchema = external_exports.object({
   enabled: external_exports.boolean().optional(),
+  // Older patches - including the plugin's own shipped `cordis.patch.yml` - seed `role`. It means nothing
+  // now: a device has one identity and the control switch decides whether it accepts control. It must stay
+  // *accepted* all the same, or upgrading would fail to activate the plugin on every existing installation.
   role: external_exports.enum(["host", "client", "both"]).optional(),
   serverUrl: external_exports.string().url().optional(),
   deviceName: external_exports.string().trim().min(1).max(80).optional(),
@@ -13421,7 +13413,6 @@ function resolveConfig(input2 = {}, env = process.env) {
   }
   return {
     enabled: parsed.enabled ?? true,
-    role: parsed.role ?? "host",
     ...serverUrl === void 0 ? {} : { serverUrl },
     deviceName: parsed.deviceName ?? hostname(),
     // `paused` keeps this machine unreachable without releasing its credentials:
@@ -13467,7 +13458,7 @@ function normalizeServerUrl(value) {
 }
 
 // src/version.ts
-var PLUGIN_VERSION = "0.4.32";
+var PLUGIN_VERSION = "0.5.0";
 
 // src/server-api.ts
 var ENABLED_QR_PROVIDERS = ["github"];
@@ -13479,10 +13470,9 @@ function oauthProviderName(provider) {
 }
 var TERMINAL_CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
 var HostServerApi = class {
-  constructor(serverUrl, store, fetchImplementation = fetch, role = "host") {
+  constructor(serverUrl, store, fetchImplementation = fetch) {
     this.store = store;
     this.fetchImplementation = fetchImplementation;
-    this.role = role;
     this.baseUrl = normalizeServerUrl(serverUrl);
   }
   baseUrl;
@@ -13508,10 +13498,32 @@ var HostServerApi = class {
     const identity = this.requireIdentity();
     return await this.store.load(this.baseUrl, identity.deviceId) !== void 0;
   }
+  /**
+   * Drop the in-memory credential cache so the next request reads what is on disk.
+   *
+   * Signing in writes fresh credentials for this device; a long-lived runtime that kept its own copy went on
+   * presenting the rejected one and answered AUTH_INVALID until the process restarted.
+   */
+  reloadCredentials() {
+    this.credentials = void 0;
+    this.credentialsPromise = void 0;
+  }
   async clearAuthorization() {
     this.credentials = void 0;
     this.credentialsPromise = void 0;
     await this.store.clear();
+  }
+  /**
+   * Tell the Server whether this device accepts control.
+   *
+   * The flag lives on the Server so it holds across restarts and is visible to clients listing devices;
+   * the local identity and credentials are untouched.
+   */
+  async setHostControl(enabled) {
+    await this.request("/api/v1/devices/self/control", {
+      method: "POST",
+      body: JSON.stringify({ enabled })
+    });
   }
   async revokeCurrentDevice() {
     const identity = this.requireIdentity();
@@ -13623,9 +13635,6 @@ var HostServerApi = class {
     };
   }
   async authorizeHostWithCode(identity, code) {
-    if (this.role !== "host") {
-      throw new ServerApiError("METHOD_NOT_ALLOWED", "Host registration codes can only authorize a Host device.", false);
-    }
     const registrationCode = code.trim().toUpperCase();
     if (registrationCode.length === 0) {
       throw new ServerApiError("INVALID_MESSAGE", "A Host registration code is required.", false);
@@ -13639,21 +13648,6 @@ var HostServerApi = class {
       authorizationMethod: "host_registration_code"
     });
     return { method: "host_registration_code" };
-  }
-  async authorizeOwnedRole(identity, authorizingAccessToken, account) {
-    this.bindIdentity(identity);
-    const tokens = await this.publicRequest("/api/v1/devices/register-owned-role", {
-      method: "POST",
-      body: JSON.stringify({ v: 1, device: this.deviceDescriptor(identity) })
-    }, authorizingAccessToken);
-    this.credentials = await this.saveTokens(identity, validateTokens(tokens), {
-      authorizationMethod: "owned_device",
-      ...account === void 0 ? {} : { account }
-    });
-    return {
-      method: "owned_device",
-      ...account === void 0 ? {} : { account }
-    };
   }
   async authenticate(identity = this.requireIdentity()) {
     this.bindIdentity(identity);
@@ -13760,11 +13754,10 @@ var HostServerApi = class {
     return {
       deviceId: identity.deviceId,
       name: identity.name,
-      role: this.role,
       platform: platform(),
       identityKey: identity.publicKey,
       clientVersion: PLUGIN_VERSION,
-      ...this.role === "host" && this.harnessVersion !== void 0 ? { harnessVersion: this.harnessVersion } : {}
+      ...this.harnessVersion === void 0 ? {} : { harnessVersion: this.harnessVersion }
     };
   }
   saveTokens(identity, tokens, authorization) {
@@ -13832,7 +13825,7 @@ function normalizeOAuthScanUrl(value, baseUrl) {
 }
 var ClientServerApi = class extends HostServerApi {
   constructor(serverUrl, store, fetchImplementation = fetch) {
-    super(serverUrl, store, fetchImplementation, "client");
+    super(serverUrl, store, fetchImplementation);
   }
 };
 var ServerApiError = class extends Error {
@@ -13882,7 +13875,7 @@ function mapStatus(status2) {
 }
 function parseHostDevice(value) {
   const item = requireRecord(value, "host device");
-  if (item.role !== "host" || typeof item.deviceId !== "string" || typeof item.name !== "string" || typeof item.platform !== "string" || typeof item.membershipId !== "string" || item.membershipId.length === 0) {
+  if (typeof item.deviceId !== "string" || typeof item.name !== "string" || typeof item.platform !== "string" || typeof item.membershipId !== "string" || item.membershipId.length === 0) {
     throw new ServerApiError("INVALID_MESSAGE", "The Server returned invalid host device data.", false);
   }
   return {
@@ -13891,6 +13884,7 @@ function parseHostDevice(value) {
     platform: item.platform,
     membershipId: item.membershipId,
     ...typeof item.online === "boolean" ? { online: item.online } : {},
+    ...typeof item.hostControl === "boolean" ? { hostControl: item.hostControl } : {},
     ...typeof item.lastSeenAt === "number" && Number.isSafeInteger(item.lastSeenAt) ? { lastSeenAt: item.lastSeenAt } : {},
     ...typeof item.clientVersion === "string" ? { clientVersion: item.clientVersion } : {},
     ...typeof item.harnessVersion === "string" ? { harnessVersion: item.harnessVersion } : {}
@@ -13898,17 +13892,17 @@ function parseHostDevice(value) {
 }
 function parseAuthorizedPeer(value) {
   const item = requireRecord(value, "authorized peer");
-  if (item.role !== "host" && item.role !== "client" || typeof item.deviceId !== "string" || item.deviceId.length === 0 || typeof item.name !== "string" || item.name.length === 0 || typeof item.platform !== "string" || item.platform.length === 0 || typeof item.identityKey !== "string" || !isIdentityKey(item.identityKey) || typeof item.membershipId !== "string" || item.membershipId.length === 0) {
+  if (typeof item.deviceId !== "string" || item.deviceId.length === 0 || typeof item.name !== "string" || item.name.length === 0 || typeof item.platform !== "string" || item.platform.length === 0 || typeof item.identityKey !== "string" || !isIdentityKey(item.identityKey) || typeof item.membershipId !== "string" || item.membershipId.length === 0) {
     throw new ServerApiError("INVALID_MESSAGE", "The Server returned invalid authorized peer data.", false);
   }
   return {
     deviceId: item.deviceId,
     name: item.name,
-    role: item.role,
     platform: item.platform,
     identityKey: item.identityKey,
     membershipId: item.membershipId,
     ...typeof item.online === "boolean" ? { online: item.online } : {},
+    ...typeof item.hostControl === "boolean" ? { hostControl: item.hostControl } : {},
     ...typeof item.lastSeenAt === "number" && Number.isSafeInteger(item.lastSeenAt) ? { lastSeenAt: item.lastSeenAt } : {}
   };
 }
@@ -14139,8 +14133,10 @@ var HostServerConnection = class {
           socket.close(4008, "invalid control frame");
         });
       };
-      socket.onerror = () => {
-        if (!acknowledged) finish(new ControlConnectionError("CONNECTION_FAILED", "Unable to open the Server WebSocket."));
+      socket.onerror = (event) => {
+        if (!acknowledged) {
+          finish(new ControlConnectionError("CONNECTION_FAILED", `Unable to open the Server WebSocket.${socketFailureDetail(event)}`));
+        }
       };
       socket.onclose = (event) => {
         const close = async () => {
@@ -14246,7 +14242,7 @@ var HostServerConnection = class {
       });
       return;
     }
-    if (descriptor.role !== "client" || descriptor.deviceId !== payload.clientDeviceId || descriptor.identityKey !== payload.clientIdentityKey) {
+    if (descriptor.deviceId !== payload.clientDeviceId || descriptor.identityKey !== payload.clientIdentityKey) {
       this.sendControl("connect.rejected", { connectionId: payload.connectionId });
       this.logger.warn("connection rejected by peer identity validation", {
         clientDeviceId: shortId(payload.clientDeviceId)
@@ -14840,6 +14836,21 @@ function connectionFailureDetail(error) {
     ...causeCode === void 0 ? {} : { causeCode }
   };
 }
+function socketFailureDetail(event) {
+  const parts = [];
+  if (event !== null && typeof event === "object") {
+    const message = "message" in event && typeof event.message === "string" ? event.message : void 0;
+    if (message !== void 0 && message !== "") parts.push(message);
+    const error = "error" in event ? event.error : void 0;
+    if (error !== null && typeof error === "object") {
+      const code = "code" in error && typeof error.code === "string" ? error.code : void 0;
+      const errorMessage = "message" in error && typeof error.message === "string" ? error.message : void 0;
+      if (code !== void 0) parts.push(code);
+      if (errorMessage !== void 0 && errorMessage !== "" && errorMessage !== message) parts.push(errorMessage);
+    }
+  }
+  return parts.length === 0 ? "" : ` (${parts.join(": ")})`;
+}
 function errorCode2(error) {
   return error instanceof ServerApiError || error instanceof ControlConnectionError ? error.code : "CONNECTION_FAILED";
 }
@@ -15392,10 +15403,29 @@ function createRemoteId() {
 var MAX_DISPLAY_ITEM_TEXT = 256 * 1024;
 var CODEX_IMAGE_MEDIA_TYPES = /* @__PURE__ */ new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 var DATA_IMAGE_URL = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/u;
+var CODEX_CAPABILITY_EVENT = "codex.app.capability";
 var CodexRemoteClient = class {
   core;
   constructor(core) {
     this.core = core;
+  }
+  /**
+   * Listen for the Host's Codex availability changes.
+   *
+   * Fires whether or not this client is following any thread, which is what makes "the peer switched Codex off"
+   * reach the session on screen immediately instead of at the next failing call. The Host sends this only on a
+   * real transition, so `available: true` never means "you lost something".
+   * @param handler - called with the new availability.
+   * @returns an unsubscribe function.
+   */
+  watchCapability(handler) {
+    return this.core.onEvent((event) => {
+      if (event.event !== CODEX_CAPABILITY_EVENT)
+        return;
+      if (!isRecord(event.data) || typeof event.data.available !== "boolean")
+        return;
+      handler(event.data.available);
+    });
   }
   /** Low-level allowlisted request used by the Desktop Web loopback facade. */
   request(method, params, signal) {
@@ -17836,6 +17866,10 @@ function isHostWorkspaceEndpoint(endpoint) {
 function isHostWorkspaceStreamEndpoint(endpoint) {
   return HOST_WORKSPACE_STREAM_ENDPOINTS.has(endpoint);
 }
+function sameWorkspaceRoot(left, right) {
+  const normalise = (value) => value.trim().replace(/[\\/]+$/, "").replace(/\\/g, "/").toLowerCase();
+  return normalise(left) === normalise(right);
+}
 function codexProjectWorkspaceId(projectId) {
   return `${CODEX_WORKSPACE_PREFIX}project:${projectId}`;
 }
@@ -17849,6 +17883,9 @@ var CodexVirtualHarness = class _CodexVirtualHarness {
     this.sessionGeneration = sessionGeneration;
     this.hostCarrier = hostCarrier;
     this.api = this.createApiProxy();
+    this.stopCapabilityWatch = this.client.watchCapability?.((available) => {
+      if (!available) this.onSessionLost?.("domain-notice");
+    });
   }
   api;
   catalog;
@@ -17881,16 +17918,33 @@ var CodexVirtualHarness = class _CodexVirtualHarness {
     this.localCarrier = carrier;
   }
   localCarrier;
+  onSessionLost;
+  stopCapabilityWatch;
+  /**
+   * Register what to do when a Codex call fails because the session is gone.
+   *
+   * Set after construction rather than passed in, so neither the constructor nor the static factory signature has to
+   * change: the runtime hooks its reconnect entry point here. The Host replacing or switching off its Codex domain
+   * closes the bridges, and the next call would otherwise just be shown as an error.
+   * @param handler - called once per detected loss, with what detected it, before the failure is returned.
+   * @returns nothing.
+   */
+  watchCodexSessionLost(handler) {
+    this.onSessionLost = handler;
+  }
   static remote(core, host, sessionGeneration = "legacy", hostCarrier) {
     return new _CodexVirtualHarness(new CodexRemoteClient(core), host, sessionGeneration, hostCarrier);
   }
   async workspaces(signal) {
     return (await this.refreshCatalog(signal)).workspaces;
   }
-  async selectWorkspace(workspaceId, signal) {
+  async selectWorkspace(workspaceId, signal, rootPath) {
     const catalog = await loadCatalog(this.client, signal);
-    const workspace = catalog.workspaces.find((item) => item.workspaceId === workspaceId);
-    if (workspace === void 0) throw new Error("The selected CodeX workspace is no longer available.");
+    const workspace = catalog.workspaces.find((item) => item.workspaceId === workspaceId) ?? (rootPath === void 0 ? void 0 : catalog.workspaces.find((item) => sameWorkspaceRoot(item.path, rootPath)));
+    if (workspace === void 0) {
+      const seen = catalog.workspaces.slice(0, 5).map((item) => item.workspaceId + "@" + item.path).join(", ");
+      throw new Error("The selected CodeX workspace is no longer available. (wanted: " + workspaceId + " root: " + String(rootPath) + " catalog: " + seen + ")");
+    }
     this.selectedWorkspaceId = workspace.workspaceId;
     this.catalog = catalog;
     return workspace;
@@ -17907,7 +17961,7 @@ var CodexVirtualHarness = class _CodexVirtualHarness {
     for (const sessionId of candidates) {
       const threadId = nativeThreadId(sessionId);
       try {
-        const thread = await this.fetchThread(threadId, signal);
+        await this.fetchThread(threadId, signal);
         return sessionId;
       } catch {
       }
@@ -18021,6 +18075,7 @@ var CodexVirtualHarness = class _CodexVirtualHarness {
         }
       }
     } catch (error) {
+      if (isCodexSessionLoss(error)) this.onSessionLost?.("call-failed");
       return failFrom(error);
     }
   }
@@ -18051,6 +18106,7 @@ var CodexVirtualHarness = class _CodexVirtualHarness {
   async close() {
     if (this.closed) return;
     this.closed = true;
+    this.stopCapabilityWatch?.();
     for (const stream of this.workspaceStreams) stream.close();
     for (const stream of this.controlStreams) stream.close();
     for (const stream of this.eventStreams.values()) stream.close();
@@ -18333,7 +18389,7 @@ var CodexVirtualHarness = class _CodexVirtualHarness {
         threadId,
         (frame) => this.acceptCodexFrame(follow, frame),
         signal,
-        () => this.closeFollowAfterRemoteStreamClosed(follow)
+        (reason) => this.noteRemoteStreamClosed(follow, reason)
       );
       follow.close = () => stream.close();
     } catch (error) {
@@ -19107,7 +19163,7 @@ var CodexVirtualHarness = class _CodexVirtualHarness {
         threadId,
         (frame) => this.acceptCodexFrame(follow, frame),
         controller.signal,
-        () => this.closeFollowAfterRemoteStreamClosed(follow)
+        (reason) => this.noteRemoteStreamClosed(follow, reason)
       );
       follow.close = async () => {
         controller.abort();
@@ -19128,6 +19184,21 @@ var CodexVirtualHarness = class _CodexVirtualHarness {
     this.follows.delete(follow);
     follow.queue.close();
     this.emitRemoteEvent("api-session/status", [follow.sessionId, false]);
+  }
+  /**
+   * The Host closed a Codex stream this client was following.
+   *
+   * `failed` and `peer-disconnected` mean the Codex session behind it is gone - the Host switched Codex off,
+   * replaced its domain, or its App Server died. That is a lost session like any other, so the runtime is told
+   * now, which is what puts "reconnecting" on screen immediately instead of leaving the user to discover it as
+   * an error the next time they touch the session. A stream we closed ourselves, or one that simply ended,
+   * says nothing about the session.
+   * @param follow - the projection that was following it.
+   * @param reason - why the peer closed the stream.
+   */
+  noteRemoteStreamClosed(follow, reason) {
+    if (reason === "failed" || reason === "peer-disconnected") this.onSessionLost?.("stream-closed");
+    this.closeFollowAfterRemoteStreamClosed(follow);
   }
   async refreshAndPublishWorkspaces() {
     const catalog = await this.refreshCatalog().catch(() => void 0);
@@ -21596,7 +21667,7 @@ var QUICK_RECONNECT_ATTEMPTS = 2;
 var QUICK_RECONNECT_WINDOW_MS = 1e4;
 var QUICK_RECONNECT_RETRY_DELAY_MS = 5e3;
 var QUICK_RECONNECT_FORCE_RELAY = true;
-var FALLBACK_STEADY_ATTEMPTS = 5;
+var BACKGROUND_RETRY_DELAYS_MS = [5e3, 1e4, 2e4, 3e4, 3e4, 3e4, 3e4];
 var ClientModeRuntime = class {
   constructor(config, identities, server, apiProxy, typertGateway, logger, host, rtcFactoryProvider = loadNodeRtcFactory, targetStore) {
     this.config = config;
@@ -21613,6 +21684,16 @@ var ClientModeRuntime = class {
   preview;
   identity;
   connected;
+  /**
+   * The connection the Remote panel browses a Host with.
+   *
+   * Deliberately separate from {@link connected}: opening the panel, connecting to a Host and looking at or
+   * picking its workspaces is *not* a remote session. Nothing here may become "what the user is watching",
+   * arm a reconnect, or survive as something a later boot would restore - the user is still in the local
+   * shell until they actually open a workspace. Keeping it in this field is what enforces that: the recovery
+   * path only ever looks at {@link connected}.
+   */
+  browsing;
   /**
    * Set when a remote session dropped and the runtime fell back to local.
    *
@@ -21646,6 +21727,29 @@ var ClientModeRuntime = class {
    * the link is back.
    */
   lastWorkspaceSelection;
+  /**
+   * The last workspaces listed per Host.
+   *
+   * A workspace picked in the panel is opened by id, and a replaced Codex domain hands out new ids for the same
+   * directories. Keeping the previous listing is what lets a stale id be translated back to its root and opened
+   * again instead of failing as "no longer available".
+   */
+  lastCodexListing = /* @__PURE__ */ new Map();
+  /**
+   * Every workspace id this client has seen for a Host, mapped to its root.
+   *
+   * A panel entry can come from a listing made before the Host replaced its Codex domain, so the id is missing from
+   * the latest listing while the directory itself is unchanged. Keeping the whole history is what lets such an id be
+   * translated back to a root and reopened.
+   */
+  codexWorkspaceRoots = /* @__PURE__ */ new Map();
+  /**
+   * Hosts this run has actually opened a Codex workspace on.
+   *
+   * Whether the peer merely never offered Codex or has just switched it off decides the wording the user sees, and
+   * the remembered selection cannot answer that on its own: switching to local clears it by design.
+   */
+  codexHostsSeen = /* @__PURE__ */ new Set();
   codexVirtual;
   proxySwitch;
   gatewaySwitch;
@@ -21667,6 +21771,21 @@ var ClientModeRuntime = class {
    * stops as soon as the user asks for local.
    */
   reconnecting;
+  /**
+   * What the recovery is putting back, for the header.
+   *
+   * The window has to be able to say *which* session is coming back while the carriers are already local - a
+   * Codex recovery that fell back to the local shell used to read "remote DSH, reconnecting", which describes
+   * a different thing than the one being restored. The kind comes from the remembered selection, so it stays
+   * right for the whole window without a second copy of the state to keep in sync.
+   * @returns the payload the status carries for a running recovery.
+   */
+  reconnectState() {
+    const state = this.reconnecting;
+    if (state === void 0) return { targetDeviceId: "", phase: "restore" };
+    const kind = this.sessionTargetFor(state.targetDeviceId)?.kind;
+    return { ...state, ...kind === void 0 ? {} : { kind } };
+  }
   /** Periodic proof of life for the live remote session; absent while nothing is connected. */
   closed = false;
   async start() {
@@ -21682,7 +21801,7 @@ var ClientModeRuntime = class {
     if (this.config.hostControl?.enabled !== false && this.host !== void 0 && this.server.hasStoredAuthorization !== void 0) {
       try {
         if (await this.server.hasStoredAuthorization() && (this.host.hasStoredAuthorization === void 0 || !await this.host.hasStoredAuthorization())) {
-          await this.authorizeHostByDefault();
+          this.logger.info("Host credentials are present; the Host connection starts on its own");
         }
       } catch (error) {
         this.logger.warn("automatic Host authorization failed", { code: safeErrorCode(error) });
@@ -21700,20 +21819,6 @@ var ClientModeRuntime = class {
   async hasStoredAuthorization() {
     return this.server.hasStoredAuthorization === void 0 ? false : await this.server.hasStoredAuthorization();
   }
-  async authorizeHostByDefault() {
-    try {
-      if (this.host === void 0) return;
-      if (this.config.hostControl?.enabled === false) return;
-      const status2 = this.host.hostStatus();
-      if (status2.authorized) return;
-      const rejected = status2.error !== void 0 && HOST_AUTHORIZATION_ERRORS.has(status2.error);
-      if (!rejected && this.host.hasStoredAuthorization !== void 0 && await this.host.hasStoredAuthorization()) return;
-      const credentials = await this.server.authenticate(this.requireIdentity());
-      await this.host.authorizeHostAsOwned(credentials.accessToken, credentials.account);
-    } catch (error) {
-      this.logger.warn("automatic Host authorization failed", { code: safeErrorCode(error) });
-    }
-  }
   registerControl(connection, webServer) {
     return registerControlRoute(connection, (endpoint, payload, signal) => this.handleControl(endpoint, payload, signal), webServer);
   }
@@ -21728,7 +21833,7 @@ var ClientModeRuntime = class {
       ...targetStatus,
       connected: this.connected !== void 0,
       fellBackToLocal: this.fellBackToLocal,
-      ...this.reconnecting === void 0 ? {} : { reconnecting: { ...this.reconnecting } },
+      ...this.reconnecting === void 0 ? {} : { reconnecting: this.reconnectState() },
       transport: this.connected?.client.getStats().mode ?? "Disconnected",
       connectedTargetDeviceId: this.connected?.target.deviceId,
       preferredTransports: this.config.forceRelay ? ["relay"] : ["lan", "p2p", "turn", "relay"],
@@ -21774,7 +21879,7 @@ var ClientModeRuntime = class {
     };
   }
   async devices() {
-    this.assertHostAuthorizationForDeviceDiscovery();
+    if (!await this.recoverHostAuthorization()) return [];
     this.requireIdentity();
     const serverDevices = await this.server.listDevices();
     const remoteDevices = serverDevices.filter((device) => device.deviceId !== this.host?.hostStatus().deviceId);
@@ -21785,18 +21890,18 @@ var ClientModeRuntime = class {
     }));
   }
   /**
-   * Device discovery is exposed through the local app control route. When this
-   * installation also runs a Host, keep that route closed after the Host's
-   * Server credential has become terminally invalid. The Client credential can
-   * remain usable for a short time after a revoke, so checking only
-   * `ClientServerApi.listDevices()` would otherwise leak the device directory
-   * from a Host that the user has already been told to re-authorize.
+   * Whether the Host credential is usable, after one attempt to re-authorize it.
+   *
+   * Device discovery runs through the local app control route and must not leak a device directory for a
+   * Host the Server no longer accepts, but refusing outright was worse than useless: it told a user who was
+   * already signing in to sign out first. Re-authorizing from the stored Client credential is the move that
+   * helps; when that fails too - the device was removed from the account, so there is nothing left to
+   * refresh - discovery reports nothing and the panel's authorization state takes over.
+   * @returns whether the Host credential is usable.
    */
-  assertHostAuthorizationForDeviceDiscovery() {
+  async recoverHostAuthorization() {
     const status2 = this.host?.hostStatus();
-    if (status2 === void 0 || status2.error === void 0 || !HOST_AUTHORIZATION_ERRORS.has(status2.error)) return;
-    const message = status2.error === "DEVICE_REVOKED" ? "The local Host was revoked on the Server. Sign out and authorize this Host again." : "The local Host authorization is no longer valid. Sign out and authorize this Host again.";
-    throw new ClientModeError(status2.error, message);
+    return status2 === void 0 || status2.error === void 0 || !HOST_AUTHORIZATION_ERRORS.has(status2.error);
   }
   async authorizeClientWithAccount(email, password) {
     let authorization;
@@ -21804,11 +21909,10 @@ var ClientModeRuntime = class {
       authorization = await this.server.authorizeWithAccount(this.requireIdentity(), email, password);
     } catch (error) {
       if (!(error instanceof ServerApiError) || error.code !== "DEVICE_REVOKED") throw error;
-      this.identity = await this.identities.reset(this.config.deviceName);
-      this.server.bindIdentity(this.identity);
-      authorization = await this.server.authorizeWithAccount(this.identity, email, password);
+      const identity = this.requireIdentity();
+      this.server.bindIdentity(identity);
+      authorization = await this.server.authorizeWithAccount(identity, email, password);
     }
-    await this.authorizeHostByDefault();
     this.logger.info("Client account authorized");
     return authorization;
   }
@@ -21817,13 +21921,11 @@ var ClientModeRuntime = class {
   }
   async pollClientOAuthQrLogin(qrId) {
     const result = await this.server.pollOAuthQrLogin(this.requireIdentity(), qrId, async () => {
-      this.identity = await this.identities.reset(this.config.deviceName);
-      this.server.bindIdentity(this.identity);
-      this.logger.info("Rotated revoked Client identity before QR authorization retry");
-      return this.identity;
+      const identity = this.requireIdentity();
+      this.server.bindIdentity(identity);
+      return identity;
     });
     if (result.status === "complete") this.logger.info("Client account authorized with QR login");
-    if (result.status === "complete") await this.authorizeHostByDefault();
     return result;
   }
   /**
@@ -21846,6 +21948,7 @@ var ClientModeRuntime = class {
     this.connected = void 0;
     this.connectionProgress = void 0;
     this.pendingWorkspaceSelection = void 0;
+    this.closeBrowsing();
     await this.closeCodexVirtual();
     this.proxySwitch?.selectLocal();
     await this.closePreview();
@@ -21855,14 +21958,39 @@ var ClientModeRuntime = class {
     this.remoteReconnectRun += 1;
     await this.server.clearAuthorization();
   }
+  /**
+   * Revoke this device on the Server, then drop the local authorization.
+   *
+   * Used by the Remote panel's removal action. The device deliberately keeps its identity: signing in
+   * again re-registers the same installation instead of adding another device row, which is what stops
+   * one machine from looking like several over time.
+   */
+  async revokeCurrentDevice() {
+    await this.server.revokeCurrentDevice();
+    this.connected = void 0;
+    this.connectionProgress = void 0;
+    this.closeBrowsing();
+    this.reconnecting = void 0;
+    this.fellBackToLocal = false;
+    this.remoteReconnectRun += 1;
+  }
+  /**
+   * Switch whether this machine accepts control.
+   *
+   * Turning it off takes the Host connection away and tells the Server to refuse a new one, while the
+   * account sign-in, the device identity and the client half stay exactly as they are - so the device
+   * remains signed in and can still control other machines, and turning control back on reconnects
+   * without another sign-in.
+   */
+  /** Re-read this device's credentials from disk, so a sign-in is picked up without a restart. */
+  reloadCredentials() {
+    this.server.reloadCredentials();
+  }
   async setHostAuthorization(enabled) {
     if (this.host === void 0) throw new ClientModeError("METHOD_NOT_ALLOWED", "This plugin is not running as a Host.");
-    if (!enabled) {
-      await this.host.clearHostAuthorization();
-      return this.status();
-    }
-    const credentials = await this.server.authenticate(this.requireIdentity());
-    await this.host.authorizeHostAsOwned(credentials.accessToken, credentials.account);
+    await this.host.setHostControl?.(enabled);
+    if (enabled) await this.host.resumeHostConnection?.();
+    else await this.host.pauseHostConnection?.();
     return this.status();
   }
   async setMode(mode, targetDeviceId, signal) {
@@ -21876,6 +22004,7 @@ var ClientModeRuntime = class {
       this.connectionProgress = void 0;
       this.pendingWorkspaceSelection = void 0;
       this.lastWorkspaceSelection = void 0;
+      this.closeBrowsing();
       await this.closeCodexStreams(previous2?.client);
       await previous2?.client.close().catch(() => void 0);
       this.fellBackToLocal = false;
@@ -21888,7 +22017,9 @@ var ClientModeRuntime = class {
     if (targetDeviceId === void 0 || targetDeviceId.length === 0) {
       throw new ClientModeError("INVALID_MESSAGE", "A targetDeviceId is required for remote mode.");
     }
-    const next = await this.connect(targetDeviceId, signal);
+    const browsingHere = this.browsing?.target.deviceId === targetDeviceId ? this.browsing : void 0;
+    if (browsingHere !== void 0) this.browsing = void 0;
+    const next = browsingHere ?? await this.connectWithReason(targetDeviceId, signal);
     try {
       this.assertRemoteCompatible(next);
     } catch (error) {
@@ -21903,6 +22034,7 @@ var ClientModeRuntime = class {
     this.pendingWorkspaceSelection = void 0;
     await this.closeCodexVirtual();
     this.selectRemoteTarget(next);
+    this.closeBrowsing();
     this.fellBackToLocal = false;
     this.reconnecting = void 0;
     await this.rememberTarget({ mode: "remote", hostDeviceId: next.target.deviceId, hostName: next.target.name });
@@ -21923,7 +22055,7 @@ var ClientModeRuntime = class {
     const previous = this.connected;
     this.supersededClient = previous?.client;
     try {
-      const next = await this.connect(targetDeviceId, void 0, forceRelay);
+      const next = await this.connectWithReason(targetDeviceId, void 0, forceRelay);
       if (previous === void 0) {
         this.supersededClient = void 0;
         await next.client.close().catch(() => void 0);
@@ -21936,13 +22068,12 @@ var ClientModeRuntime = class {
       await this.closeCodexStreams(previous.client);
       await previous.client.close().catch(() => void 0);
       this.supersededClient = void 0;
-      this.finishReconnect("link re-established");
       return true;
     } catch (error) {
       this.supersededClient = void 0;
       this.logger.warn("fast reconnect attempt failed", {
         targetDeviceId: shortId2(targetDeviceId),
-        code: safeErrorCode(error),
+        code: failureCode(error),
         ...connectionFailureDetail(error)
       });
       return false;
@@ -21951,6 +22082,83 @@ var ClientModeRuntime = class {
   rememberWorkspaceSelection(selection) {
     this.pendingWorkspaceSelection = selection;
     this.lastWorkspaceSelection = { ...selection };
+    const connected = this.connected;
+    if (connected?.target.deviceId === selection.targetDeviceId) {
+      void this.rememberTarget({
+        mode: "remote",
+        hostDeviceId: selection.targetDeviceId,
+        hostName: connected.target.name
+      });
+    }
+  }
+  /**
+   * What the user is watching, reduced to the only thing a recovery has to restore.
+   *
+   * A lost session is always "this device, this kind of workspace, this directory". Deriving that once -
+   * instead of letting each recovery path re-read `lastWorkspaceSelection` and decide for itself - is what
+   * keeps a Codex session from being restored onto the peer's DeepSeek carrier, which is exactly the bug the
+   * reconnect used to produce.
+   * @param targetDeviceId - the Host the lost session belonged to.
+   * @returns the target, or undefined when nothing on that Host is being watched.
+   */
+  sessionTargetFor(targetDeviceId) {
+    const selection = this.lastWorkspaceSelection;
+    if (selection === void 0 || selection.targetDeviceId !== targetDeviceId) return void 0;
+    return {
+      deviceId: targetDeviceId,
+      kind: selection.backend === "codex" ? "codex" : "harness",
+      workspaceId: selection.workspaceId,
+      ...selection.workspacePath === void 0 ? {} : { workspacePath: selection.workspacePath },
+      ...selection.sessionId === void 0 ? {} : { sessionId: selection.sessionId }
+    };
+  }
+  /**
+   * Put the session the user was watching back in place on the current link.
+   *
+   * The one step every recovery path ends with, whichever way the link came back: the retry schedule, the
+   * quick window, or a boot restore. A Codex target rebuilds the Codex carrier - never the peer's Harness
+   * workspace - and a Harness target republishes its workspace selection so the native UI re-reads its list.
+   * @param target - the session to restore.
+   * @param fallbackToLocal - whether a failed Codex rebuild may hand the view to the local shell. The quick
+   * window passes false: its whole point is to keep the user looking at the session while it is rescued.
+   * @returns true when the user is looking at that session again.
+   */
+  async restoreSession(target2, options = {}) {
+    if (target2.kind === "codex") {
+      const restored = await this.restoreCodexCarrier(target2, options.fallbackToLocal !== false);
+      if (restored) {
+        this.logger.info("remote Codex session restored", {
+          targetDeviceId: shortId2(target2.deviceId),
+          kind: "codex",
+          path: target2.workspacePath ?? "(unknown)"
+        });
+      }
+      return restored;
+    }
+    this.restoreWorkspaceSelection(target2.deviceId);
+    this.logger.info("remote DSH session restored", {
+      targetDeviceId: shortId2(target2.deviceId),
+      kind: "harness"
+    });
+    return true;
+  }
+  /**
+   * Clear the recovery flag once the user is back on the session they were watching.
+   *
+   * The header reads this flag to show "reconnecting", so it must be cleared exactly when the recovery
+   * succeeded - not when a transport happened to come back, and not while a Codex workspace is still missing.
+   * @param targetDeviceId - the Host the recovery was about.
+   * @param reason - what brought the session back, for the log.
+   * @param kind - which carrier was restored.
+   */
+  finishRecovery(targetDeviceId, reason, kind) {
+    this.reconnecting = void 0;
+    this.fellBackToLocal = false;
+    this.logger.info("remote session recovered", {
+      targetDeviceId: shortId2(targetDeviceId),
+      kind,
+      reason
+    });
   }
   /**
    * Republish the workspace selection so the native UI re-reads its remote session list.
@@ -21968,12 +22176,110 @@ var ClientModeRuntime = class {
       workspaceId: selection.workspaceId
     });
   }
-  finishReconnect(reason) {
-    const target2 = this.reconnecting?.targetDeviceId;
-    if (target2 === void 0) return;
-    this.reconnecting = void 0;
-    this.restoreWorkspaceSelection(target2);
-    this.logger.info("remote Harness reconnect finished", { targetDeviceId: shortId2(target2), reason });
+  /**
+   * Put the Codex carrier back onto the link that just replaced the old one.
+   *
+   * A reconnect leaves the carrier holding a transfer channel bound to a transport that no longer exists, and the
+   * first use fails with "remote transport closed" while the UI still looks connected - the reported symptom:
+   * Codex sessions vanish and clicking one errors. Rebuilding the carrier is what lets an open Codex workspace
+   * survive a reconnect.
+   *
+   * The workspace is matched by directory, not by id: a Host that replaced its Codex domain renumbers the very
+   * same directories, so an id that misses is retried once by root before the workspace is given up on.
+   * @param target - the Codex session to restore.
+   * @param fallbackToLocal - whether a failure may hand the view to the client's own shell. The quick window
+   * passes false so the user keeps looking at the session for the whole window.
+   * @returns true when the Codex carrier is back on the given workspace.
+   */
+  async restoreCodexCarrier(target2, fallbackToLocal = true) {
+    try {
+      try {
+        await this.openCodexWorkspace(target2.deviceId, target2.workspaceId);
+      } catch (error) {
+        const root = target2.workspacePath;
+        if (root === void 0) throw error;
+        const recovered = await this.codexWorkspaceIdForPath(target2.deviceId, root);
+        if (recovered === void 0) throw error;
+        if (recovered !== target2.workspaceId) {
+          this.logger.info("CodeX workspace restored under a new id", {
+            targetDeviceId: shortId2(target2.deviceId),
+            path: root
+          });
+        }
+        await this.openCodexWorkspace(target2.deviceId, recovered);
+      }
+      this.restoreWorkspaceSelection(target2.deviceId);
+      return true;
+    } catch (error) {
+      this.logger.warn("CodeX workspace could not be restored", {
+        targetDeviceId: shortId2(target2.deviceId),
+        code: failureCode(error),
+        path: target2.workspacePath ?? "(unknown)",
+        ...connectionFailureDetail(error)
+      });
+      if (fallbackToLocal) await this.fallBackToLocalForCodex();
+      return false;
+    }
+  }
+  /**
+   * The id the Host currently uses for a workspace root.
+   *
+   * @param targetDeviceId - the Host to ask.
+   * @param path - the workspace root as it was remembered.
+   * @returns the current workspace id, or undefined when the Host no longer offers that root.
+   */
+  async codexWorkspaceIdForPath(targetDeviceId, path) {
+    const workspaces = await this.listCodexWorkspaces(targetDeviceId);
+    const match = workspaces.find((candidate) => sameWorkspaceRoot(candidate.path, path));
+    return match?.workspaceId;
+  }
+  /**
+   * Show the client's own shell while a Codex session is unavailable.
+   *
+   * The peer's other carrier must not stand in for the Codex workspace that was lost, and this deliberately does not
+   * touch the reconnect run counter: the retry schedule keeps trying to restore the Codex workspace while the user
+   * works locally.
+   * @returns nothing.
+   */
+  async fallBackToLocalForCodex() {
+    await this.closeCodexVirtual();
+    this.proxySwitch?.selectLocal();
+    this.gatewaySwitch.selectLocal();
+    this.fellBackToLocal = true;
+  }
+  /**
+   * The Codex session is gone while the transport is still up (the Host replaced or switched off its Codex
+   * domain). Deliberately the same entry point as a lost link, so both carriers take one path: quick reconnect,
+   * local fallback and the retry schedule.
+   *
+   * The trigger is logged, because "the banner did not appear" is otherwise indistinguishable between "no
+   * signal arrived" and "the signal arrived but the UI did not show it".
+   * @param trigger - what noticed it.
+   * @returns nothing; the reconnect runs in the background.
+   */
+  noteCodexSessionLost(trigger) {
+    const connected = this.connected;
+    if (connected === void 0 || this.reconnecting !== void 0) {
+      this.logger.info("Codex session loss ignored", {
+        targetDeviceId: connected === void 0 ? void 0 : shortId2(connected.target.deviceId),
+        trigger,
+        reason: connected === void 0 ? "not-connected" : "recovery-already-running"
+      });
+      return;
+    }
+    if (this.sessionTargetFor(connected.target.deviceId)?.kind !== "codex") {
+      this.logger.info("Codex session loss ignored", {
+        targetDeviceId: shortId2(connected.target.deviceId),
+        trigger,
+        reason: "watching-another-session"
+      });
+      return;
+    }
+    this.logger.warn("remote Codex session lost", {
+      targetDeviceId: shortId2(connected.target.deviceId),
+      trigger
+    });
+    void this.handleRemoteTransportLost(connected.client, connected.target.deviceId, "codex-closed");
   }
   /**
    * Check the live session now, outside the cadence.
@@ -21986,34 +22292,56 @@ var ClientModeRuntime = class {
     return this.status();
   }
   /**
-   * Rebuild the link inside one quick window, keeping the user's view.
+   * Re-read the connected Host's capabilities.
    *
-   * The session is left exactly as it is - same Workspace, same Session list, no reload - while the link
-   * is rebuilt over relay. Only the Session data is refreshed once it is back, and the caller falls back
-   * to the local shell when the window runs out.
-   * @param targetDeviceId - the Host to rebuild the link to.
-   * @returns whether a session is in place again.
+   * A Host that switches Codex (or the terminal) on or off changes what it advertises, and the cached feature
+   * set used to be refreshed only when a workspace list happened to be requested - which is why the Remote card
+   * could describe a Host it no longer matched. One round trip, no business payload, so the card can poll it.
+   * @returns the connected Host's fresh feature set, or `{ connected: false }`.
    */
-  async quickReconnect(targetDeviceId) {
-    if (this.reconnecting !== void 0) return false;
-    this.reconnecting = { targetDeviceId, phase: "fast" };
-    this.logger.warn("remote Harness link needs rebuilding; trying a quick reconnect", {
-      targetDeviceId: shortId2(targetDeviceId),
-      attempts: QUICK_RECONNECT_ATTEMPTS,
-      windowMs: QUICK_RECONNECT_WINDOW_MS
-    });
-    const deadline = Date.now() + QUICK_RECONNECT_WINDOW_MS;
-    for (let attempt = 1; attempt <= QUICK_RECONNECT_ATTEMPTS; attempt += 1) {
-      if (await this.reestablish(targetDeviceId, QUICK_RECONNECT_FORCE_RELAY)) return true;
-      if (attempt === QUICK_RECONNECT_ATTEMPTS) break;
-      const wait2 = Math.min(QUICK_RECONNECT_RETRY_DELAY_MS, Math.max(0, deadline - Date.now()));
-      if (wait2 === 0) break;
-      await new Promise((resolve4) => {
-        setTimeout(resolve4, wait2);
+  async probeRemoteFeatures() {
+    const remote = this.connected;
+    if (remote === void 0) return { connected: false };
+    try {
+      remote.features = await probeRemoteHostFeatures(remote.client, remote.clientVersion);
+    } catch (error) {
+      const code = failureCode(error);
+      this.logger.warn("remote capability probe failed", {
+        targetDeviceId: shortId2(remote.target.deviceId),
+        code
       });
+      return { connected: true, targetDeviceId: remote.target.deviceId, features: remote.features, error: code };
     }
-    this.reconnecting = void 0;
-    return false;
+    return { connected: true, targetDeviceId: remote.target.deviceId, features: remote.features };
+  }
+  /**
+   * Re-establish the session the user is watching, without changing which session that is.
+   *
+   * What the Remote card's Refresh does for a live session: the transport may have died, the peer's Codex may
+   * have come back, or a previous recovery may have given up. This never selects another Host and never another
+   * kind of workspace - the remembered selection is the only thing it works from.
+   * @returns the status after the attempt.
+   */
+  async recoverCurrentSession() {
+    const selection = this.lastWorkspaceSelection;
+    if (selection === void 0) return this.status();
+    if (this.reconnecting !== void 0) return this.status();
+    const target2 = this.sessionTargetFor(selection.targetDeviceId);
+    const connected = this.connected;
+    if (connected === void 0) {
+      this.reconnecting = { targetDeviceId: selection.targetDeviceId, phase: "fallback" };
+      void this.reconnectRemoteSession(selection.targetDeviceId, target2);
+      return this.status();
+    }
+    if (connected.target.deviceId !== selection.targetDeviceId) return this.status();
+    const probe = await this.probeRemoteFeatures();
+    if (probe.connected === true && probe.error === void 0) {
+      if (target2 !== void 0) await this.restoreSession(target2);
+      return this.status();
+    }
+    if (probe.error === void 0) return this.status();
+    await this.handleRemoteTransportLost(connected.client, connected.target.deviceId, "manual");
+    return this.status();
   }
   /**
    * Shared cleanup for a session whose transport is gone.
@@ -22025,83 +22353,255 @@ var ClientModeRuntime = class {
    * @param client - the client that was connected.
    * @param targetDeviceId - the Host it was bound to.
    */
+  /**
+   * A user's explicit workspace choice supersedes a recovery that is still in flight.
+   *
+   * The retry schedule belongs to the session the user was watching. When they pick another workspace, that
+   * schedule must not land later and move the view again: the reported failure was a Codex ladder restoring its
+   * own workspace over the DSH workspace the user had just opened - "the user's own choice is the only thing
+   * that changes which session is on screen" was broken by a background timer. Only the panel's open endpoints
+   * call this; the recovery restores through the internal open paths, so it never cancels itself.
+   */
+  supersedeRemoteRecovery() {
+    if (this.reconnecting === void 0 && !this.fellBackToLocal) return;
+    this.logger.info("a workspace was opened; stopping the recovery in flight", {
+      phase: this.reconnecting?.phase ?? "fallback"
+    });
+    this.reconnecting = void 0;
+    this.fellBackToLocal = false;
+    this.remoteReconnectRun += 1;
+  }
+  /**
+   * Whether the user still wants the session a recovery is putting back.
+   *
+   * The user's own choice is the record, not a counter: cancelling clears `lastWorkspaceSelection` (and writes
+   * `local` to the target file), and opening another workspace points the selection somewhere else. A recovery is
+   * work the user asked for *earlier*, so it may only adopt its result while that is still what they want. The
+   * reported failure was an attempt that landed after the answer - it reconnected and put the session back on
+   * screen, because nothing re-read the user's intent once the attempt was in flight.
+   * @param targetDeviceId - the Host the recovery is restoring.
+   * @returns true while the remembered target is still that Host.
+   */
+  recoveryStillWanted(targetDeviceId) {
+    if (this.reconnecting === void 0) return false;
+    return this.lastWorkspaceSelection?.targetDeviceId === targetDeviceId;
+  }
+  /**
+   * Undo a recovery the user answered while it was landing: their choice wins over work already in flight.
+   * @param targetDeviceId - the Host the recovery was restoring.
+   */
+  async abandonRecovery(targetDeviceId) {
+    this.logger.info("the user answered while the recovery was landing; returning to the local shell", {
+      targetDeviceId: shortId2(targetDeviceId)
+    });
+    await this.setMode("local");
+  }
   async handleRemoteTransportLost(client, targetDeviceId, reason) {
+    const browsing = this.browsing?.client === client ? this.browsing : void 0;
+    if (browsing !== void 0 && this.connected?.client !== client) {
+      this.browsing = void 0;
+      this.clearConnectionProgress(browsing.progressRunId);
+      this.logger.info("browsing connection closed; the panel will open a new one", {
+        targetDeviceId: shortId2(targetDeviceId),
+        reason
+      });
+      void browsing.client.close().catch(() => void 0);
+      return;
+    }
     if (this.connected?.client !== client) return;
     this.supersededClient = void 0;
     const targetName = this.connected.target.name;
-    if (this.reconnecting === void 0 && await this.quickReconnect(targetDeviceId)) {
-      this.logger.info("remote Harness session kept its view through a quick reconnect", {
-        targetDeviceId: shortId2(targetDeviceId)
+    const target2 = this.sessionTargetFor(targetDeviceId);
+    const kind = target2?.kind ?? "harness";
+    if (target2 === void 0) {
+      this.logger.info("connection closed with no remote session to recover; staying local", {
+        targetDeviceId: shortId2(targetDeviceId),
+        reason
       });
+      const previous = this.connected;
+      this.connected = void 0;
+      this.connectionProgress = void 0;
+      await this.closeCodexStreams(previous?.client);
+      await previous?.client.close().catch(() => void 0);
       return;
     }
+    const transportLost = reason !== "codex-closed";
+    if (this.reconnecting === void 0) {
+      const run = this.remoteReconnectRun;
+      this.reconnecting = { targetDeviceId, ...targetName === void 0 ? {} : { targetName }, phase: "fast" };
+      this.logger.warn("remote session lost; trying the quick window", {
+        targetDeviceId: shortId2(targetDeviceId),
+        kind,
+        reason,
+        attempts: QUICK_RECONNECT_ATTEMPTS,
+        windowMs: QUICK_RECONNECT_WINDOW_MS
+      });
+      const rescued = await this.quickReconnectSession(targetDeviceId, target2, transportLost, run);
+      if (run !== this.remoteReconnectRun) {
+        this.logger.info("the user answered during the quick window; the recovery stops here", {
+          targetDeviceId: shortId2(targetDeviceId),
+          kind
+        });
+        return;
+      }
+      if (rescued) {
+        this.finishRecovery(targetDeviceId, "quick-window", kind);
+        this.logger.info("remote session kept its view through a quick reconnect", {
+          targetDeviceId: shortId2(targetDeviceId),
+          kind
+        });
+        return;
+      }
+    }
+    await this.fallBackToLocalShell(targetDeviceId, targetName, reason, kind, transportLost);
+    void this.reconnectRemoteSession(targetDeviceId, target2);
+  }
+  /**
+   * The quick window: rescue the same session without disturbing the view.
+   *
+   * At most {@link QUICK_RECONNECT_ATTEMPTS} attempts inside {@link QUICK_RECONNECT_WINDOW_MS}, spaced by
+   * {@link QUICK_RECONNECT_RETRY_DELAY_MS}. Nothing here falls back to the local shell or republishes a
+   * workspace - the user keeps looking at the session they were in, and the caller decides what happens once the
+   * window is spent. A lost transport is rebuilt first, over relay only (the one path measured under five
+   * seconds); a Codex-only loss already has its link, so its attempts only rebuild the carrier.
+   * @param targetDeviceId - the Host the session was bound to.
+   * @param target - the session to put back.
+   * @param transportLost - whether the link itself has to be rebuilt.
+   * @param run - the recovery run this window belongs to; the user answering bumps it.
+   * @returns true when the session is on screen again.
+   */
+  async quickReconnectSession(targetDeviceId, target2, transportLost, run) {
+    let linkUp = !transportLost;
+    const deadline = Date.now() + QUICK_RECONNECT_WINDOW_MS;
+    for (let attempt = 1; attempt <= QUICK_RECONNECT_ATTEMPTS; attempt += 1) {
+      if (!this.recoveryStillWanted(targetDeviceId) || run !== this.remoteReconnectRun) return false;
+      if (!linkUp) linkUp = await this.reestablish(targetDeviceId, QUICK_RECONNECT_FORCE_RELAY);
+      if (!this.recoveryStillWanted(targetDeviceId) || run !== this.remoteReconnectRun) return false;
+      if (linkUp && await this.restoreSession(target2, { fallbackToLocal: false })) {
+        if (!this.recoveryStillWanted(targetDeviceId) || run !== this.remoteReconnectRun) {
+          await this.abandonRecovery(targetDeviceId);
+          return false;
+        }
+        return true;
+      }
+      if (attempt === QUICK_RECONNECT_ATTEMPTS) break;
+      const wait2 = Math.min(QUICK_RECONNECT_RETRY_DELAY_MS, Math.max(0, deadline - Date.now()));
+      if (wait2 === 0) break;
+      await sleep3(wait2);
+    }
+    if (!this.recoveryStillWanted(targetDeviceId) || run !== this.remoteReconnectRun) return false;
+    const remaining = deadline - Date.now();
+    if (remaining > 0) await sleep3(remaining);
+    this.reconnecting = void 0;
+    return false;
+  }
+  /**
+   * Hand the session back to the client's own shell.
+   *
+   * Phase two of the ladder, and the same for every kind of loss. A link that broke is closed here; one that is
+   * still up (a Codex-only loss) is kept, because the retry schedule needs it and dropping a healthy link only to
+   * open it again five seconds later is churn the user pays for. Switching the carriers to local is what makes
+   * the view fall back - the point of this step.
+   * @param targetDeviceId - the Host the session was bound to.
+   * @param targetName - its display name, kept for the header while the reconnect runs.
+   * @param reason - why the session was lost, for the log.
+   * @param kind - which carrier was lost.
+   * @param transportLost - whether the link itself is gone.
+   */
+  async fallBackToLocalShell(targetDeviceId, targetName, reason, kind, transportLost) {
     void this.closePreview();
-    this.connected = void 0;
     this.connectionProgress = void 0;
     this.pendingWorkspaceSelection = void 0;
-    void this.closeCodexVirtual();
+    await this.closeCodexVirtual();
     this.proxySwitch?.selectLocal();
     this.gatewaySwitch.selectLocal();
     this.fellBackToLocal = true;
     this.reconnecting = { targetDeviceId, ...targetName === void 0 ? {} : { targetName }, phase: "fallback" };
-    void client.close().catch(() => void 0);
-    this.logger.warn("remote Harness transport lost; reconnecting", {
+    if (transportLost) {
+      const previous = this.connected;
+      this.connected = void 0;
+      await this.closeCodexStreams(previous?.client);
+      void previous?.client.close().catch(() => void 0);
+    }
+    this.logger.warn("remote session lost; falling back to the local shell and retrying", {
       targetDeviceId: shortId2(targetDeviceId),
+      kind,
       reason
     });
-    void this.reconnectRemoteSession(targetDeviceId);
   }
   /**
-   * Re-establish a remote session whose transport closed.
+   * The background retry ladder, shared by every way a session can be recovered.
    *
-   * The UI keeps rendering the remote session after the transport is gone, so
-   * without this the user faces a session that silently ignores everything and has
-   * to exit and pick the Host again — which is what a suspended and resumed client
-   * used to require every time. Retry the same Host with backoff; a loop that is
-   * superseded, or one whose session came back another way, stops quietly.
-   * @param targetDeviceId - the Host the dropped session was bound to.
+   * It runs after the quick window has been spent (the caller has already fallen back to the local shell), or
+   * straight away for a boot restore, which has no window behind it. Every attempt targets the same session; on
+   * success the workspace and the session data are re-read, and when the ladder is spent the reconnect flag is
+   * cleared so the user is simply local. A loop that is superseded, or one whose session came back another way,
+   * stops quietly.
+   * @param targetDeviceId - the Host the lost session was bound to.
+   * @param target - the session to put back.
+   * @param immediateFirstAttempt - true for a boot restore, which should not wait five seconds to start.
    */
-  async reconnectRemoteSession(targetDeviceId) {
+  async reconnectRemoteSession(targetDeviceId, target2 = this.sessionTargetFor(targetDeviceId), immediateFirstAttempt = false) {
     const run = ++this.remoteReconnectRun;
-    const delays = [0, 5e3, 5e3, 1e4, 2e4];
+    const kind = target2?.kind ?? "harness";
+    if (target2 === void 0) {
+      this.reconnecting = void 0;
+      this.fellBackToLocal = false;
+      this.logger.info("no remote session to restore; staying in the local shell", {
+        targetDeviceId: shortId2(targetDeviceId)
+      });
+      return;
+    }
+    const delays = immediateFirstAttempt ? [0, ...BACKGROUND_RETRY_DELAYS_MS] : BACKGROUND_RETRY_DELAYS_MS;
     let attempt = 0;
     for (; ; ) {
-      if (attempt - delays.length >= FALLBACK_STEADY_ATTEMPTS) {
+      if (attempt >= delays.length) {
         this.reconnecting = void 0;
-        this.logger.warn("remote Harness reconnect gave up; staying in the local shell", {
+        this.logger.warn("remote session recovery gave up; staying in the local shell", {
           targetDeviceId: shortId2(targetDeviceId),
+          kind,
           attempts: attempt
         });
         return;
       }
-      const wait2 = delays[attempt] ?? 3e4;
-      if (wait2 > 0) await new Promise((resolve4) => {
-        setTimeout(resolve4, wait2);
-      });
+      const wait2 = delays[attempt] ?? BACKGROUND_RETRY_DELAYS_MS[BACKGROUND_RETRY_DELAYS_MS.length - 1];
+      if (wait2 > 0) await sleep3(wait2);
       attempt += 1;
       if (run !== this.remoteReconnectRun) return;
-      if (this.connected !== void 0) return;
+      const reconnecting = this.reconnecting;
+      if (reconnecting === void 0) return;
       try {
-        await this.setMode("remote", targetDeviceId);
-        this.restoreWorkspaceSelection(targetDeviceId);
-        this.logger.info("remote Harness session reconnected", { targetDeviceId: shortId2(targetDeviceId) });
+        if (this.connected?.target.deviceId !== targetDeviceId) {
+          await this.setMode("remote", targetDeviceId);
+          this.reconnecting = reconnecting;
+        }
+        if (target2 !== void 0 && !await this.restoreSession(target2)) continue;
+        if (!this.recoveryStillWanted(targetDeviceId)) {
+          await this.abandonRecovery(targetDeviceId);
+          return;
+        }
+        this.finishRecovery(targetDeviceId, "retry-schedule", kind);
         return;
       } catch (error) {
-        const code = safeErrorCode(error);
-        if (code !== void 0 && CREDENTIAL_FAILURE_CODES.has(code)) {
-          this.logger.warn("remote Harness reconnect stopped: authorization is required", {
+        const code = failureCode(error);
+        if (CREDENTIAL_FAILURE_CODES.has(code)) {
+          this.reconnecting = void 0;
+          this.logger.warn("remote session recovery stopped: authorization is required", {
             targetDeviceId: shortId2(targetDeviceId),
+            kind,
             code
           });
-          this.reconnecting = void 0;
           return;
         }
         if (attempt < 3 || attempt % 10 === 0) {
-          this.logger.warn("remote Harness reconnect attempt failed", {
+          const detail = connectionFailureDetail(error);
+          const systemCode = typeof detail.systemCode === "string" ? detail.systemCode : void 0;
+          this.logger.warn("remote session recovery attempt failed", {
             targetDeviceId: shortId2(targetDeviceId),
+            kind,
             attempt,
-            code,
-            ...connectionFailureDetail(error)
+            code: systemCode ?? code,
+            ...detail
           });
         }
       }
@@ -22117,10 +22617,19 @@ var ClientModeRuntime = class {
    */
   async rememberTarget(target2) {
     if (this.targetStore === void 0) return;
+    const selection = target2.mode === "remote" && target2.hostDeviceId !== void 0 ? this.sessionTargetFor(target2.hostDeviceId) : void 0;
     try {
       await this.targetStore.save({
         ...target2,
-        ...this.config.serverUrl === void 0 ? {} : { serverUrl: this.config.serverUrl }
+        ...this.config.serverUrl === void 0 ? {} : { serverUrl: this.config.serverUrl },
+        ...selection === void 0 ? {} : {
+          workspace: {
+            workspaceId: selection.workspaceId,
+            kind: selection.kind,
+            ...selection.workspacePath === void 0 ? {} : { workspacePath: selection.workspacePath },
+            ...selection.sessionId === void 0 ? {} : { sessionId: selection.sessionId }
+          }
+        }
       });
     } catch (error) {
       this.logger.warn("could not record the remote target", { code: safeErrorCode(error) });
@@ -22146,19 +22655,33 @@ var ClientModeRuntime = class {
       });
       return false;
     }
+    if (record7.workspace === void 0) {
+      this.logger.info("the recorded target has no workspace; staying in the local shell", {
+        targetDeviceId: shortId2(record7.hostDeviceId)
+      });
+      return false;
+    }
     this.reconnecting = {
       targetDeviceId: record7.hostDeviceId,
       ...record7.hostName === void 0 ? {} : { targetName: record7.hostName },
       phase: "restore"
     };
+    this.lastWorkspaceSelection = {
+      targetDeviceId: record7.hostDeviceId,
+      workspaceId: record7.workspace.workspaceId,
+      ...record7.workspace.kind === "codex" ? { backend: "codex" } : {},
+      ...record7.workspace.workspacePath === void 0 ? {} : { workspacePath: record7.workspace.workspacePath },
+      ...record7.workspace.sessionId === void 0 ? {} : { sessionId: record7.workspace.sessionId }
+    };
     this.logger.info("restoring the remote target of the previous run", {
-      targetDeviceId: shortId2(record7.hostDeviceId)
+      targetDeviceId: shortId2(record7.hostDeviceId),
+      kind: record7.workspace.kind
     });
-    void this.reconnectRemoteSession(record7.hostDeviceId);
+    void this.reconnectRemoteSession(record7.hostDeviceId, this.sessionTargetFor(record7.hostDeviceId), true);
     return true;
   }
   async listRemoteDirectory(targetDeviceId, path, signal) {
-    const remote = await this.ensureConnected(targetDeviceId, signal);
+    const remote = await this.ensureBrowsing(targetDeviceId, signal);
     if (remote.features.remoteGateway) {
       const value = await new RemoteTypertGateway2(remote.client).invoke({
         namespace: "directoryPicker",
@@ -22176,7 +22699,7 @@ var ClientModeRuntime = class {
     return unwrapNativeResult(response);
   }
   async listRemoteWorkspaces(targetDeviceId, signal) {
-    const remote = await this.ensureConnected(targetDeviceId, signal);
+    const remote = await this.ensureBrowsing(targetDeviceId, signal);
     if (remote.features.remoteGateway) {
       return readRemoteWorkspaceBaseline(new RemoteTypertGateway2(remote.client), signal);
     }
@@ -22215,31 +22738,108 @@ var ClientModeRuntime = class {
     this.logger.info("Remote workspace opened", { targetDeviceId: shortId2(remote.target.deviceId) });
     return { ...this.status(), workspace };
   }
+  /**
+   * The refusal to report when a Host is not offering Codex right now.
+   *
+   * Two different facts hid behind one generic code, so the panel could not tell a user who had switched Codex
+   * off from a Host that never had it. Which one it is comes from this client's own memory: a Host whose Codex
+   * workspace was opened before has Codex, so its absence now means it was switched off (or is still starting);
+   * a Host that never offered one simply does not provide it.
+   *
+   * A Codex that disappeared is also a lost session, so this hands it to the same recovery every other loss
+   * uses before reporting it - a switched-off Codex that is switched back on is then restored on its own.
+   * @param targetDeviceId - the Host the caller was talking to.
+   * @returns the error to throw.
+   */
+  remoteCodexUnavailable(targetDeviceId) {
+    const expected = shouldRestoreCodexCarrier(this.lastWorkspaceSelection, targetDeviceId) || this.codexHostsSeen.has(targetDeviceId);
+    if (expected) this.noteCodexSessionLost("capability-missing");
+    return expected ? new ClientModeError("CODEX_DISABLED", "Codex is switched off or unavailable on the selected Host.") : new ClientModeError("CODEX_NOT_PROVIDED", "The selected Host does not provide CodeX workspaces.");
+  }
   async listCodexWorkspaces(targetDeviceId, signal) {
-    const remote = await this.ensureConnected(targetDeviceId, signal);
+    const remote = await this.ensureBrowsing(targetDeviceId, signal);
     remote.features = await probeRemoteHostFeatures(remote.client, remote.clientVersion);
     if (!remote.features.codex) {
-      throw new ClientModeError("FEATURE_NOT_SUPPORTED", "The selected Host does not provide CodeX workspaces.");
+      throw this.remoteCodexUnavailable(targetDeviceId);
     }
-    return discoverCodexVirtualWorkspaces(new CodexRemoteClient(remote.client), signal);
+    let workspaces;
+    try {
+      workspaces = await discoverCodexVirtualWorkspaces(new CodexRemoteClient(remote.client), signal);
+    } catch (error) {
+      this.logger.warn("Codex workspaces could not be listed", {
+        targetDeviceId: shortId2(targetDeviceId),
+        code: failureCode(error)
+      });
+      if (isCodexSessionLoss(error)) this.noteCodexSessionLost("list-failed");
+      throw error;
+    }
+    this.lastCodexListing.set(targetDeviceId, workspaces);
+    for (const item of workspaces) {
+      this.codexWorkspaceRoots.set(`${targetDeviceId}|${item.workspaceId}`, item.path);
+    }
+    this.logger.info("Codex workspaces listed", {
+      targetDeviceId: shortId2(targetDeviceId),
+      count: workspaces.length
+    });
+    return workspaces;
   }
   async openCodexWorkspace(targetDeviceId, workspaceId, signal) {
     const remote = await this.ensureConnected(targetDeviceId, signal);
     remote.features = await probeRemoteHostFeatures(remote.client, remote.clientVersion);
     if (!remote.features.codex) {
-      throw new ClientModeError("FEATURE_NOT_SUPPORTED", "The selected Host does not provide CodeX workspaces.");
+      throw this.remoteCodexUnavailable(targetDeviceId);
     }
     this.assertLocalHarnessCarrierAvailable();
     const virtual = CodexVirtualHarness.remote(remote.client, {
       deviceId: remote.target.deviceId,
       name: remote.target.name
     }, harnessSessionGeneration(this.host?.localHarnessVersion?.()), new RemoteTypertGateway2(remote.client));
+    virtual.watchCodexSessionLost((trigger) => this.noteCodexSessionLost(trigger));
     let workspace;
     try {
       workspace = await virtual.selectWorkspace(workspaceId, signal);
-    } catch {
+    } catch (error) {
+      const code = safeErrorCode(error);
+      const listed = this.lastCodexListing.get(targetDeviceId);
+      const previousRoot = listed?.find((item) => item.workspaceId === workspaceId)?.path ?? this.codexWorkspaceRoots.get(`${targetDeviceId}|${workspaceId}`) ?? this.lastWorkspaceSelection?.workspacePath;
+      const inListing = listed?.some((item) => item.workspaceId === workspaceId) ?? false;
+      if (previousRoot !== void 0) {
+        const byRoot = await virtual.selectWorkspace(workspaceId, signal, previousRoot).catch(() => void 0);
+        if (byRoot !== void 0) {
+          this.logger.info("CodeX workspace opened by root after the id missed", {
+            targetDeviceId: shortId2(targetDeviceId),
+            path: previousRoot
+          });
+          await virtual.close();
+          return this.openCodexWorkspace(targetDeviceId, byRoot.workspaceId, signal);
+        }
+      }
       await virtual.close();
-      throw new ClientModeError("WORKSPACE_NOT_FOUND", "The selected CodeX workspace is no longer available.");
+      let currentId;
+      if (previousRoot !== void 0) {
+        currentId = await this.codexWorkspaceIdForPath(targetDeviceId, previousRoot).catch(() => void 0);
+      }
+      if (currentId !== void 0 && currentId !== workspaceId) {
+        this.logger.info("CodeX workspace reopened under a new id", {
+          targetDeviceId: shortId2(targetDeviceId),
+          path: previousRoot
+        });
+        return this.openCodexWorkspace(targetDeviceId, currentId, signal);
+      }
+      const currentListing = this.lastCodexListing.get(targetDeviceId) ?? [];
+      this.logger.warn("selected CodeX workspace could not be opened", {
+        targetDeviceId: shortId2(targetDeviceId),
+        code,
+        inListing,
+        hasRoot: previousRoot !== void 0,
+        roots: [...this.codexWorkspaceRoots.keys()].filter((key) => key.startsWith(`${targetDeviceId}|`)).length,
+        listed: listed?.length ?? -1,
+        // What was asked for against what the Host currently offers, so the next report needs no second round trip.
+        wanted: workspaceId.slice(0, 60),
+        root: previousRoot === void 0 ? "(none)" : previousRoot,
+        current: currentListing.slice(0, 5).map((item) => item.workspaceId + "@" + item.path).join(", ")
+      });
+      throw error instanceof ClientModeError ? error : new ClientModeError("WORKSPACE_NOT_FOUND", "The selected CodeX workspace is no longer available.");
     }
     await this.closeCodexVirtual();
     this.codexVirtual = virtual;
@@ -22249,25 +22849,37 @@ var ClientModeRuntime = class {
       targetDeviceId: remote.target.deviceId,
       workspaceId,
       backend: "codex",
+      ...workspace.path === void 0 ? {} : { workspacePath: workspace.path },
       ...preferredSessionId === void 0 ? {} : { sessionId: preferredSessionId }
     });
+    this.codexHostsSeen.add(remote.target.deviceId);
     this.logger.info("CodeX virtual workspace opened", { targetDeviceId: shortId2(remote.target.deviceId) });
     return { ...this.status(), workspace };
   }
   async createCodexWorkspace(targetDeviceId, path, signal) {
     const trimmedPath = path.trim();
     if (trimmedPath === "") throw new ClientModeError("INVALID_MESSAGE", "A CodeX project directory is required.");
-    const remote = await this.ensureConnected(targetDeviceId, signal);
+    const remote = await this.ensureBrowsing(targetDeviceId, signal);
     remote.features = await probeRemoteHostFeatures(remote.client, remote.clientVersion);
     if (!remote.features.codex) {
-      throw new ClientModeError("FEATURE_NOT_SUPPORTED", "The selected Host does not provide CodeX workspaces.");
+      throw this.remoteCodexUnavailable(targetDeviceId);
     }
     this.assertLocalHarnessCarrierAvailable();
-    const result = record4(await new CodexRemoteClient(remote.client).request("project/create", {
-      name: remoteWorkspaceTitle(trimmedPath),
-      roots: [{ path: trimmedPath }],
-      idempotencyKey: uuidV7()
-    }, signal));
+    let result;
+    try {
+      result = record4(await new CodexRemoteClient(remote.client).request("project/create", {
+        name: remoteWorkspaceTitle(trimmedPath),
+        roots: [{ path: trimmedPath }],
+        idempotencyKey: uuidV7()
+      }, signal));
+    } catch (error) {
+      this.logger.warn("CodeX project could not be registered", {
+        targetDeviceId: shortId2(targetDeviceId),
+        code: failureCode(error)
+      });
+      if (isCodexSessionLoss(error)) this.noteCodexSessionLost("project-create-failed");
+      throw error;
+    }
     const project = record4(result.project);
     if (typeof project.id !== "string" || project.id.length === 0) {
       throw new ClientModeError("INVALID_MESSAGE", "The Host returned an invalid CodeX project.");
@@ -22291,6 +22903,7 @@ var ClientModeRuntime = class {
     this.gatewaySwitch.selectLocal();
     this.pendingWorkspaceSelection = void 0;
     await this.closeCodexVirtual();
+    this.closeBrowsing();
     await this.closeCodexStreams(this.connected?.client);
     await this.connected?.client.close().catch(() => void 0);
     this.connected = void 0;
@@ -22371,6 +22984,7 @@ var ClientModeRuntime = class {
     return { opened: true, streamId: value.streamId, threadId: value.threadId };
   }
   publishLocalCodexFrame = async (event, data2) => {
+    if (event === "codex.app.capability") return;
     const streamId = data2.streamId;
     const stream = this.codexStreams.get(streamId);
     if (stream === void 0 || stream.target.kind !== "local") return;
@@ -22501,6 +23115,29 @@ var ClientModeRuntime = class {
       "This Client does not provide a compatible Harness carrier for the selected remote workspace."
     );
   }
+  /**
+   * Connect, and report the control switch when that is what refused us.
+   *
+   * A device whose control switch is off has its host connection refused by the Server. Its presence may still read
+   * online, so the failure comes back from whichever transport step gave up first - "adaptive transport has not been
+   * authorized", "the authenticated Noise channel is not connected", "the selected Host is offline" - and none of
+   * them name the switch. The device row does, so a failed attempt is re-read against it; an error that already names
+   * a cause is passed through untouched.
+   * @param targetDeviceId - the Host being connected to.
+   * @param signal - aborts the attempt.
+   * @param forceRelay - skips direct negotiation, as the reconnect window does.
+   * @returns the connected remote session.
+   */
+  async connectWithReason(targetDeviceId, signal, forceRelay = false) {
+    try {
+      return await this.connect(targetDeviceId, signal, forceRelay);
+    } catch (error) {
+      if (safeErrorCode(error) === "CONTROL_DISABLED") throw error;
+      const row = await this.server.listDevices().then((list) => list.find((device) => device.deviceId === targetDeviceId)).catch(() => void 0);
+      if (row?.hostControl === false) throw offlineConnectionError(false);
+      throw error;
+    }
+  }
   async connect(targetDeviceId, signal, forceRelay = false) {
     signal?.throwIfAborted();
     const progressRunId = this.connectionProgressRun + 1;
@@ -22516,7 +23153,7 @@ var ClientModeRuntime = class {
       this.updateConnectionProgress(progressRunId, "authorizing-peer");
       const target2 = await this.authorizeHostPeer(serverDevice);
       const presence = await this.server.presenceFor(targetDeviceId);
-      if (!presence.online) throw new ClientModeError("HOST_OFFLINE", "The selected Host is offline.", true);
+      if (!presence.online) throw offlineConnectionError(serverDevice.hostControl);
       const credentials = await this.server.authenticate(identity);
       const rtcFactory = this.config.forceRelay ? void 0 : await this.rtcFactoryProvider({ routeTargets: [this.server.baseUrl] }).catch(() => void 0);
       if (!this.config.forceRelay && rtcFactory === void 0) {
@@ -22629,13 +23266,56 @@ var ClientModeRuntime = class {
       throw error;
     }
   }
+  /**
+   * Connect for a read-only panel request.
+   *
+   * Browsing a Host is not a session. This connection never becomes {@link connected}, so a later drop is
+   * ignored by the recovery path and the window stays where the user left it. The session's own link is
+   * reused when it already points at that Host, because the Server keeps only one control connection per
+   * device and role.
+   * @param targetDeviceId - the Host being browsed.
+   * @param signal - aborts the connection attempt.
+   * @returns the connection to read through.
+   */
+  async ensureBrowsing(targetDeviceId, signal) {
+    if (this.connected?.target.deviceId === targetDeviceId) return this.connected;
+    if (this.browsing?.target.deviceId === targetDeviceId) return this.browsing;
+    const next = await this.connectWithReason(targetDeviceId, signal);
+    const previous = this.browsing;
+    this.browsing = next;
+    this.clearConnectionProgress(next.progressRunId);
+    await previous?.client.close().catch(() => void 0);
+    return next;
+  }
+  /**
+   * Drop the panel's browsing connection.
+   *
+   * Called whenever the user's own decision makes the browse stale: returning to local, signing out, or
+   * opening a session somewhere else. A browsing connection is never kept for later.
+   * @param except - a browsing connection to keep (the one just promoted to a session).
+   */
+  closeBrowsing(except) {
+    const browsing = this.browsing;
+    if (browsing === void 0 || browsing === except) return;
+    this.browsing = void 0;
+    void browsing.client.close().catch(() => void 0);
+  }
   async ensureConnected(targetDeviceId, signal) {
     if (this.connected?.target.deviceId === targetDeviceId) return this.connected;
-    const next = await this.connect(targetDeviceId, signal);
     const previous = this.connected;
+    if (this.browsing?.target.deviceId === targetDeviceId) {
+      const next2 = this.browsing;
+      this.browsing = void 0;
+      await this.closePreview();
+      this.connected = next2;
+      await previous?.client.close().catch(() => void 0);
+      return next2;
+    }
+    const next = await this.connectWithReason(targetDeviceId, signal);
     await this.closePreview();
     this.connected = next;
     this.clearConnectionProgress(next.progressRunId);
+    this.closeBrowsing();
     await previous?.client.close().catch(() => void 0);
     return next;
   }
@@ -22668,6 +23348,12 @@ var ClientModeRuntime = class {
     try {
       if (endpoint === "status") return ok2(await this.detailedStatus());
       if (endpoint === "client.connection.verify") return ok2(await this.verifyRemoteConnection());
+      if (endpoint === "remote.features.probe") return ok2(await this.probeRemoteFeatures());
+      if (endpoint === "remote.session.recover") return ok2(await this.recoverCurrentSession());
+      if (endpoint === "client.device.revoke") {
+        await this.revokeCurrentDevice();
+        return ok2(this.status());
+      }
       if (endpoint === "devices") return ok2(await this.devices());
       if (endpoint === "client.account.login") {
         const value = record4(payload);
@@ -22721,6 +23407,7 @@ var ClientModeRuntime = class {
         if (typeof value.targetDeviceId !== "string" || typeof value.path !== "string") {
           throw new ClientModeError("INVALID_MESSAGE", "A Host and working directory are required.");
         }
+        this.supersedeRemoteRecovery();
         return ok2(await this.openRemoteWorkspace(value.targetDeviceId, value.path, signal));
       }
       if (endpoint === "codex.workspace.open") {
@@ -22728,6 +23415,7 @@ var ClientModeRuntime = class {
         if (typeof value.targetDeviceId !== "string" || typeof value.workspaceId !== "string") {
           throw new ClientModeError("INVALID_MESSAGE", "A Host and CodeX Workspace are required.");
         }
+        this.supersedeRemoteRecovery();
         return ok2(await this.openCodexWorkspace(value.targetDeviceId, value.workspaceId, signal));
       }
       if (endpoint === "codex.workspace.create") {
@@ -22843,6 +23531,21 @@ var ClientModeRuntime = class {
     });
   }
 };
+function offlineConnectionError(hostControl) {
+  return hostControl === false ? new ClientModeError(
+    "CONTROL_DISABLED",
+    'This device is not accepting control. Turn on "Allow other users to control this device" on that device.',
+    true
+  ) : new ClientModeError("HOST_OFFLINE", "The selected Host is offline.", true);
+}
+function isCodexSessionLoss(error) {
+  const own = error !== null && typeof error === "object" && "code" in error ? error.code : void 0;
+  const code = typeof own === "string" ? own : safeErrorCode(error);
+  return code === "CODEX_CONNECTION_CLOSED" || code === "CODEX_CLOSED" || code === "CODEX_UNAVAILABLE";
+}
+function shouldRestoreCodexCarrier(selection, targetDeviceId) {
+  return selection !== void 0 && selection.targetDeviceId === targetDeviceId && selection.backend === "codex";
+}
 var ClientModeError = class extends Error {
   constructor(code, message, retryable = false) {
     super(message);
@@ -22851,7 +23554,7 @@ var ClientModeError = class extends Error {
   }
 };
 function assertAuthorizedHost(listed, descriptor) {
-  if (descriptor.role !== "host" || descriptor.deviceId !== listed.deviceId || descriptor.membershipId !== listed.membershipId) {
+  if (descriptor.deviceId !== listed.deviceId || descriptor.membershipId !== listed.membershipId) {
     throw new ClientModeError("PEER_IDENTITY_MISMATCH", "Server Host details do not match the authorized device list.");
   }
 }
@@ -22956,6 +23659,15 @@ function fail2(error) {
 }
 function shortId2(value) {
   return value.length <= 12 ? value : `${value.slice(0, 8)}\u2026${value.slice(-4)}`;
+}
+function failureCode(error) {
+  const own = error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : void 0;
+  return own ?? safeErrorCode(error);
+}
+function sleep3(ms) {
+  return new Promise((resolve4) => {
+    setTimeout(resolve4, ms);
+  });
 }
 function remoteHostFeatures(clientVersion) {
   return {
@@ -23090,12 +23802,14 @@ var ClientTargetStore = class {
       if (record7.mode === "remote" && (typeof record7.hostDeviceId !== "string" || record7.hostDeviceId.length === 0)) {
         return void 0;
       }
+      const workspace = parseWorkspace(record7.workspace);
       return {
         schemaVersion: 1,
         mode: record7.mode,
         ...typeof record7.serverUrl === "string" && record7.serverUrl.length > 0 ? { serverUrl: record7.serverUrl } : {},
         ...typeof record7.hostDeviceId === "string" && record7.hostDeviceId.length > 0 ? { hostDeviceId: record7.hostDeviceId } : {},
         ...typeof record7.hostName === "string" && record7.hostName.length > 0 ? { hostName: record7.hostName } : {},
+        ...workspace === void 0 ? {} : { workspace },
         savedAt: typeof record7.savedAt === "number" ? record7.savedAt : 0
       };
     } catch {
@@ -23104,12 +23818,14 @@ var ClientTargetStore = class {
   }
   /** Record the current target. Failures reach the caller so a boot can log them. */
   async save(target2) {
+    const workspace = parseWorkspace(target2.workspace);
     const value = {
       schemaVersion: 1,
       mode: target2.mode,
       ...target2.serverUrl === void 0 ? {} : { serverUrl: target2.serverUrl },
       ...target2.hostDeviceId === void 0 ? {} : { hostDeviceId: target2.hostDeviceId },
       ...target2.hostName === void 0 ? {} : { hostName: target2.hostName },
+      ...workspace === void 0 ? {} : { workspace },
       savedAt: Date.now()
     };
     await mkdir2(this.directory, { recursive: true, mode: 448 });
@@ -23121,15 +23837,28 @@ var ClientTargetStore = class {
     await chmod2(this.file, 384);
   }
 };
+function parseWorkspace(value) {
+  if (typeof value !== "object" || value === null) return void 0;
+  const record7 = value;
+  if (typeof record7.workspaceId !== "string" || record7.workspaceId.length === 0) return void 0;
+  if (record7.kind !== "harness" && record7.kind !== "codex") return void 0;
+  return {
+    workspaceId: record7.workspaceId,
+    kind: record7.kind,
+    ...typeof record7.workspacePath === "string" && record7.workspacePath.length > 0 ? { workspacePath: record7.workspacePath } : {},
+    ...typeof record7.sessionId === "string" && record7.sessionId.length > 0 ? { sessionId: record7.sessionId } : {}
+  };
+}
 
 // src/control-runtime.ts
 import { hostname as hostname2 } from "node:os";
-import { existsSync as existsSync3 } from "node:fs";
+import { existsSync as existsSync4 } from "node:fs";
 import { execFileSync } from "node:child_process";
 
 // src/identity-store.ts
+import { existsSync as existsSync2 } from "node:fs";
 import { createHash } from "node:crypto";
-import { chmod as chmod3, mkdir as mkdir3, readFile as readFile4, rm as rm3, stat as stat3, writeFile as writeFile3 } from "node:fs/promises";
+import { chmod as chmod3, cp, mkdir as mkdir3, readFile as readFile4, rm as rm3, stat as stat3, writeFile as writeFile3 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname as dirname4, join as join6 } from "node:path";
 var identitySchema = external_exports.object({
@@ -23262,6 +23991,19 @@ function serverStorageDirectory(root, serverUrl, role) {
   const origin = new URL(serverUrl).origin;
   const scope = createHash("sha256").update(origin).digest("hex").slice(0, 24);
   return join6(root, "servers", scope, role);
+}
+async function ensureDeviceDirectory(root, serverUrl) {
+  const directory = serverStorageDirectory(root, serverUrl, "device");
+  if (existsSync2(directory)) return directory;
+  await mkdir3(dirname4(directory), { recursive: true, mode: 448 });
+  for (const legacy of ["host", "client"]) {
+    const from = serverStorageDirectory(root, serverUrl, legacy);
+    if (!existsSync2(from)) continue;
+    await cp(from, directory, { recursive: true });
+    return directory;
+  }
+  await mkdir3(directory, { recursive: true, mode: 448 });
+  return directory;
 }
 function fingerprint(publicKey) {
   const compact = createHash("sha256").update(fromBase64Url2(publicKey)).digest("hex").slice(0, 12).toUpperCase();
@@ -23449,7 +24191,7 @@ var ControlStatusStream = class {
 
 // src/codex/domain.ts
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { accessSync, constants, existsSync as existsSync2, readFileSync, readdirSync as readdirSync2, statSync as statSync2 } from "node:fs";
+import { accessSync, constants, existsSync as existsSync3, readFileSync, readdirSync as readdirSync2, statSync as statSync2 } from "node:fs";
 import { readdir as readdir2, realpath, stat as stat4 } from "node:fs/promises";
 import { homedir as homedir2 } from "node:os";
 import { basename as basename2, isAbsolute as isAbsolute2, join as join7, posix, relative, resolve } from "node:path";
@@ -23646,7 +24388,11 @@ var CodexAppServerClient = class {
       const pending = this.takePending(value.id);
       if (pending === void 0) return;
       if ("error" in value && value.error !== void 0) {
-        pending.reject(new CodexAppServerError("CODEX_UPSTREAM_ERROR", safeUpstreamError(value.error)));
+        const upstreamCode = safeUpstreamCode(value.error);
+        pending.reject(Object.assign(
+          new CodexAppServerError("CODEX_UPSTREAM_ERROR", safeUpstreamError(value.error)),
+          upstreamCode === void 0 ? {} : { upstreamCode }
+        ));
       } else {
         pending.resolve(value.result);
       }
@@ -23663,7 +24409,13 @@ var CodexAppServerClient = class {
     const child = this.process;
     this.process = void 0;
     child?.kill("SIGTERM");
-    this.logger?.warn("Codex App Server communication failed", { code });
+    const failure2 = cause;
+    this.logger?.warn("Codex App Server communication failed", {
+      code,
+      causeCode: failure2.code ?? "none",
+      ...failure2.errno === void 0 ? {} : { errno: failure2.errno },
+      ...failure2.syscall === void 0 ? {} : { syscall: failure2.syscall }
+    });
     if (!this.closed) this.notifyUnavailable(code);
   }
   notifyUnavailable(code) {
@@ -23687,6 +24439,13 @@ function safeUpstreamError(value) {
   const message = value.message.toLowerCase();
   if (message.includes("active writer")) return "Codex thread already has an active writer.";
   return message.includes("not initialized") ? "Codex App Server is not initialized." : "Codex App Server rejected the request.";
+}
+function safeUpstreamCode(value) {
+  if (!isRecord10(value)) return void 0;
+  const raw = isRecord10(value.data) && value.data.code !== void 0 ? value.data.code : value.code;
+  if (typeof raw === "number" && Number.isFinite(raw)) return String(raw);
+  if (typeof raw !== "string") return void 0;
+  return /^[A-Za-z0-9_.:-]{1,48}$/u.test(raw) ? raw : void 0;
 }
 function isRecord10(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -23901,6 +24660,19 @@ var CodexPeerBridge = class {
       await this.publish("codex.app.frame", data2);
     }
   }
+  /**
+   * Tell this connection whether the Host can serve Codex, and say it only when that actually changed.
+   *
+   * The per-stream closes below only reach a client that is watching a thread. A session parked on its history,
+   * or a workspace with nothing open, heard nothing until its next call failed - which is why switching Codex
+   * off looked like a plain error instead of a lost session. This states the fact rather than the conclusion, so
+   * the client can decide whether the session it is showing is the one affected.
+   * @param available - whether Codex can be served right now.
+   */
+  async notifyCapability(available) {
+    if (this.closed) return;
+    await this.publish("codex.app.capability", { available }).catch(() => void 0);
+  }
   async failStreams(reason = "failed") {
     if (this.closed) return;
     const streamIds = [...this.streams.keys()];
@@ -23971,7 +24743,9 @@ function concatChunks(chunks, totalBytes) {
 // src/codex/domain.ts
 var APPROVAL_TTL_MS = 5 * 6e4;
 var DEFAULT_RESTART_DELAYS_MS = [1e3, 2e3, 4e3, 8e3, 15e3];
-var CODEX_START_BUDGET_MS = 5e3;
+var CODEX_SLOW_RETRY_MS = 6e4;
+var ACCOUNT_PROBE_TIMEOUT_MS = 6e4;
+var CODEX_START_BUDGET_MS = 9e4;
 var CODEX_PAGE_LIMIT2 = 100;
 var MAX_CODEX_PAGES2 = 32;
 var CODEX_HISTORY_PAGE_LIMIT = 25;
@@ -23979,10 +24753,10 @@ var MAX_CODEX_HISTORY_PAGES = 64;
 var CODEX_DIRECTORY_ENTRY_LIMIT = 500;
 var CodexRemoteDomain = class {
   constructor(config, logger, createAppServer = (binary, targetLogger) => new CodexAppServerClient(binary, targetLogger), restartDelaysMs = DEFAULT_RESTART_DELAYS_MS) {
-    this.config = config;
     this.logger = logger;
     this.createAppServer = createAppServer;
     this.restartDelaysMs = restartDelaysMs;
+    this.config = config;
   }
   appServer;
   unsubscribeInbound;
@@ -23995,10 +24769,30 @@ var CodexRemoteDomain = class {
   approvalExpiryTimer;
   restartTimer;
   restartAttempt = 0;
+  /** Whether the "fast ladder is spent, retrying slowly" line has been logged for this outage. */
+  slowRestartLogged = false;
   available = false;
   closed = false;
+  /**
+   * The last availability announced to peers, or undefined before the first announcement.
+   *
+   * Announcements are transitions, not states: the Host tells clients *when* Codex came or went, never "your
+   * session is gone". Announcing on every restart made switching Codex **on** read as a loss, and the client
+   * answered a loss with a fresh recovery - which pulled back a view the user had just cancelled.
+   */
+  announcedAvailable;
+  /**
+   * Bumped by every restart() and close().
+   *
+   * A launch that began before the switch was flipped can finish after it, and its completion used to write
+   * `available = true` onto a Codex the user had switched off - which made the next "switch on" look like a
+   * transition out of availability and produced the false loss notice. Work from an older generation is discarded.
+   */
+  generation = 0;
   state = "disabled";
   unavailableCode;
+  /** The live configuration; replaced in place by {@link restart}. */
+  config;
   async start() {
     if (this.closed) throw new RpcError("CODEX_CLOSED", "The Codex Remote domain is closed.");
     if (!this.config.enabled) return;
@@ -24040,6 +24834,10 @@ var CodexRemoteDomain = class {
   }
   createPeer(context, publish) {
     if (!this.config.enabled) return void 0;
+    this.logger.info("Codex client attached", {
+      peerDeviceId: context.peerDeviceId.slice(0, 12),
+      connectionId: context.connectionId.slice(0, 12)
+    });
     const bridge = new CodexPeerBridge(this, context, publish, this.logger);
     this.peers.set(context.connectionId, bridge);
     this.peerDeviceIds.set(context.connectionId, context.peerDeviceId);
@@ -24216,13 +25014,79 @@ var CodexRemoteDomain = class {
   async close() {
     if (this.closed) return;
     this.closed = true;
-    this.available = false;
+    this.generation += 1;
+    await this.teardown();
     this.state = this.config.enabled ? "unavailable" : "disabled";
-    if (this.restartTimer !== void 0) clearTimeout(this.restartTimer);
-    this.restartTimer = void 0;
+  }
+  /**
+   * State the Codex capability to every attached connection - and only when it actually changed.
+   *
+   * This is the fact, not the conclusion: an unavailable Codex means "the session you are watching is gone" to a
+   * client that is watching one, and means nothing to a client that is not. Sending it only on a real transition
+   * is what keeps "switch Codex on" from being reported as a loss.
+   * @returns when every attached connection has been told.
+   */
+  async announceCapability() {
+    const available = this.isAvailable();
+    if (this.announcedAvailable === void 0) {
+      this.announcedAvailable = available;
+      return;
+    }
+    if (available === this.announcedAvailable) return;
+    this.announcedAvailable = available;
+    this.logger.info("Codex capability changed; telling every attached connection", { available });
+    await Promise.all([...this.peers.values()].map((peer) => peer.notifyCapability(available).catch(() => void 0)));
+  }
+  /**
+   * Apply a changed configuration without restarting DSH.
+   *
+   * Deliberately not close()+start(): close() is terminal, so that pair left the domain dead for the rest of the
+   * process (the bug behind "the switch never comes back"). This shares close()'s teardown without setting the
+   * terminal flag, and a disabled configuration simply stops - no launch, state `disabled`.
+   *
+   * The per-connection bridges are deliberately *kept*. They are the attached Remote clients' only handle on
+   * this Host's Codex, and tearing them down here is what left every one of them holding a closed bridge:
+   * the reported "The Codex connection is closed" that no refresh could clear, because nothing short of a full
+   * transport reconnect could get a working bridge again. Everything the App Server owns - live streams, turn
+   * leases, approvals, permission snapshots - is released instead, which is exactly what a crash already did.
+   * @param config - the configuration to apply, when the caller changed it.
+   * @returns when the replacement attempt finished.
+   */
+  async restart(config) {
+    if (this.closed) throw new RpcError("CODEX_CLOSED", "The Codex Remote domain is closed.");
+    if (config !== void 0) this.config = config;
+    this.generation += 1;
+    const peers = [...this.peers.values()];
+    await Promise.all(peers.map((peer) => peer.failStreams("failed")));
+    await this.launching?.catch(() => void 0);
+    await this.releaseAppServer();
+    if (!this.config.enabled) await this.announceCapability();
+    this.unavailableCode = void 0;
+    this.restartAttempt = 0;
+    this.slowRestartLogged = false;
+    if (!this.config.enabled) {
+      this.state = "disabled";
+      return;
+    }
+    await this.start();
+  }
+  /** Release every live resource; shared by close() (terminal) and used by close() alone. */
+  async teardown() {
     for (const bridge of [...this.peers.values()]) await bridge.closeAll();
     this.peers.clear();
     this.peerDeviceIds.clear();
+    await this.releaseAppServer();
+  }
+  /**
+   * Release everything that belongs to the App Server, keeping the per-connection bridges.
+   *
+   * Shared by restart() and by a crash: in both cases the bridges must outlive the process so an attached
+   * client's next call simply reaches the replacement instead of failing for good.
+   */
+  async releaseAppServer() {
+    this.available = false;
+    if (this.restartTimer !== void 0) clearTimeout(this.restartTimer);
+    this.restartTimer = void 0;
     this.turnOwners.clear();
     this.permissionPresets.clear();
     if (this.approvalExpiryTimer !== void 0) clearTimeout(this.approvalExpiryTimer);
@@ -24236,6 +25100,27 @@ var CodexRemoteDomain = class {
     this.appServer = void 0;
   }
   /**
+   * The launch in flight, if any.
+   *
+   * Two overlapping launches fight over `this.appServer`, and whichever finishes first disposes the other's App
+   * Server - which is answering its account probe at that moment, so the probe fails with `CODEX_CLOSED` and the
+   * domain reports a closed Codex on a machine where nothing was closed. One launch at a time, and
+   * `restart()` waits for it instead of closing it out from under the probe.
+   */
+  launching;
+  /**
+   * Launch once, joining the launch already in flight instead of starting a second one.
+   * @returns when this launch settled (either way).
+   */
+  launchAppServerOnce() {
+    if (this.launching !== void 0) return this.launching;
+    const launch = this.launchAppServer().finally(() => {
+      if (this.launching === launch) this.launching = void 0;
+    });
+    this.launching = launch;
+    return launch;
+  }
+  /**
    * Launch the App Server within {@link CODEX_START_BUDGET_MS}.
    *
    * The losing side of the race keeps running until the disposal in start()'s catch stops it, so
@@ -24245,7 +25130,7 @@ var CodexRemoteDomain = class {
    */
   async launchWithinBudget() {
     let timer;
-    const attempt = this.launchAppServer();
+    const attempt = this.launchAppServerOnce();
     attempt.catch(() => void 0);
     try {
       await Promise.race([
@@ -24262,19 +25147,26 @@ var CodexRemoteDomain = class {
     }
   }
   async launchAppServer() {
+    let firstError;
     let lastError;
+    let index = 0;
     for (const binary of codexBinaryCandidates(this.config.binary)) {
+      index += 1;
       try {
         await this.launchAppServerCandidate(binary);
         return;
       } catch (error) {
+        this.logger.warn("Codex App Server candidate failed", { candidate: index, code: errorCode4(error) });
+        firstError ??= error;
         lastError = error;
         if (!canTryNextBinary(error)) throw error;
       }
     }
-    throw lastError ?? new RpcError("CODEX_START_FAILED", "Codex App Server could not be started.");
+    const chosen = errorCode4(lastError) === "CODEX_BINARY_UNAVAILABLE" && firstError !== void 0 ? firstError : lastError;
+    throw chosen ?? new RpcError("CODEX_START_FAILED", "Codex App Server could not be started.");
   }
   async launchAppServerCandidate(binary) {
+    const generation = this.generation;
     const appServer = this.createAppServer(binary, this.logger);
     this.appServer = appServer;
     this.unsubscribeInbound = appServer.onInbound((message) => {
@@ -24289,7 +25181,17 @@ var CodexRemoteDomain = class {
     });
     try {
       await appServer.start();
-      const account = await appServer.call("account/read", { refreshToken: false }, 15e3);
+      let account;
+      try {
+        account = await appServer.call("account/read", { refreshToken: false }, ACCOUNT_PROBE_TIMEOUT_MS);
+      } catch (error) {
+        const upstreamCode = error.upstreamCode;
+        this.logger.warn("Codex account probe failed", {
+          code: errorCode4(error),
+          ...upstreamCode === void 0 ? {} : { upstreamCode: String(upstreamCode) }
+        });
+        throw classifyAccountProbeFailure(error);
+      }
       if (!accountCanRun(account)) {
         throw new RpcError("CODEX_AUTH_REQUIRED", "Codex is not signed in on this Host.");
       }
@@ -24297,11 +25199,22 @@ var CodexRemoteDomain = class {
         await appServer.close().catch(() => void 0);
         return;
       }
+      if (generation !== this.generation || !this.config.enabled) {
+        this.logger.info("Codex App Server started after the domain moved on; releasing it", {
+          generation: this.generation - generation,
+          enabled: this.config.enabled
+        });
+        await this.disposeAppServer(appServer);
+        this.available = false;
+        this.state = this.config.enabled ? "restarting" : "disabled";
+        return;
+      }
       this.available = true;
       this.state = "ready";
       this.restartAttempt = 0;
       this.unavailableCode = void 0;
       this.logger.info("Codex Remote domain ready");
+      await this.announceCapability();
     } catch (error) {
       await this.disposeAppServer(appServer);
       throw error;
@@ -24318,14 +25231,27 @@ var CodexRemoteDomain = class {
     if (this.approvalExpiryTimer !== void 0) clearTimeout(this.approvalExpiryTimer);
     this.approvalExpiryTimer = void 0;
     await Promise.all([...this.peers.values()].map((peer) => peer.failStreams("failed")));
+    await this.announceCapability();
     await this.disposeAppServer(appServer);
     this.scheduleRestart();
   }
   scheduleRestart() {
     if (this.closed || this.restartTimer !== void 0) return;
+    if (!this.config.enabled) return;
     if (this.restartAttempt >= this.restartDelaysMs.length) {
       this.state = "unavailable";
-      this.logger.warn("Codex App Server restart attempts exhausted", { attempts: this.restartAttempt });
+      this.restartTimer = setTimeout(() => {
+        this.restartTimer = void 0;
+        void this.restartAfterFailure();
+      }, CODEX_SLOW_RETRY_MS);
+      this.restartTimer.unref?.();
+      if (!this.slowRestartLogged) {
+        this.slowRestartLogged = true;
+        this.logger.warn("Codex App Server restart attempts exhausted; retrying every " + String(CODEX_SLOW_RETRY_MS) + "ms", {
+          attempts: this.restartAttempt,
+          code: this.unavailableCode
+        });
+      }
       return;
     }
     const delayMs = Math.max(0, this.restartDelaysMs[this.restartAttempt] ?? 0);
@@ -24339,9 +25265,13 @@ var CodexRemoteDomain = class {
     this.logger.warn("Codex App Server restart scheduled", { attempt: this.restartAttempt, delayMs });
   }
   async restartAfterFailure() {
-    if (this.closed) return;
+    if (this.closed || !this.config.enabled) return;
     try {
-      await this.launchAppServer();
+      await this.launchAppServerOnce();
+      if (!this.config.enabled) {
+        await this.releaseAppServer();
+        this.state = "disabled";
+      }
     } catch (error) {
       this.available = false;
       this.state = "restarting";
@@ -24669,7 +25599,14 @@ var CodexRemoteDomain = class {
     } catch (error) {
       if (!isProjectListFallbackError(error)) throw error;
     }
-    if (roots.length > 0) return { projectIds, roots };
+    if (roots.length > 0) {
+      this.logger.debug("Codex workspace authority resolved from project/list", { projects: projectIds.size, roots: roots.length });
+      return { projectIds, roots };
+    }
+    this.logger.warn("Codex project list yielded no roots; deriving workspaces from thread cwd", {
+      projects: projectIds.size,
+      listedThreads: listedThreads?.length ?? 0
+    });
     const threads = listedThreads === void 0 ? [] : [...listedThreads];
     if (listedThreads === void 0) {
       cursor2 = void 0;
@@ -24814,9 +25751,15 @@ var CodexRemoteDomain = class {
     return paths;
   }
 };
-function codexBinaryCandidates(configured, hostPlatform = process.platform, userHome = homedir2()) {
+function codexBinaryCandidates(configured, hostPlatform = process.platform, userHome = homedir2(), localAppData = process.env.LOCALAPPDATA) {
   if (configured !== "codex") return [configured];
-  if (hostPlatform === "win32") return [...bundledWindowsCodex(userHome), configured];
+  if (hostPlatform === "win32") {
+    return [.../* @__PURE__ */ new Set([
+      ...bundledWindowsCodex(userHome),
+      ...localAppData === void 0 ? [] : bundledWindowsCodexAt(localAppData),
+      configured
+    ])];
+  }
   if (hostPlatform !== "darwin") return [configured];
   const bundledCandidates = [
     "/Applications/ChatGPT.app",
@@ -24829,7 +25772,7 @@ function codexBinaryCandidates(configured, hostPlatform = process.platform, user
         return [];
       }
       const candidate = posix.join(codexCli, manifest.entrypoint);
-      if (!existsSync2(candidate)) return [];
+      if (!existsSync3(candidate)) return [];
       accessSync(candidate, constants.X_OK);
       return [candidate];
     } catch {
@@ -24844,9 +25787,12 @@ function codexBinaryCandidates(configured, hostPlatform = process.platform, user
   ])];
 }
 function bundledWindowsCodex(userHome) {
-  const bin = join7(userHome, "AppData", "Local", "OpenAI", "Codex", "bin");
+  return bundledWindowsCodexAt(join7(userHome, "AppData", "Local"));
+}
+function bundledWindowsCodexAt(localAppData) {
+  const bin = join7(localAppData, "OpenAI", "Codex", "bin");
   try {
-    const newest = readdirSync2(bin, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => join7(bin, entry.name, "codex.exe")).filter((candidate2) => existsSync2(candidate2)).map((candidate2) => ({ candidate: candidate2, modified: statSync2(candidate2).mtimeMs })).sort((left, right) => right.modified - left.modified);
+    const newest = readdirSync2(bin, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => join7(bin, entry.name, "codex.exe")).filter((candidate2) => existsSync3(candidate2)).map((candidate2) => ({ candidate: candidate2, modified: statSync2(candidate2).mtimeMs })).sort((left, right) => right.modified - left.modified);
     const candidate = newest[0]?.candidate;
     return candidate === void 0 ? [] : [candidate];
   } catch {
@@ -24864,6 +25810,16 @@ function parseRespond(input2) {
     throw new RpcError("INVALID_MESSAGE", "The Codex approval response is invalid.");
   }
   return input2;
+}
+function classifyAccountProbeFailure(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/unsupported_country_region_territory|country, region, or territory|403|forbidden/i.test(message)) {
+    return new RpcError("CODEX_ACCOUNT_UNREACHABLE", "Codex cannot reach the account from this network region.");
+  }
+  if (/timed out|timeout/i.test(message)) {
+    return new RpcError("CODEX_ACCOUNT_UNREACHABLE", "Codex could not reach the account in time.");
+  }
+  return error instanceof Error ? error : new RpcError("CODEX_UPSTREAM_ERROR", "Codex App Server could not complete the request.");
 }
 function accountCanRun(result) {
   if (!isRecord12(result) || typeof result.requiresOpenaiAuth !== "boolean") return false;
@@ -25128,7 +26084,6 @@ var PluginControlRuntime = class {
       if (endpoint === "settings.get") return ok3(await this.settingsView());
       if (endpoint === "settings.configure") return ok3(await this.configure(payload));
       if (endpoint === "settings.server.set") return ok3(await this.setServer(payload));
-      if (endpoint === "settings.role.set") return ok3(await this.setRole(payload));
       if (endpoint === "settings.codex.set") return ok3(await this.setCodex(payload));
       if (endpoint === "settings.acp.set") return ok3(await this.setAcp(payload));
       if (endpoint === "settings.acp.add") return ok3(await this.addAcp(payload));
@@ -25183,7 +26138,7 @@ var PluginControlRuntime = class {
         return ok3(await this.host.authorizeHostWithCode(value.code));
       }
       if (endpoint === "mode.set" && record5(payload).mode === "local") return ok3(this.hostOnlyStatus());
-      throw new ClientModeError("METHOD_NOT_ALLOWED", "Remote Client mode is disabled by the plugin role.");
+      throw new ClientModeError("METHOD_NOT_ALLOWED", "Remote Client mode is unavailable in this profile.");
     } catch (error) {
       return fail3(error);
     }
@@ -25193,22 +26148,20 @@ var PluginControlRuntime = class {
       throw new ClientModeError("SETTINGS_UNAVAILABLE", "DSH user settings are unavailable in this profile.");
     }
     const value = record5(payload);
-    if (value.role !== "host" && value.role !== "client") {
-      throw new ClientModeError("INVALID_MESSAGE", "Role must be Host or Client.");
-    }
     if (typeof value.serverUrl !== "string") {
       throw new ClientModeError("INVALID_MESSAGE", "Server URL is required.");
     }
     const current = editableConfig(resolveConfig(this.settings.get()));
-    const next = resolveConfig({ ...current, role: value.role, serverUrl: value.serverUrl });
-    const identities = new IdentityStore({
-      directory: serverStorageDirectory(this.identityDirectory, next.serverUrl, value.role)
-    });
+    const next = resolveConfig({ ...current, serverUrl: value.serverUrl });
+    const directory = await ensureDeviceDirectory(this.identityDirectory, next.serverUrl);
+    const identities = new IdentityStore({ directory });
     const identity = await identities.loadOrCreate(hostname2());
-    const api = value.role === "host" ? new HostServerApi(next.serverUrl, new ServerCredentialStore(identities.directory)) : new ClientServerApi(next.serverUrl, new ServerCredentialStore(identities.directory));
+    const registrationCode = typeof value.registrationCode === "string" ? value.registrationCode.trim() : "";
+    const hasRegistrationCode = registrationCode !== "";
+    const api = hasRegistrationCode ? new HostServerApi(next.serverUrl, new ServerCredentialStore(directory)) : new ClientServerApi(next.serverUrl, new ServerCredentialStore(directory));
     let authorization;
-    if (value.role === "host" && typeof value.registrationCode === "string" && value.registrationCode.trim() !== "") {
-      authorization = await api.authorizeHostWithCode(identity, value.registrationCode);
+    if (hasRegistrationCode) {
+      authorization = await api.authorizeHostWithCode(identity, registrationCode);
     } else if (value.provider === "deepseek") {
       if (this.deepseekSession === void 0) {
         throw new ClientModeError("METHOD_NOT_ALLOWED", "DeepSeek account sign-in is unavailable in this profile.");
@@ -25239,13 +26192,18 @@ var PluginControlRuntime = class {
       }
       authorization = await api.authorizeWithAccount(identity, value.email, value.password);
     }
-    if (value.role === "client" && resolveConfig(this.settings.get()).hostControl?.enabled !== false) {
-      await this.client?.authorizeHostByDefault();
+    this.client?.reloadCredentials?.();
+    this.host?.reloadCredentials?.();
+    const hostPaused = resolveConfig(this.settings.get()).hostControl?.paused === true;
+    if (this.host !== void 0 && !hostPaused) {
+      try {
+        this.host.reconnectHost?.();
+      } catch {
+      }
     }
     await this.settings.replace(editableConfig(next));
     return {
       status: "authorized",
-      role: value.role,
       ...authorization.account === void 0 ? {} : { account: authorization.account },
       settings: await this.settingsView()
     };
@@ -25261,22 +26219,6 @@ var PluginControlRuntime = class {
     const current = editableConfig(resolveConfig(this.settings.get()));
     const next = resolveConfig({ ...current, serverUrl: value.serverUrl });
     await this.settings.replace(editableConfig(next));
-    return this.settingsView();
-  }
-  async setRole(payload) {
-    if (this.settings === void 0) {
-      throw new ClientModeError("SETTINGS_UNAVAILABLE", "DSH user settings are unavailable in this profile.");
-    }
-    const role = record5(payload).role;
-    if (role !== "host" && role !== "client") {
-      throw new ClientModeError("INVALID_MESSAGE", "Role must be Host or Client.");
-    }
-    const current = editableConfig(resolveConfig(this.settings.get()));
-    const currentRole = current.role === "client" ? "client" : "host";
-    if (role !== currentRole && current.serverUrl !== void 0 && await this.association(current.serverUrl, role) === void 0) {
-      await this.authorizeOwnedRole(current.serverUrl, currentRole, role);
-    }
-    await this.settings.replace({ ...current, role });
     return this.settingsView();
   }
   async setDevelopment(payload) {
@@ -25320,6 +26262,7 @@ var PluginControlRuntime = class {
       }
     });
     await this.settings.replace(editableConfig(next));
+    void this.host?.restartCodex?.(next.codex);
     return this.settingsView();
   }
   async setAcp(payload) {
@@ -25355,18 +26298,6 @@ var PluginControlRuntime = class {
     await this.settings.replace(editableConfig({ ...current, acp: { enabled: current.acp?.enabled ?? true, backends } }));
     return this.settingsView();
   }
-  async authorizeOwnedRole(serverUrl, sourceRole, targetRole) {
-    const sourceDirectory = serverStorageDirectory(this.identityDirectory, serverUrl, sourceRole);
-    const sourceIdentity = await new IdentityStore({ directory: sourceDirectory }).loadOrCreate(hostname2());
-    const sourceStore = new ServerCredentialStore(sourceDirectory);
-    if (await sourceStore.load(serverUrl, sourceIdentity.deviceId) === void 0) return;
-    const sourceApi = sourceRole === "host" ? new HostServerApi(serverUrl, sourceStore) : new ClientServerApi(serverUrl, sourceStore);
-    const sourceCredentials = await sourceApi.authenticate(sourceIdentity);
-    const targetDirectory = serverStorageDirectory(this.identityDirectory, serverUrl, targetRole);
-    const targetIdentity = await new IdentityStore({ directory: targetDirectory }).loadOrCreate(hostname2());
-    const targetApi = targetRole === "host" ? new HostServerApi(serverUrl, new ServerCredentialStore(targetDirectory)) : new ClientServerApi(serverUrl, new ServerCredentialStore(targetDirectory));
-    await targetApi.authorizeOwnedRole(targetIdentity, sourceCredentials.accessToken, sourceCredentials.account);
-  }
   async logout() {
     if (this.settings === void 0) {
       throw new ClientModeError("SETTINGS_UNAVAILABLE", "DSH user settings are unavailable in this profile.");
@@ -25379,10 +26310,8 @@ var PluginControlRuntime = class {
         this.client?.clearClientAuthorization(),
         this.host?.clearHostAuthorization()
       ]);
-      await Promise.all(["host", "client"].map(async (role) => {
-        const directory = serverStorageDirectory(this.identityDirectory, config.serverUrl, role);
-        await new ServerCredentialStore(directory).clear();
-      }));
+      const directory = await ensureDeviceDirectory(this.identityDirectory, config.serverUrl);
+      await new ServerCredentialStore(directory).clear();
     }
     let deepseekSignedOut = false;
     if (this.deepseekSession !== void 0) {
@@ -25422,9 +26351,9 @@ var PluginControlRuntime = class {
   async settingsView() {
     const config = this.settings === void 0 ? editableConfig(this.config) : editableConfig(resolveConfig(this.settings.get()));
     const associations = await this.associations(config);
-    const role = config.role === "client" ? "client" : "host";
-    const association = associations[role];
+    const association = associations.host;
     const discovered = discoveredCodexBinary(config.codex?.binary ?? "codex");
+    const codexStatus = this.host?.codexStatus?.();
     return {
       config,
       deviceName: hostname2(),
@@ -25433,27 +26362,25 @@ var PluginControlRuntime = class {
       associations,
       acpAvailability: Object.fromEntries((config.acp?.backends ?? []).map((item) => [item.id, commandAvailable(item.command ?? "")])),
       ...association === void 0 ? {} : { association },
-      ...discovered === void 0 ? {} : { discoveredCodexBinary: discovered }
+      ...discovered === void 0 ? {} : { discoveredCodexBinary: discovered },
+      ...codexStatus === void 0 ? {} : { codexStatus }
     };
   }
   async associations(config) {
     if (config.serverUrl === void 0) return {};
-    const [host, client] = await Promise.all([
-      this.association(config.serverUrl, "host"),
-      this.association(config.serverUrl, "client")
-    ]);
-    return {
-      ...host === void 0 ? {} : { host },
-      ...client === void 0 ? {} : { client }
-    };
+    const association = await this.association(config.serverUrl);
+    if (association === void 0) return {};
+    return { host: association, client: association };
   }
-  async association(serverUrl, role) {
+  async association(serverUrl) {
     const identities = new IdentityStore({
-      directory: serverStorageDirectory(this.identityDirectory, serverUrl, role)
+      directory: await ensureDeviceDirectory(this.identityDirectory, serverUrl)
     });
     const identity = await identities.loadOrCreate(hostname2());
     const credentials = await new ServerCredentialStore(identities.directory).load(serverUrl, identity.deviceId);
     if (credentials === void 0) return void 0;
+    const hostStatus = this.host?.hostStatus();
+    if (hostStatus?.error !== void 0 && HOST_AUTHORIZATION_ERRORS.has(hostStatus.error)) return void 0;
     return {
       method: credentials.authorizationMethod,
       ...credentials.account === void 0 ? {} : { account: credentials.account }
@@ -25479,14 +26406,13 @@ function commandAvailable(command) {
 }
 function discoveredCodexBinary(configured) {
   for (const candidate of codexBinaryCandidates(configured)) {
-    if (candidate !== configured && existsSync3(candidate)) return candidate;
+    if (candidate !== configured && existsSync4(candidate)) return candidate;
   }
   return void 0;
 }
 function editableConfig(config) {
   return {
     enabled: config.enabled,
-    role: config.role,
     ...config.serverUrl === void 0 ? {} : { serverUrl: config.serverUrl },
     terminal: config.terminal,
     hostControl: config.hostControl ?? { enabled: true, paused: false },
@@ -25724,10 +26650,6 @@ var ConnectionController = class {
   peerDeviceId() {
     const peers = this.peerDeviceIds();
     return peers.length === 1 ? peers[0] : void 0;
-  }
-  connectionMode() {
-    const connection = this.active.values().next().value;
-    return connection?.channel.mode ?? (connection === void 0 ? "Disconnected" : "Relay");
   }
   async send(message) {
     await Promise.all([...this.active.values()].map((connection) => this.sendConnection(connection, message)));
@@ -26434,7 +27356,6 @@ var API_TRANSFER_IDLE_MS = TRANSFER_IDLE_MS;
 var INLINE_TRANSFER_RESPONSE_BYTES2 = 2 * 1024 * 1024;
 var HarnessApiBridge = class {
   constructor(api, publish, maxStreams = 8, logger, typertGateway, harnessVersion) {
-    this.api = api;
     this.publish = publish;
     this.maxStreams = maxStreams;
     this.logger = logger;
@@ -27671,9 +28592,6 @@ var CodexWorkspaceBridge = class {
   terminals;
   ownedSubscribers = /* @__PURE__ */ new Set();
   spawnTerminal;
-  isCodeXScope(value) {
-    return parseCodexSessionId(value) !== void 0;
-  }
   async call(endpoint, payload, signal) {
     const args = argsOf(payload);
     const scope = args.workspaceFileScopeId;
@@ -28113,7 +29031,7 @@ var HostPluginRuntime = class {
         this.harnessVersion,
         new TerminalPolicy(() => this.terminalEnabled, context.peerDeviceId, this.terminalOwners),
         new CodexWorkspaceBridge(
-          (threadId, signal) => this.codex.resolveThreadWorkspace(context.connectionId, threadId),
+          (threadId) => this.codex.resolveThreadWorkspace(context.connectionId, threadId),
           () => this.terminalEnabled,
           this.codexWorkspaceState,
           this.terminalSpawner
@@ -28258,9 +29176,15 @@ var HostPluginRuntime = class {
    * user who only wants to stop being remotely reachable would have to authorize
    * again and would consume a device identity. Pausing closes the connection and
    * keeps both.
+   *
+   * The Server's own flag is written here as well, not only by the panel's authorization endpoint:
+   * it is what makes the device read as "not accepting control" to other clients and what makes the
+   * Server refuse the next `role=host` hello. Leaving it to one entry point is how a device could
+   * look online and controlling while its switch said off.
    */
   async pauseHostConnection() {
     this.paused = true;
+    await this.recordHostControl(false);
     await this.serverConnection?.stop();
     this.logger.info("Host connection paused");
   }
@@ -28268,18 +29192,51 @@ var HostPluginRuntime = class {
   async resumeHostConnection() {
     const wasPaused = this.paused;
     this.paused = false;
+    await this.recordHostControl(true);
     this.serverConnection?.resume();
     if (wasPaused) this.logger.info("Host connection resumed");
   }
-  isPaused() {
-    return this.paused;
+  /**
+   * Mirror the control switch onto the Server.
+   *
+   * A machine that is signed out has no credential to write it with, and that is not an error: the
+   * local pause still holds, and the next sign-in writes the flag from the switch.
+   * @param enabled - whether this machine accepts control.
+   */
+  async recordHostControl(enabled) {
+    try {
+      await this.serverApi?.setHostControl(enabled);
+    } catch (error) {
+      this.logger.warn("could not record the control switch on the Server", { code: errorCode5(error) });
+    }
+  }
+  /** Re-read this device's credentials from disk, so a sign-in is picked up without a restart. */
+  reloadCredentials() {
+    this.serverApi?.reloadCredentials();
+  }
+  /**
+   * Record whether this machine accepts control, on the Server.
+   *
+   * This is the explicit, failing form, used when the panel asks for the switch and must be told if the
+   * Server refused. {@link pauseHostConnection} and {@link resumeHostConnection} write the same flag
+   * best-effort, so the two stay consistent whichever entry point the caller used.
+   */
+  async setHostControl(enabled) {
+    await this.serverApi?.setHostControl(enabled);
+    this.logger.info(enabled ? "Host control enabled" : "Host control disabled");
   }
   reconnectHost() {
     if (this.closed) throw new Error("remote runtime is closed");
     if (this.serverConnection === void 0) {
       throw new ServerApiError("SERVER_NOT_CONFIGURED", "Configure serverUrl before reconnecting.", false);
     }
-    this.paused = false;
+    if (this.paused) {
+      throw new ServerApiError(
+        "CONTROL_DISABLED",
+        'This device is not accepting control. Turn on "Allow control of this device" first.',
+        false
+      );
+    }
     this.serverConnection.reconnect();
   }
   async startHostOAuthQrLogin(provider) {
@@ -28322,26 +29279,6 @@ var HostPluginRuntime = class {
     }
     this.logger.info("Host authorization cleared");
   }
-  async authorizeHostAsOwned(accessToken, account) {
-    if (this.serverApi === void 0) {
-      throw new ServerApiError("SERVER_NOT_CONFIGURED", "Configure serverUrl before enabling Host access.", false);
-    }
-    let result;
-    try {
-      result = await this.serverApi.authorizeOwnedRole(this.currentIdentity(), accessToken, account);
-    } catch (error) {
-      if (!(error instanceof ServerApiError) || error.code !== "DEVICE_REVOKED") throw error;
-      await this.serverConnection?.stop();
-      this.identity = await this.identities.reset(this.config.deviceName);
-      this.serverApi.bindIdentity(this.identity);
-      this.serverConnection = this.createServerConnection(this.identity);
-      result = await this.serverApi.authorizeOwnedRole(this.identity, accessToken, account);
-      this.logger.info("Rotated revoked Host identity before owned-device authorization");
-    }
-    if (!this.paused) this.serverConnection?.resume();
-    this.logger.info("Host authorized as an owned device");
-    return result;
-  }
   async authorizeHostWithAccount(email, password) {
     if (this.serverApi === void 0) {
       throw new ServerApiError("SERVER_NOT_CONFIGURED", "Configure serverUrl before signing in.", false);
@@ -28364,6 +29301,22 @@ var HostPluginRuntime = class {
     const revoked = await this.identities.revokePeer(deviceId);
     if (revoked) await this.connections.revoke(deviceId);
     return revoked;
+  }
+  /**
+   * Restart the Codex connection so a changed setting can apply without restarting DSH.
+   *
+   * The domain is restarted in place, which keeps every connection's Codex bridge alive across the change.
+   * Replacing the instance instead (close the old, build a new one) left each attached client holding a bridge
+   * that belonged to a retired domain: every later Codex call answered "The Codex connection is closed" until
+   * that client happened to reconnect on its own - and nothing in the panel could bring it back.
+   * @returns when the restart attempt finished.
+   */
+  async restartCodex(config) {
+    await this.codex.restart(config);
+    this.logger.info("Codex Remote domain restarted", {
+      enabled: config.enabled,
+      available: this.codex.isAvailable()
+    });
   }
   codexStatus() {
     return this.codex.status();
@@ -28428,12 +29381,12 @@ var HostPluginRuntime = class {
   }
   async readHarnessVersion() {
     let reportedVersion;
-    let errorCode6;
+    let errorCode7;
     try {
       const response = await this.apiProxy?.host.describe({ rpcId: randomUUID4(), payload: {} });
       if (response === void 0) throw new Error("ApiProxy is unavailable");
       if (!response.result.ok) {
-        errorCode6 = response.result.error.code;
+        errorCode7 = response.result.error.code;
       } else {
         reportedVersion = normalizeHarnessVersion(response.result.value.version);
       }
@@ -28442,7 +29395,7 @@ var HostPluginRuntime = class {
     const distributionVersion = reportedVersion === void 0 || reportedVersion === "0.0.1" ? await readHarnessDistributionVersion() : void 0;
     const version = selectHarnessVersion(reportedVersion, distributionVersion);
     if (version !== void 0) return version;
-    this.logger.warn("Harness version is unavailable", errorCode6 === void 0 ? void 0 : { code: errorCode6 });
+    this.logger.warn("Harness version is unavailable", errorCode7 === void 0 ? void 0 : { code: errorCode7 });
     return void 0;
   }
   hostCapabilities() {
@@ -28492,6 +29445,10 @@ var HostPluginRuntime = class {
 };
 function shortId5(value) {
   return value.length <= 12 ? value : `${value.slice(0, 8)}\u2026${value.slice(-4)}`;
+}
+function errorCode5(error) {
+  const own = error !== null && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : void 0;
+  return own ?? safeErrorCode(error);
 }
 function isPlainRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -28819,7 +29776,7 @@ function installTuiRemoteCommand(ctx, resolveTarget) {
           } catch (error) {
             return {
               kind: "error",
-              text: `Local Remote Host credentials were cleared, but Server revocation failed (${errorCode5(error)}).`
+              text: `Local Remote Host credentials were cleared, but Server revocation failed (${errorCode6(error)}).`
             };
           }
         }
@@ -28875,7 +29832,7 @@ function registerOptional(ctx, feature, register2) {
     return register2() ?? (() => {
     });
   } catch (error) {
-    ctx.logger.warn(`dsh-TUI Remote ${feature} is unavailable`, { code: errorCode5(error) });
+    ctx.logger.warn(`dsh-TUI Remote ${feature} is unavailable`, { code: errorCode6(error) });
     return () => {
     };
   }
@@ -28988,7 +29945,7 @@ var RemoteLoginController = class {
       await this.poll(attempt, provider, session, target2.runtime);
     } catch (error) {
       if (attempt !== this.attempt) return;
-      this.update({ phase: "error", provider, error: errorCode5(error) });
+      this.update({ phase: "error", provider, error: errorCode6(error) });
     }
   }
   async poll(attempt, provider, session, runtime) {
@@ -29106,7 +30063,7 @@ function terminalLink2(url) {
 function printableWidth(value) {
   return value.replace(/\u001B\[[0-9;]*m/gu, "").length;
 }
-function errorCode5(error) {
+function errorCode6(error) {
   if (error instanceof ServerApiError) return error.code;
   if (error instanceof Error && "code" in error && typeof error.code === "string") return error.code;
   return "CONNECTION_FAILED";
@@ -29281,9 +30238,8 @@ async function activate(ctx, readConfig, entryId, tuiBinding) {
       console.error(message);
     }
   }, config.logLevel);
-  const hostIdentities = new IdentityStore({
-    directory: config.serverUrl === void 0 ? defaultIdentityDirectory : serverStorageDirectory(defaultIdentityDirectory, config.serverUrl, "host")
-  });
+  const deviceDirectory = config.serverUrl === void 0 ? defaultIdentityDirectory : await ensureDeviceDirectory(defaultIdentityDirectory, config.serverUrl);
+  const hostIdentities = new IdentityStore({ directory: deviceDirectory });
   const apiProxy = ctx.get("apiProxy");
   const nativeTypertGateway = ctx.get("typertGateway");
   const localTypertGateway = new TypertGatewaySwitch(nativeTypertGateway).local();
@@ -29324,9 +30280,7 @@ async function activate(ctx, readConfig, entryId, tuiBinding) {
   let clientRuntime;
   const hostControl = runtime;
   if (config.serverUrl !== void 0 && connection !== void 0) {
-    const clientIdentities = new IdentityStore({
-      directory: serverStorageDirectory(defaultIdentityDirectory, config.serverUrl, "client")
-    });
+    const clientIdentities = hostIdentities;
     clientRuntime = new ClientModeRuntime(
       config,
       clientIdentities,

@@ -43,7 +43,7 @@ DSH 只有看到它在 bundles 里才会组合进插件树。
 
 | 插件 | 版本 | 来源 | 说明 |
 |---|---|---|---|
-| `ds-harness-remote` | 0.4.32 | npm `@blue-soda/dsh-remote`（同源仓库 `github:blue-soda/ds-harness-remote` 的 `packages/plugin`）| 端到端加密的远程访问（桌面/网页/安卓互连）。自带 `dist/index.js` + `dist/client.github.js`；运行时依赖 `qrcode`/`werift`/`ws`/`zod` 一并内置，`@deepseek-ai/schemastery` 由内核树嵌套路径提供、不内置。 |
+| `ds-harness-remote` | **0.5.0** | npm `@blue-soda/dsh-remote`（同源仓库 `github:blue-soda/ds-harness-remote` 的 `packages/plugin`）| 端到端加密的远程访问（桌面/网页/安卓互连）。自带 `dist/index.js` + `dist/client.github.js`；运行时依赖 `qrcode`/`werift`/`ws`/`zod` 一并内置，`@deepseek-ai/schemastery` 由内核树嵌套路径提供、不内置。 |
 
 ## 更新步骤（人工）
 
@@ -133,3 +133,10 @@ bash tools/build-apk.sh
   `{"code":"CONNECTION_FAILED","retryable":true}`；客户端面板也未在界面里确认
   （需要能连通中继的环境再看一次）。
 - 预期内的噪音：`CODEX_BINARY_UNAVAILABLE`（Android 上没有 Codex 二进制）。
+
+---
+
+> **2026-10-14 更新到 0.5.0**：`npm i @blue-soda/dsh-remote@0.5.0`（125 个包 / 6645 文件 / 64.8 MB 原始），
+> 按与构建期相同的口径裁剪后入库：丢 `*.map` / `*.d.ts` / `test(s)` / `example(s)` / `docs` / `.bin`
+> → **3869 文件 49.6 MB**（旧版 0.4.32 是 3577 文件 31.1 MB；体积增长来自依赖树本身变大）。
+> 旧的 0.4.32 副本备份在 `.cache/vendor-old-0432/`（未入库）。
