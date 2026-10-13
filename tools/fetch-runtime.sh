@@ -21,9 +21,9 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-}"
 # ── 资产 pin（换资产时同时改这里与 README 里的说明）──────────────────────────
 RUNTIME_REPO="blue-soda/deepseek-harness-android-app"
-RUNTIME_TAG="runtime-arm64-node26.4.0"
-RUNTIME_ASSET="dsh-android-runtime-arm64.tar.gz"
-RUNTIME_SHA256_DEFAULT="8c79ac2a22b87e7406ade492093ea187e1878a5a35c2be27d6feeeed9990c6d7"
+RUNTIME_TAG="runtime-arm64-node26.4.0-tools1"
+RUNTIME_ASSET="dsh-android-runtime-arm64-tools1.tar.gz"
+RUNTIME_SHA256_DEFAULT="64cae588d40d446f45efbb7896133e6a9bc3e027b719e92c6623ad0e0bb97e54"
 RUNTIME_URL="${DSH_RUNTIME_URL:-https://github.com/$RUNTIME_REPO/releases/download/$RUNTIME_TAG/$RUNTIME_ASSET}"
 WANT_SHA="${DSH_RUNTIME_SHA256:-$RUNTIME_SHA256_DEFAULT}"
 

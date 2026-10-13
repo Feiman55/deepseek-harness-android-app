@@ -138,6 +138,24 @@ if [ -f "$H/runtime/bin/curl" ]; then
 fi
 fi
 
+# v1.25（W3）：runtime/bin 里的**全部**文件都要进包 —— GNU 工具集（grep/sed/gawk/coreutils/
+# findutils/diffutils/patch/less/tar/zip/unzip/xz/zstd/jq/openssl）与 W5 的设备内构建链
+# （aapt2/ecj/dx）。此前这里只挑 node/rg/curl 三个复制，新工具会静默留在 devhome 里不生效。
+if [ -d "$H/runtime/bin" ]; then
+  for _f in "$H/runtime/bin"/*; do
+    [ -f "$_f" ] || continue
+    cp -L "$_f" "$P/staging/runtime/bin/$(basename "$_f")"
+    chmod 755 "$P/staging/runtime/bin/$(basename "$_f")"
+  done
+  echo "  runtime/bin: $(ls -1 "$P/staging/runtime/bin" | wc -l | tr -d ' ') 个文件（含 GNU 工具集）"
+fi
+# runtime/share：terminfo（less/clear 用）、gawk 的库等。引擎 env 会把 TERMINFO 指到这里。
+if [ -d "$H/runtime/share" ]; then
+  mkdir -p "$P/staging/runtime/share"
+  ( cd "$H/runtime/share" && tar cf - . ) | ( cd "$P/staging/runtime/share" && tar xf - )
+  echo "  runtime/share: $(du -sh "$P/staging/runtime/share" | cut -f1)"
+fi
+
 for f in $(find "$H/runtime/lib" -maxdepth 1 -type f); do
   cp -L "$f" "$P/staging/runtime/lib/"
 done
@@ -145,7 +163,14 @@ done
 # ⚠ v1.18（B8）：devhome 里的 soname 别名（libicudata.so → libicudata.so.78.3 等）往往是**实体副本**
 #（payload.zip 存不了符号链接，解压出来就是真文件）。上面的批量复制会把它们一起带进包，
 # 于是设备侧真的存在 3 份独立 inode（实测 libicudata 33MB × 3，见 LINKS.txt 之后的删除步骤）。
-cat > "$P/staging/runtime/lib/LINKS.txt" <<'EOF'
+# 别名清单（LINKS.txt）：**合并** devhome 带来的与历史手写的，再统一成**制表符**分隔。
+#   · 为什么必须合并：devhome 的 runtime/lib/LINKS.txt 现在是设备端同步过来的并集（含 W3 新增的
+#     lib 别名）；这里以前是 `cat >` 直接覆盖，会把新增别名悄悄丢掉；
+#   · 为什么要规范化：App 的 applyLinks() 只按 **Tab** 切分（line.split("\\t+")），
+#     而 Termux 包解出来的清单是空格分隔 —— 不转换就等于"没有别名"（实测格式不一致）。
+_links_tmp="$(mktemp)"
+[ -f "$H/runtime/lib/LINKS.txt" ] && cat "$H/runtime/lib/LINKS.txt" >> "$_links_tmp"
+cat >> "$_links_tmp" <<'EOF'
 libcrypto.so	libcrypto.so.3
 libicudata.so	libicudata.so.78.3
 libicudata.so.78	libicudata.so.78.3
@@ -165,6 +190,24 @@ libssl.so	libssl.so.3
 libz.so	libz.so.1.3.2
 libz.so.1	libz.so.1.3.2
 EOF
+awk -F'[ \t]+' 'BEGIN{OFS="\t"} /^[ \t]*#/ {next} NF<2 {next} {print $1,$2}' "$_links_tmp" \
+  | sort -u > "$P/staging/runtime/lib/LINKS.txt"
+rm -f "$_links_tmp"
+echo "  runtime/lib/LINKS.txt: $(wc -l < "$P/staging/runtime/lib/LINKS.txt" | tr -d ' ') 条别名（Tab 分隔）"
+
+# bin 的别名同理：W3 的 coreutils 是**一个多调用二进制 + 100 个别名**，包内只留二进制，
+# 别名由设备端 applyLinks 重建（与 soname 别名同构，不占 APK 字节）。
+if [ -f "$H/runtime/bin/LINKS.txt" ]; then
+  awk -F'[ \t]+' 'BEGIN{OFS="\t"} /^[ \t]*#/ {next} NF<2 {next} {print $1,$2}' "$H/runtime/bin/LINKS.txt" \
+    | sort -u > "$P/staging/runtime/bin/LINKS.txt"
+  echo "  runtime/bin/LINKS.txt: $(wc -l < "$P/staging/runtime/bin/LINKS.txt" | tr -d ' ') 条别名（Tab 分隔；设备端重建）"
+fi
+
+# W3 自检：GNU 工具集真的进包了（少一个就说明 fetch-runtime 用的是旧资产 / devhome 没更新）
+for _t in grep sed gawk coreutils tar zip unzip jq openssl; do
+  [ -f "$P/staging/runtime/bin/$_t" ] || { echo "!! runtime/bin 缺少 $_t（GNU 工具集没进包：检查运行时资产 pin / devhome）"; exit 1; }
+done
+echo "  GNU 工具集自检：grep sed gawk coreutils tar zip unzip jq openssl 均在包内 ✓"
 
 # v1.18（B8）：按 LINKS.txt 把"别名文件"从包里剔掉 —— 只留真实文件 + LINKS.txt，
 # 由 App 解压时的 applyLinks()（硬链 → 软链 → 复制兜底）重建这些名字。
