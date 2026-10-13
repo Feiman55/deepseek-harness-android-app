@@ -285,6 +285,39 @@ if [ -n "$DSH_X64_BARE_LIBS" ]; then
     echo "  [模拟器] 注意：DSH_X64_NO_LINKS 自 v1.18 起不再清空 LINKS.txt（硬链优先已足够，清空会让 node 缺 libz.so.1）"
   fi
   echo "  [模拟器] 已注入 x86_64 裸名库并从 LINKS.txt 移除对应条目"
+
+  # ── v1.25（W3）：模拟器构建**排除** arm64-only 的工具集与其新库 ──────────────────
+  # 为什么必须排：ndk_translation 的运行器（host 侧 x86_64）会从 LD_LIBRARY_PATH（= runtime/lib）
+  # 解析**它自己**需要的库；W3 带进来的 arm64 新库（libpng16 / libpcre2-8 / libgmp …）会盖住
+  # 对应的 x86_64 版本 → 每次 arm64 exec 都
+  #   CANNOT LINK EXECUTABLE "/system/bin/ndk_translation_program_runner_binfmt_misc_arm64":
+  #   ".../runtime/lib/libpng16.so" is for EM_AARCH64 (183) instead of EM_X86_64 (62)
+  # → **引擎直接起不来**（实测：App 进程在、无 "engine token url captured"）。
+  # 既有的 x86_64 覆盖只处理了 libz/libssl/libcrypto 三个裸名，新增库覆盖不到 → 这里整份排除。
+  # 模拟器包的用途是 UI/流程测试；GNU 工具与设备内构建链是 arm64-only，真机包照常带全套。
+  _X64_EXCL="$P/../config/runtime-tools-files.txt"
+  if [ -f "$_X64_EXCL" ]; then
+    _ex=0
+    while IFS= read -r _rel; do
+      _rel="${_rel%$'\r'}"        # 容忍 CRLF 清单（Windows 上写文件极易带上 \r，实测踩过）
+      case "$_rel" in ""|\#*) continue ;; esac
+      if [ -e "$P/staging/$_rel" ]; then
+        rm -f "$P/staging/$_rel"
+        _ex=$((_ex + 1))
+      fi
+    done < "$_X64_EXCL"
+    echo "  [模拟器] 已排除 W3/W5 的 arm64-only 文件 $_ex 个（详见 config/runtime-tools-files.txt）"
+    # 排除后自检：这些**W3/W5 新引入**的 arm64 库绝不能在包里（它们是绊倒翻译运行器的元凶）。
+    # ⚠ 不要把 libpcre2-8.so* 列进来 —— 那是 ripgrep 的依赖，devhome **原本就有**
+    #   （实测一直在 .cache/devhome/runtime/lib 里，旧模拟器包也带着，从未导致 CANNOT LINK）。
+    for _bad in libpng16.so libgmp.so.10 libmpfr.so.6; do
+      [ -e "$P/staging/runtime/lib/$_bad" ] && { echo "!! [模拟器] $_bad 仍在包内（会让引擎起不来）"; exit 1; }
+    done
+    [ -e "$P/staging/runtime/bin/coreutils" ] && { echo "!! [模拟器] runtime/bin/coreutils 仍在包内"; exit 1; }
+    echo "  [模拟器] 排除自检通过：arm64-only 库与工具均不在包内 ✓"
+  else
+    echo "  !! [模拟器] 缺 config/runtime-tools-files.txt —— 无法排除 arm64-only 文件（引擎可能起不来）"
+  fi
 fi
 
 mkdir -p "$P/staging/dshroot/lib"
