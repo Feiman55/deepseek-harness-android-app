@@ -1,0 +1,122 @@
+#!/system/bin/sh
+# ============================================================================
+# mirror-get —— 按多源顺序从本仓库取文件（**失败显式**，不静默）
+#
+# 为什么需要它：设备侧可达的域名因网络而异（实测：一边 github/raw 可达而 gitee 不可达，
+# 另一边正相反）。skill 里给的固定 raw URL 在不可达时会让 agent 误判"仓库里没有这个文件"，
+# 进而走错路（历史事故：把"分支取错"当成"密钥不在仓库"）。
+#
+# 用法：
+#   mirror-get <仓库相对路径> [输出文件]
+#   mirror-get android-app/community.jks /data/local/tmp/community.jks
+#   mirror-get tools/build-apk.sh              # 不给输出文件 → 打到 stdout
+#
+# 环境变量：
+#   REPO=blue-soda/deepseek-harness-android-app   仓库（默认本仓库）
+#   REF=master                                    分支/标签（默认 master —— 仓库默认分支）
+#   MIRRORS_ENV=<路径>                            镜像清单（默认与脚本同目录的 mirrors.env）
+#   CURL=<路径>                                   curl（默认 `curl`，payload 的 runtime/bin 里有）
+#
+# 退出码：0 = 某一源取成功；1 = 全部源失败（stderr 会列出每一源与失败原因）
+# ============================================================================
+set -u
+
+REPO="${REPO:-blue-soda/deepseek-harness-android-app}"
+REF="${REF:-master}"
+# 防御：环境里可能已经有一个 REPO（本机实测就有，值是工作区路径），形状不对就忽略它用默认。
+# 判据：必须是 owner/name，且不含 `:` / `\` / 不以 `/` 开头 / 不是多级路径。
+case "$REPO" in
+  *[\\:]*|/*|*/*/*) echo "   （忽略形状不合法的 REPO=\"$REPO\"，改用默认仓库）" >&2
+                    REPO="blue-soda/deepseek-harness-android-app" ;;
+  */*) : ;;
+  *)   echo "   （REPO 缺少 owner/name，忽略：\"$REPO\"）" >&2
+       REPO="blue-soda/deepseek-harness-android-app" ;;
+esac
+SELF_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+MIRRORS_ENV="${MIRRORS_ENV:-$SELF_DIR/mirrors.env}"
+CURL="${CURL:-curl}"
+
+if [ -z "${1:-}" ]; then
+  echo "用法：mirror-get <仓库相对路径> [输出文件]" >&2
+  exit 2
+fi
+REL="${1#/}"
+OUT="${2:-}"
+
+# 载入镜像清单（模板里的 ${REPO}/${REF}/${PATH} 在此展开）
+if [ -f "$MIRRORS_ENV" ]; then
+  # shellcheck disable=SC1090
+  . "$MIRRORS_ENV"
+else
+  echo "!! 找不到镜像清单 $MIRRORS_ENV（用内置默认序列继续）" >&2
+  RAW_URL_TEMPLATES="https://cdn.jsdelivr.net/gh/@REPO@@@REF@/@PATH@ https://raw.githubusercontent.com/@REPO@/@REF@/@PATH@"
+  GH_API_CONTENTS="https://api.github.com/repos/@REPO@/contents/@PATH@?ref=@REF@"
+fi
+
+CMD="$CURL"
+command -v "$CMD" >/dev/null 2>&1 || {
+  echo "!! 找不到 curl：请确认 payload 的 runtime/bin 在 PATH 里（$PATH）" >&2
+  exit 1
+}
+
+TMP_DIR_TMP=""
+pick_tmp() {  # 设备上 /tmp 可能不可写、$TMPDIR 才是对的；宿主上反过来 —— 按可用性挑
+  for _d in "${TMPDIR:-}" /data/local/tmp /tmp .; do
+    [ -n "$_d" ] || continue
+    if [ -d "$_d" ] && [ -w "$_d" ]; then printf '%s' "$_d"; return; fi
+  done
+  printf '%s' "."
+}
+TMP="$(pick_tmp)/mirror-get.$$"
+trap 'rm -f "$TMP" "$TMP.hdr"' EXIT HUP INT TERM
+
+TRIED=""
+try_url() {  # $1=url $2=说明
+  _url="$1"; _what="$2"
+  : > "$TMP"
+  # -f：HTTP 错误直接失败；-L 跟随跳转；限时避免卡死
+  "$CMD" -fsSL --max-time 40 -o "$TMP" "$_url" 2>"$TMP.hdr"
+  _rc=$?
+  if [ "$_rc" -eq 0 ] && [ -s "$TMP" ]; then
+    # 防"拿到了一个 HTML 错误页"这种假成功
+    if head -c 256 "$TMP" | LC_ALL=C grep -qi '<html\|<HTML\|404: Not Found'; then
+      TRIED="$TRIED
+   源 $_what：返回的是 HTML/404 页面（不是文件）"
+      return 1
+    fi
+    echo "   ✓ 取自：$_what" >&2
+    if [ -n "$OUT" ]; then
+      cp -f "$TMP" "$OUT" || return 1
+    else
+      cat "$TMP"
+    fi
+    return 0
+  fi
+  _err="$(head -c 120 "$TMP.hdr" 2>/dev/null | tr '\n' ' ')"
+  TRIED="$TRIED
+   源 $_what：失败（curl rc=$_rc${_err:+；$_err}）"
+  return 1
+}
+
+# 1) 模板链（jsdelivr → ghfast → gh-proxy → raw，顺序由 mirrors.env 决定）
+for _t in $RAW_URL_TEMPLATES; do
+  _u="$(printf '%s' "$_t" | sed -e "s|@REPO@|$REPO|g" -e "s|@REF@|$REF|g" -e "s|@PATH@|$REL|g")"
+  try_url "$_u" "$(printf '%s' "$_u" | cut -c1-64)…" && exit 0
+done
+
+# 2) GitHub API contents（base64 兜底）
+if [ -n "${GH_API_CONTENTS:-}" ]; then
+  _u="$(printf '%s' "$GH_API_CONTENTS" | sed -e "s|@REPO@|$REPO|g" -e "s|@REF@|$REF|g" -e "s|@PATH@|$REL|g")"
+  if "$CMD" -fsSL --max-time 40 -H 'Accept: application/vnd.github.raw' -o "$TMP" "$_u" 2>"$TMP.hdr" && [ -s "$TMP" ]; then
+    echo "   ✓ 取自：api.github.com contents（$REF）" >&2
+    if [ -n "$OUT" ]; then cp -f "$TMP" "$OUT"; else cat "$TMP"; fi
+    exit 0
+  fi
+  TRIED="$TRIED
+   源 api.github.com contents：失败"
+fi
+
+echo "!! mirror-get 取不到 $REPO@$REF:$REL —— 试过的源与结果：$TRIED" >&2
+echo "   提示：先确认分支对不对（本仓库默认分支是 master；main 是废弃的旧树）；" >&2
+echo "         再确认网络（设备侧可达域名因网络而异），必要时改 config/mirrors.env 的顺序。" >&2
+exit 1

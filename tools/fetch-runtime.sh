@@ -50,11 +50,45 @@ else
     echo "   命中缓存：$ARCHIVE"
   else
     [ -f "$ARCHIVE" ] && { echo "   缓存 sha256 不符，重新下载"; rm -f "$ARCHIVE"; }
-    echo "   下载：$RUNTIME_URL"
-    curl -L --fail --retry 3 --retry-delay 2 -C - -o "$ARCHIVE.part" "$RUNTIME_URL" \
-      || { echo "!! 运行时可下载失败。可手动下载后用 DSH_RUNTIME_ARCHIVE=<文件> 指定；" >&2
-           echo "   （若资产尚未发布，请先由维护者上传，或用本地已构建的归档）" >&2; exit 1; }
-    mv "$ARCHIVE.part" "$ARCHIVE"
+    # ── 多源下载：官方优先，代理兜底；**每一路都验 sha256**，不符就换下一路 ──
+    #   代理链来自 config/mirrors.env（单一真源）；代理形式是"前缀 + 官方 URL"。
+    PROXIES=""
+    if [ -f "$REPO/config/mirrors.env" ]; then
+      # shellcheck disable=SC1091
+      . "$REPO/config/mirrors.env"
+      PROXIES="${GH_RELEASE_PROXIES:-}"
+    fi
+    CANDIDATES="$RUNTIME_URL"
+    for _p in $PROXIES; do CANDIDATES="$CANDIDATES ${_p}${RUNTIME_URL}"; done
+    # DSH_RUNTIME_URL 显式指定时只用它（尊重调用方）
+    [ -n "${DSH_RUNTIME_URL:-}" ] && CANDIDATES="$RUNTIME_URL"
+
+    OK=0
+    TRIED=""
+    for _u in $CANDIDATES; do
+      echo "   下载：$_u"
+      if curl -L --fail --retry 2 --retry-delay 2 -C - -o "$ARCHIVE.part" "$_u" 2>/dev/null; then
+        _got="$(sha_of "$ARCHIVE.part")"
+        if [ "$_got" = "$WANT_SHA" ]; then
+          mv -f "$ARCHIVE.part" "$ARCHIVE"
+          OK=1
+          echo "   ✓ 下载完成且 sha256 校验通过（源：$(printf '%s' "$_u" | cut -c1-56)…）"
+          break
+        fi
+        TRIED="$TRIED
+     · $(printf '%s' "$_u" | cut -c1-56)… → 下载成功但 sha256 不符（$_got）"
+        rm -f "$ARCHIVE.part"
+      else
+        TRIED="$TRIED
+     · $(printf '%s' "$_u" | cut -c1-56)… → 下载失败"
+        rm -f "$ARCHIVE.part"
+      fi
+    done
+    if [ "$OK" != "1" ]; then
+      echo "!! 运行时资产从所有源都取不到（每一路都试过并校验）：$TRIED" >&2
+      echo "   可手动下载后用 DSH_RUNTIME_ARCHIVE=<文件> 指定；或把可用的代理加进 config/mirrors.env" >&2
+      exit 1
+    fi
   fi
 fi
 

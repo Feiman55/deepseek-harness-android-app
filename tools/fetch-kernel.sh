@@ -81,11 +81,43 @@ if [ ! -f "$TAR" ]; then
   rm -rf "$BUILD"
   mkdir -p "$BUILD"
   cp "$KERNEL_DIR/package.json" "$KERNEL_DIR/package-lock.json" "$BUILD/"
+  # ── registry 选择（v1.25）：默认用 config/mirrors.env 里的国内源，失败回落官方 ──
+  #   为什么换源安全：lock 里每个包都带 integrity（sha512），npm 会逐包校验；
+  #   实测 npmmirror 与官方逐项相同（667 包 / 25,849 文件 / 222.4 MB）。
+  #   缓存 tar 命中时**完全不联网**，这里的顺序只影响冷启动那次。
+  NPM_REG_PRIMARY="${DSH_NPM_REGISTRY:-}"
+  NPM_REG_FALLBACK=""
+  if [ -f "$REPO/config/mirrors.env" ]; then
+    # shellcheck disable=SC1091
+    . "$REPO/config/mirrors.env"
+    NPM_REG_PRIMARY="${DSH_NPM_REGISTRY:-${NPM_REGISTRY_PRIMARY:-}}"
+    NPM_REG_FALLBACK="${NPM_REGISTRY_FALLBACK:-}"
+  fi
+  npm_ci() {  # $1 = registry（空 = 用 npm 默认）
+    if [ -n "$1" ]; then
+      ( cd "$BUILD" && "$NPM_BIN" ci \
+          --os=android --cpu=arm64 \
+          --omit=optional --omit=dev --ignore-scripts \
+          --registry="$1" \
+          --prefer-offline --no-audit --no-fund --loglevel=error ${NPM_FLAGS:-} )
+    else
+      ( cd "$BUILD" && "$NPM_BIN" ci \
+          --os=android --cpu=arm64 \
+          --omit=optional --omit=dev --ignore-scripts \
+          --prefer-offline --no-audit --no-fund --loglevel=error ${NPM_FLAGS:-} )
+    fi
+  }
   echo "   冻结安装：npm ci --os=android --cpu=arm64 --omit=optional --omit=dev --ignore-scripts"
-  ( cd "$BUILD" && "$NPM_BIN" ci \
-      --os=android --cpu=arm64 \
-      --omit=optional --omit=dev --ignore-scripts \
-      --prefer-offline --no-audit --no-fund --loglevel=error ${NPM_FLAGS:-} )
+  echo "   registry：${NPM_REG_PRIMARY:-（npm 默认）}$( [ -n "$NPM_REG_FALLBACK" ] && echo "（失败回落 $NPM_REG_FALLBACK）" )"
+  if ! npm_ci "$NPM_REG_PRIMARY"; then
+    if [ -n "$NPM_REG_FALLBACK" ] && [ "$NPM_REG_FALLBACK" != "$NPM_REG_PRIMARY" ]; then
+      echo "   !! ${NPM_REG_PRIMARY:-默认 registry} 安装失败，回落 $NPM_REG_FALLBACK 重试"
+      rm -rf "$BUILD/node_modules"
+      npm_ci "$NPM_REG_FALLBACK" || { echo "!! 两个 registry 都装不动（检查网络/代理）" >&2; exit 1; }
+    else
+      echo "!! npm ci 失败（没有可回落的 registry）" >&2; exit 1
+    fi
+  fi
   # 安装用的两份元数据不进产物（留在 lib/ 会让它变成 package root，干扰 Node 解析）
   rm -f "$BUILD/package.json" "$BUILD/package-lock.json"
   [ -d "$BUILD/node_modules/@deepseek-ai/dsh" ] || { echo "!! 没装出 node_modules/@deepseek-ai/dsh" >&2; exit 1; }

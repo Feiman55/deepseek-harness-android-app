@@ -731,6 +731,43 @@ else
   echo "  !! 未找到 npm/（AI 的 npm / npx 将不可用）"
 fi
 
+# ============================================================================
+# 本仓库自带的 payload 附加件（v1.25）：payload-extra/ + config/mirrors.env
+#   · bin/mirror-get       —— 设备侧多源取仓库文件（失败显式；镜像顺序见 mirrors.env）
+#   · bin/mirrors.env      —— 镜像清单随包一份（设备端可读、可改；仓库里的是单一真源）
+#   · dshhome/.npmrc       —— 引擎 HOME 的 npm 默认（国内 registry + copy 导入 + 关 audit/fund）
+# 说明：payload-extra/ 里的文件**不覆盖**设备上已有同名文件（App 侧按"缺才补"同步），
+#       因此用户自己改过的 .npmrc / mirrors.env 不会被构建产物冲掉。
+# ============================================================================
+PE="$P/../payload-extra"
+if [ -d "$PE" ]; then
+  if [ -d "$PE/bin" ]; then
+    for _f in "$PE"/bin/*; do
+      [ -f "$_f" ] || continue
+      cp -f "$_f" "$P/staging/bin/$(basename "$_f")"
+      chmod 755 "$P/staging/bin/$(basename "$_f")"
+    done
+  fi
+  if [ -d "$PE/dshhome" ]; then
+    mkdir -p "$P/staging/dshhome"
+    for _f in "$PE"/dshhome/* "$PE"/dshhome/.[!.]*; do
+      [ -f "$_f" ] || continue
+      cp -f "$_f" "$P/staging/dshhome/$(basename "$_f")"
+    done
+  fi
+fi
+# 镜像清单：仓库里的 config/mirrors.env 是单一真源，随包复制到 bin/ 供 mirror-get 读取
+if [ -f "$P/../config/mirrors.env" ]; then
+  cp -f "$P/../config/mirrors.env" "$P/staging/bin/mirrors.env"
+else
+  echo "  !! 缺 config/mirrors.env（mirror-get 会退回内置默认序列）"
+fi
+# 自检：两件必须真的进包，且可执行
+[ -f "$P/staging/bin/mirror-get" ] || { echo "!! payload-extra/bin/mirror-get 没进 staging"; exit 1; }
+[ -x "$P/staging/bin/mirror-get" ] || { echo "!! staging/bin/mirror-get 没有执行位"; exit 1; }
+[ -f "$P/staging/bin/mirrors.env" ] || { echo "!! staging/bin/mirrors.env 没进 staging"; exit 1; }
+echo "  payload 附加件: bin/mirror-get + bin/mirrors.env$([ -f "$P/staging/dshhome/.npmrc" ] && echo ' + dshhome/.npmrc')"
+
 # Shizuku 运行时（rish dex）：独立放 assets 供权限界面检测，同时放 payload 供 DSH 插件调用
 cp "$H/rish/rish_shizuku.dex" "$P/assets/rish_shizuku.dex"
 mkdir -p "$P/staging/rish"

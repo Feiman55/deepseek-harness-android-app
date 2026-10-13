@@ -14,11 +14,45 @@ description: 当任务要求"改这个 App 自己"（改 DSH/壳的行为、改�
 | 项 | 值 |
 |---|---|
 | 本仓库（fork，remote `blue-soda`） | `https://github.com/blue-soda/deepseek-harness-android-app` |
+| **默认分支** | **`master`**（已设为仓库默认分支） |
+| ⚠ 废弃分支 | `main` —— 是**分叉的旧树**（落后 master 155 个提交，**没有** `android-app/community.jks`、`android-app/variants.sh`、顶层 `tools/`）。看到这些文件缺失 = 你取错分支了，**回 `master`**，不要去猜"密钥不在仓库" |
 | 上游仓库（remote `origin`） | `https://github.com/woaiys3/deepseek-harness-android-app` |
 | **社区签名密钥** | `android-app/community.jks` —— **已入库，公开密钥** |
 | · store 密码 / alias / key 密码 | `dsh-community` / `community` / `dsh-community` |
 | · 证书 SHA-256 | `18:C9:7C:04:0B:B7:AB:30:15:60:63:41:E8:99:05:9B:4C:9D:05:25:3E:2D:E4:1B:4F:A5:D0:E4:B4:10:A8:E3` |
-| 其它变体密钥 | `release.jks`（**不入仓库**，需自行准备；可用 `DSH_KEYSTORE` 覆盖） |
+| 其它变体密钥 | `release.jks`（**不入仓库**，需自行准备；可用 `DSH_KEYSTORE` 覆盖）；v1.25 起构建只剩社区版 |
+| 固定取文件（raw，分支写死 `master`） | `https://raw.githubusercontent.com/blue-soda/deepseek-harness-android-app/master/<路径>` |
+| 镜像同路径（raw 不可达时首选） | `https://cdn.jsdelivr.net/gh/blue-soda/deepseek-harness-android-app@master/<路径>` |
+
+### 开工自检（先做，10 秒，**别跳过**）
+
+任何涉及本仓库文件的任务，开工第一步先确认"我在正确的分支上、关键文件在"：
+
+```bash
+RAW=https://raw.githubusercontent.com/blue-soda/deepseek-harness-android-app/master
+# 三样必须同时存在；缺任何一样 = 分支/入径不对 → 停下报告，不要推断"仓库里没有"
+for f in tools/build-apk.sh android-app/variants.sh android-app/community.jks; do
+  echo "--- $f"; mirror-get "$f" | head -c 80; echo
+done
+```
+
+**取文件顺序**（多源 + 失败显式报错，别只试一个）：
+
+1. `mirror-get <仓库相对路径>` —— 随包 helper（见下节），自动按 4 条路重试；
+2. `https://cdn.jsdelivr.net/gh/blue-soda/deepseek-harness-android-app@master/<路径>`；
+3. `https://api.github.com/repos/blue-soda/deepseek-harness-android-app/contents/<路径>?ref=master`
+   （返回 base64，用 `base64 -d` 还原；`-H "Accept: application/vnd.github.raw"` 更省事）；
+4. `https://ghfast.top/https://raw.githubusercontent.com/...` 或 `https://gh-proxy.com/https://raw.githubusercontent.com/...`；
+5. 原始 `raw.githubusercontent.com/...`。
+
+> 顺序与镜像列表的**单一真源**是仓库里的 `config/mirrors.env`（取文件时按它排序，别自己另编一套）。
+> 每一路失败都要**显式**；全部失败再报告 —— 报告里要写清"试过哪些源、各自什么错"。
+
+> **版本自检**：本 skill 描述的是 **v1.25+** 的仓库 —— 单一构建路径（内核来自官方 npm registry +
+> 仓库内冻结 lock、arm64 运行时来自 sha256 pin 的资产），`tools/build-apk.sh` **没有**
+> `--kernel` / `--runtime` 参数，也**不再**下载上游 APK。若你取到的 `tools/build-apk.sh` 里还有
+> 这两个参数或 `payload.zip` 相关代码，说明你拿到的是旧版（改动尚未推到 `master`）——
+> **以仓库当前 `master` 为准，并在报告里写明这个不一致**，不要照着旧版去猜新参数。
 
 签名命令（`android-app/build.sh` 内部就是这一套）：
 
