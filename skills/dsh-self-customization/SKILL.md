@@ -111,15 +111,12 @@ bash tools/build-apk.sh        # 社区版（唯一变体；公开密钥签名�
 **在设备上构建：可行，但代价高**（如实说明，不要断言"做不到"）：
 - 可以只用用户态工具链（JDK + `d8` + `aapt2` + `apksigner` + 一个 `android.jar`），
   **不需要 Gradle/AGP/SDK 规范布局**；工具链约 0.5–2 GB（进 Gradle/NDK 则更夸张）；
-  **v1.19.3 起 `aapt2` / `ecj` / `dx` / `apksigner` 已随 payload 内置**（`runtime/bin/`，
-  不必再装 Termux 的 openjdk）。`android.jar` **payload 里已经带着**：
-  `runtime/share/java/android.jar`（+ `android-24.jar`），设备内构建直接用它即可
-  （`ecj -bootclasspath <payload>/runtime/share/java/android.jar`）；若你想用自己的 SDK 版本，
-  用 `platforms/android-*/android.jar` 覆盖也一样。
-  只做"改现成包 + 重签"时不需要它（见上一节的"安装后自证"）；
-- 构建本身还会吃 ~1 GB 中间产物与 ~100 MB 产物；
-- **最后一步安装仍需用户确认**（或已授权的 Shizuku）；
-- 结论：**可行、不建议当常规路径**。常规做法是 PC 构建，或在 CI/他机构建后用哈希核对。
+  **v1.19.3 起 `aapt2` / `apksigner` / `ecj` / `dx` 已随 payload 内置**（`runtime/bin/`），其中：
+  · **`aapt2` 可直接用**（v1.25.1 起随包 `libc++_shared.so` 已换成与它匹配的新版，实测
+    `aapt2 version` → `Android Asset Packaging Tool (aapt) 2.20-android-16.0.0_r4`）；
+  · **`apksigner` 可直接用**（不依赖 JVM，见上一节"安装后自证"）；
+  · ⚠ **`ecj` / `dx` 需要 JVM，而本仓库的 payload 里没有 JDK** ⇒ 真正"从零编译 Java"这条路径
+    需要**自备 JDK**（本仓库明确不带，避免再塞几十 MB）。只做"改现成包 + 重签"时不需要它们。
 
 **共存规则**（v1.25 起只有社区版；端口与外部目录都避开官方包）：
 

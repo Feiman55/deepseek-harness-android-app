@@ -54,8 +54,9 @@
 
 | 产物 | 大小 | SHA-256 |
 |---|---|---|
-| `DeepSeekHarness-community-1.19.3-arm64.apk`（真机） | 134.7 MB | `6111fa42b27834c6ef2243116327f8d7a9a6884cdd662dcd5de749638983dd05` |
-| `DeepSeekHarness-community-1.19.3-x86_64.apk`（模拟器） | 114.9 MB | `3dc2aa89319d655cf3c50075cf0b03a4e1b6fbbc819880064cd399221c669d2c` |
+| `DeepSeekHarness-community-1.19.3-arm64.apk`（真机·默认外观） | 134.7 MB | `380c686299e02b5f34911c75806871dbb58cb759fef4e6e10cbadc90b7a92650` |
+| `DeepSeekHarness-community-1.19.3-x86_64.apk`（模拟器） | 114.9 MB | `768ef7b1829f6366fc7daf27e5ad519b4050a6e26b6653bfda721e1aef00330e` |
+| `DeepSeekHarness-community-1.19.3-arm64-original-look.apk`（真机·原版外观） | 134.7 MB | `d8bc8fdaf88043cd298db3b318ca5323e1a0b592b4aee5a5b686478924b96839` |
 
 体积构成（相对 v1.19.2 的 ~105 MB）：W3 的 GNU 工具集与设备内构建链 **+21 MB**、remote 插件
 0.4.32→0.5.0 **+9 MB**。两个包都通过构建期闸门：清单 entries/bytes 一致、**16/16 补丁特征串**、
@@ -72,7 +73,17 @@ LF 闸门、Java 语法体检、产物签名校验。
 | skill 说「`android.jar` 必须自备」，但 payload 里就有 | ✅ 成立（`runtime/share/java/android.jar` 3,881,757 B + `android-24.jar`） | skill 与 `THIRD_PARTY_NOTICES` §0.1 按事实改写：payload 随包提供、可直接用；**再分发合规性留作维护者决策** |
 | 版本自检「`build-apk.sh` 里有 `payload.zip` 相关代码 = 旧版」会误报 | ✅ 成立（那 5 处是**校验产物自身完整性**用的） | skill 去掉该判据，只保留 `--kernel/--runtime`，并注明 `payload.zip` 字样属正常 |
 
-仍未处理（见下方"待办"）：`aapt2` 的 libc++ 版本不匹配、`ecj`/`dx` 无 JVM、图标未采纳。
+**已处理（2026-10-14 第二批）**：
+
+- **`aapt2` 缺符号 —— 已修（方案 B）**：随包 `libc++_shared.so` 换成 Termux 新版
+  （`libc++_30_aarch64.deb`，1,423,696 B，含 `__hash_memory`），并发布新资产
+  **`runtime-arm64-node26.4.0-tools2`**（sha256 `f056e948704d67c2d97f4310148319c83252241701dcb8a9dd4e2a83113f2b3f`，
+  旧 tag 保留）。根因是资产组装时"同名文件一律跳过"把新 libc++ 挡住了 → 现在
+  `libc++_shared.so` 明确**工具集版本优先**（`tools/build-runtime-asset.py` 的 `PREFER_TOOLS`）。
+  实测（模拟器，把库补进 guest 目录后）：`node --version` → `v26.4.0`（无回归）；
+  `aapt2 version` → `Android Asset Packaging Tool (aapt) 2.20-android-16.0.0_r4`（真能跑）。
+- **`ecj` / `dx` 需要 JVM** —— 按维护者决定**不带 JDK**；skill 已写明这条路径需自备 JDK。
+- **图标不动**（维护者决定）；另出 **`--original-look` 包**（蓝鲸鱼图标 + 鲸鱼悬浮窗）。
 
 ### 七、已知问题
 

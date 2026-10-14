@@ -62,6 +62,8 @@ def main() -> None:
     ap.add_argument("--apk", default=str(DEFAULT_APK))
     ap.add_argument("--dest", default="/system/lib64/arm64")
     ap.add_argument("--adb", default=None)
+    ap.add_argument("--also", action="append", default=[],
+                    help="额外补某个 arm64 二进制的依赖闭包（可重复），例如 --also runtime/bin/aapt2")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
 
@@ -129,6 +131,15 @@ def main() -> None:
     node = pz.read("runtime/bin/node")
     want = set()
     queue = dt_needed(node)
+    # v1.25.1：--also <payload 内路径>：把该二进制的依赖闭包一并补上（用于验证 aapt2 之类，
+    # 它们的依赖与 node 不同 —— 只补 node 的闭包时 aapt2 仍会缺 libfmt/libprotobuf/…）。
+    for extra in a.also:
+        rel = extra.strip("/")
+        if rel in pz.namelist():
+            queue += dt_needed(pz.read(rel))
+            print(f"   （--also {rel}：已并入依赖闭包）")
+        else:
+            print(f"   !! --also {rel}：载荷里没有这个文件，忽略")
     all_libs = dict(libs)
     all_libs.update(aliases)
     while queue:
