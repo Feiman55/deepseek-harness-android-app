@@ -48,6 +48,7 @@ APK_OUT="${DSH_APK_OUT:-$P/DeepSeekHarness${V_SUFFIX}.apk}"
 #     不受文本模式影响，也不会撞上二进制里的孤立 0x0D。
 _lf_hit=""
 for _f in $(find "$P/../dsh-patches/apply.sh" "$P/../dsh-patches/overlay" "$P/../mobile-patch" \
+              "$P/../payload-extra" "$P/../tools/diag" \
               -type f ! -name '*.md' 2>/dev/null); do
   if LC_ALL=C tr '\n' '\001' < "$_f" 2>/dev/null | LC_ALL=C grep -q "$(printf '\r\001')"; then
     _lf_hit="$_lf_hit$_f
@@ -59,7 +60,7 @@ if [ -n "$_lf_hit" ]; then
   printf '%s' "$_lf_hit" | head -5
   exit 1
 fi
-echo "  LF 闸门：apply.sh / overlay / mobile-patch 无 CRLF 行尾 ✓"
+echo "  LF 闸门：apply.sh / overlay / mobile-patch / payload-extra / tools/diag 无 CRLF 行尾 ✓"
 
 # 闸门 2：Java 语法体检（字符串/注释感知的括号配平 + "中文引号混入代码"这类低级错误）。
 #   不是编译器，只是让"改 Java 时写坏了"在打包前就暴露。
@@ -156,6 +157,7 @@ if [ -d "$H/runtime/share" ]; then
   echo "  runtime/share: $(du -sh "$P/staging/runtime/share" | cut -f1)"
 fi
 
+
 # ============================================================================
 # W5：设备内 apksig（AOSP apksig，Apache-2.0）—— 让设备端能自己 verify / sign APK
 #
@@ -210,10 +212,17 @@ if [ "${1:-}" = "sign" ]; then
   _extra=""
   [ "$_has_kstype" = 1 ] || _extra="$_extra --ks-type PKCS12"
   [ "$_has_v1" = 1 ] || _extra="$_extra --v1-signing-enabled false"
+  # ⚠ 实测（安卓 agent 报告）：payload 的 liblzma/libz 会盖住系统库 → app_process 起来后报
+  #   `cannot locate symbol "Xzs_Construct" referenced by "/system/lib64/libunwindstack.so"`。
+  #   所以给 app_process **干净的环境**：LD_LIBRARY_PATH 只留系统库目录，并补 ANDROID_ROOT/DATA。
   # shellcheck disable=SC2086
-  CLASSPATH="$DEX" exec app_process /system/bin com.android.apksigner.ApkSignerTool sign $_extra "$@"
+  CLASSPATH="$DEX" ANDROID_DATA=/data ANDROID_ROOT=/system \
+    LD_LIBRARY_PATH=/system/lib64:/system/lib \
+    exec app_process /system/bin com.android.apksigner.ApkSignerTool sign $_extra "$@"
 fi
-CLASSPATH="$DEX" exec app_process /system/bin com.android.apksigner.ApkSignerTool "$@"
+CLASSPATH="$DEX" ANDROID_DATA=/data ANDROID_ROOT=/system \
+  LD_LIBRARY_PATH=/system/lib64:/system/lib \
+  exec app_process /system/bin com.android.apksigner.ApkSignerTool "$@"
 APKSIGNER_EOF
   chmod 755 "$P/staging/runtime/bin/apksigner"
 else
@@ -1166,6 +1175,40 @@ fi
 echo "--- payload 各部分大小 ---"
 du -sh "$P/staging/runtime" "$P/staging/dshroot" "$P/staging/dshhome" "$P/staging/bin"
 
+# v1.25.1：Termux 包的脚本 shebang 指向 **Termux 前缀**（设备上不存在）→ 机械改写为 /system/bin/sh。
+# 实测（安卓 agent 报告）：dx / dx-merge / ecj / ecj-24 / egrep / fgrep / xz* / *-config 等
+# 十几个脚本因此报 "No such file or directory：/data/data/com.termux/files/usr/bin/sh"。
+# ⚠ 放在**打包前**、且**不按执行位过滤**：这些文件在 Windows 上解出来没有 x 位（-a---），
+#   而且有些是本文件后面才写进 staging 的 —— 早做 + 过滤权限会漏（实测漏了 dx/ecj/pcre2-config）。
+_sb_fixed=0
+while IFS= read -r _f; do
+  if head -c 120 "$_f" 2>/dev/null | grep -q '^#!/data/data/com.termux/files/usr'; then
+    sed -i '1s|^#!/data/data/com.termux/files/usr/[^[:space:]]*|#!/system/bin/sh|' "$_f"
+    _sb_fixed=$((_sb_fixed + 1))
+  fi
+done < <(find "$P/staging/runtime" -type f -size -200k 2>/dev/null)
+echo "  Termux shebang 改写：$_sb_fixed 个（改指 /system/bin/sh）"
+_sb_left="$(find "$P/staging/runtime" -type f -size -200k 2>/dev/null \
+  | while IFS= read -r _f; do
+      head -c 120 "$_f" 2>/dev/null | grep -q '^#!/data/data/com.termux/files/usr' && echo "$_f"
+    done | head -3)"
+[ -z "$_sb_left" ] || { echo "!! 仍有 Termux shebang："; printf '%s\n' "$_sb_left"; exit 1; }
+
+# v1.25.1（续）：脚本体里**写死的 Termux 前缀**同样要改。实测（安卓 agent 报告）：
+#   · runtime/bin/dx / dx-merge：`-cp /data/data/com.termux/files/usr/share/dex/dx.jar`
+#   · runtime/bin/*-config：`prefix=/data/data/com.termux/files/usr`
+# 这些路径在设备上不存在（我们的运行时在 <files>/payload/runtime）。只改 runtime/bin 下的小文本文件，
+# 不碰二进制、不动 node 的编译期字符串（node 的 OPENSSLDIR 由 App 注入 OPENSSL_CONF 兜着）。
+_prefix_fixed=0
+_dst_prefix="/data/user/0/$V_APP_ID/files/payload/runtime"
+while IFS= read -r _f; do
+  head -c 200 "$_f" 2>/dev/null | LC_ALL=C grep -q '[^[:print:][:space:]]' && continue   # 含不可打印字符 → 跳过（二进制）
+  if grep -q '/data/data/com\.termux/files/usr' "$_f" 2>/dev/null; then
+    sed -i "s|/data/data/com\.termux/files/usr|$_dst_prefix|g" "$_f"
+    _prefix_fixed=$((_prefix_fixed + 1))
+  fi
+done < <(find "$P/staging/runtime/bin" -type f -size -64k 2>/dev/null)
+echo "  Termux 前缀改写：$_prefix_fixed 个（改指 $_dst_prefix）"
 ( cd "$P/staging" && jar cMf "$P/assets/payload.zip" . )
 echo "payload.zip: $(du -sh "$P/assets/payload.zip" | cut -f1)"
 
@@ -1192,6 +1235,7 @@ _count() {  # $1=目录 → 文件行数
 _sum_bytes() {
   find "$1" -type f -exec stat -c %s {} + 2>/dev/null | awk '{s+=$1} END {print s+0}'
 }
+
 _PAYLOAD_FILES=$(find "$P/staging" -type f | wc -l | tr -d ' ')
 _PAYLOAD_BYTES=$(_sum_bytes "$P/staging")
 _LINKS_N=$(grep -cv '^[[:space:]]*$' "$P/staging/runtime/lib/LINKS.txt" 2>/dev/null || echo 0)

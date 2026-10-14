@@ -54,14 +54,27 @@
 
 | 产物 | 大小 | SHA-256 |
 |---|---|---|
-| `DeepSeekHarness-community-1.19.3-arm64.apk`（真机） | 134.7 MB | `b9591ccaf1de554dc362d61826812c3c737d9cb6b799853e7d10bff1b1650220` |
-| `DeepSeekHarness-community-1.19.3-x86_64.apk`（模拟器） | 114.9 MB | `a0a85a199069440ecee9cfba293d4ff42a911ecda93dab51e6d5dbdfd51c9a0b` |
+| `DeepSeekHarness-community-1.19.3-arm64.apk`（真机） | 134.7 MB | `6111fa42b27834c6ef2243116327f8d7a9a6884cdd662dcd5de749638983dd05` |
+| `DeepSeekHarness-community-1.19.3-x86_64.apk`（模拟器） | 114.9 MB | `3dc2aa89319d655cf3c50075cf0b03a4e1b6fbbc819880064cd399221c669d2c` |
 
 体积构成（相对 v1.19.2 的 ~105 MB）：W3 的 GNU 工具集与设备内构建链 **+21 MB**、remote 插件
 0.4.32→0.5.0 **+9 MB**。两个包都通过构建期闸门：清单 entries/bytes 一致、**16/16 补丁特征串**、
 LF 闸门、Java 语法体检、产物签名校验。
 
-### 六、已知问题
+### 六、设备端实测反馈的修订（2026-10-14，安卓 agent 逐条复验后）
+
+| 反馈 | 核实 | 处理 |
+|---|---|---|
+| `bin/mirror-get` 在设备上 `Permission denied`、且是 CRLF 无法解析 | ✅ 成立（仓库文件 122 处 CRLF；`setExecutables` 没列它，zip 又不存权限位 → 解压成 0600 无 x 位） | 仓库文件转 LF；LF 闸门扩到 `payload-extra/**`、`tools/diag/**`；**App 侧改为给 payload 根 `bin/` 整目录补执行位**（以后新增附加件不会再漏） |
+| W6 自证四条命令只有一条能跑 | ✅ 成立 | `dumpsys package`（设备上 `Permission Denial`）→ 改 `pm list packages --show-versioncode` + 从已安装 APK 提 manifest；资源比对从 `unzip -v \| awk '/CRC-32/'`（**拿表头比、恒等 → 假通过**）改为 `unzip -p … \| sha256sum` |
+| `apksigner verify` 报 `cannot locate symbol "Xzs_Construct" referenced by libunwindstack.so` | ✅ 成立（payload 的 liblzma/libz 盖住系统库） | 包装脚本给 `app_process` **干净环境**：`LD_LIBRARY_PATH=/system/lib64:/system/lib` + `ANDROID_ROOT/ANDROID_DATA` |
+| 31 个脚本 shebang 指向 Termux 前缀，`No such file or directory` | ✅ 成立（实测 18 个 + 体内前缀 9 处） | 构建期**打包前**机械改写：shebang → `#!/system/bin/sh`；体内 `/data/data/com.termux/files/usr` → `/data/user/0/<appId>/files/payload/runtime`；带自检（残留即构建失败） |
+| skill 说「`android.jar` 必须自备」，但 payload 里就有 | ✅ 成立（`runtime/share/java/android.jar` 3,881,757 B + `android-24.jar`） | skill 与 `THIRD_PARTY_NOTICES` §0.1 按事实改写：payload 随包提供、可直接用；**再分发合规性留作维护者决策** |
+| 版本自检「`build-apk.sh` 里有 `payload.zip` 相关代码 = 旧版」会误报 | ✅ 成立（那 5 处是**校验产物自身完整性**用的） | skill 去掉该判据，只保留 `--kernel/--runtime`，并注明 `payload.zip` 字样属正常 |
+
+仍未处理（见下方"待办"）：`aapt2` 的 libc++ 版本不匹配、`ecj`/`dx` 无 JVM、图标未采纳。
+
+### 七、已知问题
 
 1. ~~x86_64 模拟器包：引擎起不来（`library "libz.so.1" not found`）~~ —— **已解决**（v1.25）。
    根因不是载荷：ndk_translation 里 **guest（arm64）加载器完全不看 `LD_LIBRARY_PATH`**，

@@ -5542,6 +5542,16 @@ public class MainActivity extends Activity {
                 if (b.isFile()) b.setExecutable(true, false);
             }
         }
+        // v1.25.1：payload 根 bin/ 也整目录补执行位（bash/git/npm/pnpm… 以及 payload-extra 的
+        // mirror-get）。实测（安卓 agent 报告）：payload.zip 不保存权限位，mirror-get 解出来是
+        // 0600 且无 x 位 → 直接调用报 Permission denied；逐个列名字容易漏（新加附加件就忘一次）。
+        File pbinDir = new File(payload, "bin");
+        File[] pbins = pbinDir.listFiles();
+        if (pbins != null) {
+            for (File b : pbins) {
+                if (b.isFile()) b.setExecutable(true, false);
+            }
+        }
     }
 
     /**

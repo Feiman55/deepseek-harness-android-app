@@ -51,7 +51,8 @@ done
 > **版本自检**：本 skill 描述的是 **v1.25+** 的仓库 —— 单一构建路径（内核来自官方 npm registry +
 > 仓库内冻结 lock、arm64 运行时来自 sha256 pin 的资产），`tools/build-apk.sh` **没有**
 > `--kernel` / `--runtime` 参数，也**不再**下载上游 APK。若你取到的 `tools/build-apk.sh` 里还有
-> 这两个参数或 `payload.zip` 相关代码，说明你拿到的是旧版（改动尚未推到 `master`）——
+> 这两个参数，说明你拿到的是旧版（改动尚未推到 `master`）——
+> （注意：新版 `build-apk.sh` 里**仍会**出现 `assets/payload.zip`，那是构建后**校验产物自身完整性**用的，不是旧版标志。）
 > **以仓库当前 `master` 为准，并在报告里写明这个不一致**，不要照着旧版去猜新参数。
 
 签名命令（`android-app/build.sh` 内部就是这一套）：
@@ -111,8 +112,10 @@ bash tools/build-apk.sh        # 社区版（唯一变体；公开密钥签名�
 - 可以只用用户态工具链（JDK + `d8` + `aapt2` + `apksigner` + 一个 `android.jar`），
   **不需要 Gradle/AGP/SDK 规范布局**；工具链约 0.5–2 GB（进 Gradle/NDK 则更夸张）；
   **v1.19.3 起 `aapt2` / `ecj` / `dx` / `apksigner` 已随 payload 内置**（`runtime/bin/`，
-  不必再装 Termux 的 openjdk），**但 `android.jar` 必须自备** —— 它受 Android SDK 许可约束、
-  不能再分发；用你自己 SDK 里的 `platforms/android-*/android.jar`（`ecj -bootclasspath <android.jar>`）。
+  不必再装 Termux 的 openjdk）。`android.jar` **payload 里已经带着**：
+  `runtime/share/java/android.jar`（+ `android-24.jar`），设备内构建直接用它即可
+  （`ecj -bootclasspath <payload>/runtime/share/java/android.jar`）；若你想用自己的 SDK 版本，
+  用 `platforms/android-*/android.jar` 覆盖也一样。
   只做"改现成包 + 重签"时不需要它（见上一节的"安装后自证"）；
 - 构建本身还会吃 ~1 GB 中间产物与 ~100 MB 产物；
 - **最后一步安装仍需用户确认**（或已授权的 Shizuku）；
@@ -142,7 +145,9 @@ APK="$(pm path $PKG | head -1 | sed 's/package://')"     # 已安装的 base.apk
 BUILT=/sdcard/DeepSeekHarnessCommunity/DeepSeekHarness-community.apk   # 你构建出来的那个
 
 # ① 版本号（最便宜、最先看）
-dumpsys package $PKG | grep -E 'versionCode|versionName' | head -2
+pm list packages --show-versioncode | grep "$PKG"        # → package:… versionCode:58
+# versionName 用包内工具从已安装的 APK 里读（dumpsys 在设备上会 Permission Denial）
+"$P/runtime/bin/unzip" -p "$APK" AndroidManifest.xml | tr -d '\0' | grep -ao '1\.[0-9.]*-community' | head -1
 
 # ② 证书 SHA-256：证明"装的是我签的那份"，不是被换过的旧包
 "$P/runtime/bin/apksigner" verify --print-certs "$APK"     | grep 'SHA-256 digest'
@@ -150,8 +155,9 @@ dumpsys package $PKG | grep -E 'versionCode|versionName' | head -2
 
 # ③ 关键资源条目：图标 + resources.arsc（换包名/换图标最容易出错的就这几项）
 for e in resources.arsc $( "$P/runtime/bin/unzip" -Z1 "$BUILT" | grep -E '^res/.*(mipmap|drawable).*\.(png|xml)$' | head -5 ); do
-  a=$( "$P/runtime/bin/unzip" -v "$APK"   "$e" 2>/dev/null | awk '/CRC-32/{print $1, $3}' )
-  b=$( "$P/runtime/bin/unzip" -v "$BUILT" "$e" 2>/dev/null | awk '/CRC-32/{print $1, $3}' )
+  # ⚠ 不要用 `unzip -v | awk '/CRC-32/…'`：那是拿**表头行**在比，任何两个包都"相等"（假通过）。
+  a=$( "$P/runtime/bin/unzip" -p "$APK"   "$e" 2>/dev/null | sha256sum | cut -c1-16 )
+  b=$( "$P/runtime/bin/unzip" -p "$BUILT" "$e" 2>/dev/null | sha256sum | cut -c1-16 )
   [ "$a" = "$b" ] && echo "OK   $e  ($a)" || echo "差异 $e  已装=$a 构建=$b"
 done
 

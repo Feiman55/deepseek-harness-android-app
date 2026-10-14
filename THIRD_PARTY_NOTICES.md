@@ -31,8 +31,12 @@
 W5 的「设备内从零构建链」需要四样：`aapt2`、`ecj`、`dx`（三者随运行时资产分发，许可见其
 `share/doc/*/COPYING*`）与 **`android.jar`**。最后一样**故意不随包分发**：
 
-- Android SDK 里 `platforms/android-*/android.jar` 受 **Android SDK 许可条款**约束，**不允许再分发**
-  （AOSP 自行构建的 android.jar 是 Apache-2.0，但那不是 SDK 里这一份）；
+- ⚠ **现状（2026-10 核实）**：本仓库的 payload 里**确实带着**
+  `runtime/share/java/android.jar`（3,881,757 B）与 `android-24.jar`（3,296,407 B），
+  设备内构建可直接用 —— 因此本说明**不再声称"不分发 android.jar"**；
+  按 Android SDK 许可条款，SDK 里的 `platforms/android-*/android.jar` **不允许再分发**
+  （AOSP 自行构建的才是 Apache-2.0），**这两个文件的去留属于维护者的合规决策**，
+  本仓库只是如实记录其存在；
 - 正确做法：**用你自己的 SDK**，把它放到设备上任意路径，构建时用 `-bootclasspath` / `-classpath` 指过去；
 - 只做「改现成包 + 重签」时**根本不需要 android.jar**（用内置 `apksigner` 即可，见 §0）。
 
