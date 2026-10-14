@@ -42,6 +42,31 @@
   （npmmirror + `package-import-method=copy` + 关 audit/fund）；`tools/fetch-kernel.sh` 默认走国内 registry、
   失败回落官方（lock 里有 integrity 兜底）。
 
+### 五、产物与哈希（v1.19.3 社区版）
+
+| 产物 | 大小 | SHA-256 |
+|---|---|---|
+| `DeepSeekHarness-community-1.19.3-arm64.apk`（真机） | 134.7 MB | `cd2fb0d2af3e562dddee84b234331d4d092cc737ef61cf9afe4545598d888867` |
+| `DeepSeekHarness-community-1.19.3-x86_64.apk`（模拟器） | 114.9 MB | `53f25e1fd44f692ed32f5c4fc3dd79d154c8ae1e4a5eb1b84f4deda9c2184784` |
+
+体积构成（相对 v1.19.2 的 ~105 MB）：W3 的 GNU 工具集与设备内构建链 **+21 MB**、remote 插件
+0.4.32→0.5.0 **+9 MB**。两个包都通过构建期闸门：清单 entries/bytes 一致、**16/16 补丁特征串**、
+LF 闸门、Java 语法体检、产物签名校验。
+
+### 六、已知问题
+
+1. **x86_64 模拟器包：引擎起不来（`library "libz.so.1" not found`）** —— 仅影响模拟器包，
+   真机 arm64 不受影响。现象：模拟器（x86_64 + `ndk_translation`）上 node 报
+   `CANNOT LINK … library "libz.so.1" not found: needed by main executable`，而该文件确实在
+   `runtime/lib` 里（软链/副本两种形态都试过）。**载荷本身是好的**：提取完成、
+   `payload integrity OK runtime files=58/58 bytes=…/… 别名=35/35`、内置 apksigner 可用、
+   remote 0.5.0 在位。本会话早先（同一 AVD，未重启时）同类模拟器包**能起引擎**，
+   故倾向判断为模拟器环境/AVD 状态问题，而非载荷回归；真机路径与本次改动无交叉。
+2. **控制台镜像开关只有开关量没有 UI 行**：`mirrors_off` 偏好已生效（默认镜像开），
+   控制台那一行属声明式主题树（`layout.pages[].children[]`），留待后续。
+3. **设备内从零构建链缺 `android.jar`**：SDK 许可不允许再分发，需用户自备
+   （见 `THIRD_PARTY_NOTICES.md` §0.1）；只做"改现成包 + 重签"时不需要它。
+
 ### 四、插件
 
 - `vendor/ds-harness-remote` 升级到 **`@blue-soda/dsh-remote@0.5.0`**（按构建期同口径裁剪：

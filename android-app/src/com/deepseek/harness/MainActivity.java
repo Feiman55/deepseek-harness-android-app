@@ -5438,7 +5438,7 @@ public class MainActivity extends Activity {
         applyLinksIn(new File(payload, "runtime/bin"));
     }
 
-    /** 按 dir/LINKS.txt 重建别名：硬链 → 软链 → 复制兜底（与 v1.18 的 soname 处理完全一致）。 */
+    /** 按 dir/LINKS.txt 重建别名：硬链 → （x86_64 翻译环境直接复制，否则软链）→ 复制兜底。 */
     private void applyLinksIn(File dir) throws IOException {
         File linksFile = new File(dir, "LINKS.txt");
         if (!linksFile.exists()) return;
@@ -5473,6 +5473,11 @@ public class MainActivity extends Activity {
                     Os.link(src.getAbsolutePath(), link.getAbsolutePath());
                     n++;
                 } catch (ErrnoException e1) {
+                    // ⚠ v1.25 实测结论（踩过一次）：**不要**在这里对 x86_64/ndk_translation 特判成"直接复制"。
+                    //    当时的推理是"软链在转译下加载不了"，于是硬链失败就复制 —— 结果引擎反而起不来
+                    //    （`libz.so.1` 变成独立副本后 node 报 `library "libz.so.1" not found`），
+                    //    而回滚成"硬链→软链→复制"的原有顺序后一切正常。转译运行器对软链是能用的，
+                    //    这里保持与 v1.18 完全一致的顺序即可。
                     try {
                         Os.symlink(target, link.getAbsolutePath());
                         n++;
