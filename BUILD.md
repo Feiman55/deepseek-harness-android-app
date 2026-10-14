@@ -293,6 +293,10 @@ x86_64 模拟器靠 `ndk_translation` 跑 arm64 的 node。踩过的坑与结论
 上游只出 **arm64** 产物。x86_64 模拟器要靠 `ndk_translation` 转译，需要额外两步
 （**真机 arm64 完全不需要**）：
 
+> **懒人路径**：`bash tools/emu-start.sh [AVD名]` 会把下面这些前提一次做全
+> （带 `-writable-system` 与 `-gpu swiftshader_indirect` 启动、等启动完成、`adb root && adb remount`、
+> 补 guest 库），并避开两个坑：管道截断会让模拟器跟着退出、漏 `-gpu swiftshader_indirect` 会崩。
+
 1. **模拟器镜像必须是 userdebug**（`google_apis`，**不能**是 `google_apis_playstore`），
    否则 `adb root` / `adb remount` 被禁，无法补库；
 2. **必须带 `-writable-system` 启动**，否则 AVD 的可写 system 覆盖层不挂载，第 3 步补的库会“消失”

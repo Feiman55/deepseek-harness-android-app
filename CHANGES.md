@@ -16,6 +16,14 @@
   → node-pty **嵌套路径**覆盖（AArch64 自检）→ 前端补丁（mobile.css/js/viewport，打在 staging 上）。
 - **闸门**：LF（设备端/overlay 不得 CRLF 行尾）、Java 语法体检、BOM、清单 entries/bytes、15 条补丁签名、
   产物签名；校验对象从 devhome 改为 **staging**（真正进包的树）。
+- **模拟器（x86_64）一条命令到底**：`--emulator` 除了改包（x86_64 三库覆盖、排除 arm64-only 文件、
+  产物加 `-x64` 后缀），现在还会在**检测到已连接模拟器时自动补 guest 库** ——
+  x86_64 模拟器靠 `ndk_translation` 跑 arm64 的 node，而 guest 加载器**不认 `LD_LIBRARY_PATH`**，
+  只搜镜像的 `/system/lib64/arm64/`，那里缺 `libz.so.1` / `libc++_shared.so` / `libicu*.so.78`。
+  自动补库失败只告警不中断；可用 `--no-emu-libs` 跳过。前提：模拟器镜像为 **userdebug**
+  且用 **`-writable-system`** 启动（`tools/emu-start.sh` 把这些前提一次做全：选 AVD →
+  带 `-writable-system -gpu swiftshader_indirect` 启动 → `adb root && adb remount` → 补库）。
+  想手动补：`python tools/emu-arm64libs.py`。**真机 arm64 不需要这一步。**
 - **上游产品化说明**：`--original-look`（原版图标 + 原版悬浮窗）、`--emulator`（x86_64 适配）、
   `--clean` / `--out` / `--keystore` / `--smoke` 保留。
 

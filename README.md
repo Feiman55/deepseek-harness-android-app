@@ -70,6 +70,8 @@ bash tools/build-apk.sh
 ```
 
 需要 `android.jar` 与 JDK；社区版使用仓库内的**公开密钥** `android-app/community.jks`。
+模拟器（x86_64）调试：`bash tools/emu-start.sh` 会带 `-writable-system` 启动模拟器、remount 并
+补好 guest 库；随后 `bash tools/build-apk.sh --emulator`（会自动补库）＋ `adb install -r` 即可。
 详见 [BUILD.md](BUILD.md) 与 [android-app/README.md](android-app/README.md)。
 
 ## 🙏 致谢与许可
