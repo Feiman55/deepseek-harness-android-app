@@ -75,6 +75,30 @@ done
 if [ -n "$PY_BIN" ]; then
   _java_files=$(find "$P/src" -name '*.java' 2>/dev/null)
   # shellcheck disable=SC2086
+
+# ── ESM 语法闸门（本版新增）──────────────────────────────────────────────────
+# 我们把「Android 环境陷阱」注入到内核插件的**工具描述模板字面量**里，一旦文本含反引号，
+# 模板会提前闭合 → 运行时 compileSourceTextModule 抛 SyntaxError（`node --check` 抓不到，
+# 它按 CJS 解析 ESM 文件）。真实事故：dsh-tool-bash 编译失败 → tool-bash 永远起不来 →
+# 所有 agent preset 报 "tool-bash: never started"。
+# ⚠ 必须检查 **staging 里的对应文件**：overlay 目录只放被改的文件、没有 package.json，
+#   按 overlay 路径判定 ESM/CJS 会误判成 CJS 而跳过（第一版闸门就这么漏掉了它）。
+if command -v node >/dev/null 2>&1; then
+  _esm_files=""
+  while IFS= read -r _f; do
+    _rel="${_f#"$P/../dsh-patches/overlay/"}"
+    _stage="$P/staging/dshroot/$_rel"
+    if [ -f "$_stage" ]; then _esm_files="$_esm_files $_stage"; else _esm_files="$_esm_files $_f"; fi
+  done <<EOF
+$(find "$P/../dsh-patches/overlay" -type f -name '*.js' 2>/dev/null)
+EOF
+  # shellcheck disable=SC2086
+  node --experimental-vm-modules "$P/../tools/esm-syntax-check.mjs" $_esm_files \
+    || { echo "!! ESM 语法闸门未通过（上面列出的文件编译失败）——修正后再构建"; exit 1; }
+else
+  echo "  （本机没有 node：跳过 ESM 语法闸门）"
+fi
+
   "$PY_BIN" "$P/../tools/java-syntax-sanity.py" $_java_files || { echo "!! Java 语法体检未通过（见上）"; exit 1; }
   echo "  Java 语法体检：$(printf '%s\n' "$_java_files" | grep -c . ) 个文件 ✓（$PY_BIN）"
 else
