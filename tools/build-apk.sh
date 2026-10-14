@@ -25,6 +25,7 @@ OUT="$REPO/android-app/DeepSeekHarness.apk"
 KEYSTORE=""
 DO_CLEAN=0
 DO_EMULATOR=0
+DO_EMU_LIBS=1
 DO_VERIFY=1
 DO_SMOKE=0
 ANDROID_JAR_OPT=""
@@ -75,6 +76,7 @@ while [ $# -gt 0 ]; do
     --out)      OUT="${2:?}"; OUT_SET=1; shift 2 ;;
     --cache)    CACHE="${2:?}"; shift 2 ;;
     --emulator) DO_EMULATOR=1; shift ;;
+    --no-emu-libs) DO_EMU_LIBS=0; shift ;;
     --original-look) DO_ORIGINAL_LOOK=1; shift ;;
     --smoke)    DO_SMOKE=1; shift ;;
     --no-verify) DO_VERIFY=0; shift ;;
@@ -477,6 +479,40 @@ if [ "$DO_SMOKE" = 1 ]; then
 fi
 
 mark "记录构建信息"
+
+# ── v1.25：模拟器包**自动**补 guest 库（让 `--emulator` 真的"一个参数就够"）──────────────
+# 为什么必须做：x86_64 模拟器靠 ndk_translation 跑 arm64 的 node，而**guest 加载器不认
+# LD_LIBRARY_PATH**（实测三种形态同样报 `library "libz.so.1" not found`），只搜镜像的
+# guest 库目录 /system/lib64/arm64/ —— 那里只有 libz.so，没有 libz.so.1 / libc++_shared.so /
+# libicu*.so.78。只打 `--emulator` 包**不足以**在模拟器上跑起来（历史流程里这一步是
+# `tools/emu-guestlibs.sh` 手工做的；2026-10 的脚本清理误把它当"重复脚本"删掉，
+# 于是"以前加个参数就行"失效 —— 这次把它并回构建流程）。
+# 失败**只告警不中断**：构建产物本身是好的，环境不满足（未 -writable-system 启动等）时
+# 打印确切修法即可。想跳过：--no-emu-libs
+if [ "$DO_EMULATOR" = 1 ] && [ "$DO_EMU_LIBS" = 1 ]; then
+  EADB="${ANDROID_HOME:-$SDK}/platform-tools/adb"
+  [ -f "$EADB.exe" ] && EADB="$EADB.exe"
+  # python 探活（Store 版 python3 是 stub，会以非 0 退出；必须 -c 试一下）
+  EPY=""
+  for c in python3 python py; do
+    if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import sys' >/dev/null 2>&1; then EPY="$c"; break; fi
+  done
+  echo
+  if [ -z "$EPY" ]; then
+    warn "--emulator：本机没有可用的 python，跳过 guest 库安装（手动跑：python tools/emu-arm64libs.py）"
+  elif "$EADB" devices 2>/dev/null | grep -qE '^emulator-[0-9]+\s+device'; then
+    info "附加：把 node 的 arm64 依赖补进模拟器 guest 库目录（/system/lib64/arm64/）"
+    if "$EPY" "$REPO/tools/emu-arm64libs.py" --adb "$EADB" 2>&1 | sed 's/^/   /'; then
+      echo "   ✓ 模拟器已具备运行条件（App 内点「启动引擎」即可）"
+    else
+      warn "补库未成功。模拟器必须用 -writable-system 启动，并先 adb root && adb remount；"
+      warn "详见 BUILD.md §6（也可手动跑：python tools/emu-arm64libs.py）"
+    fi
+  else
+    echo "   （--emulator：未检测到已连接的模拟器，跳过 guest 库安装）"
+    echo "    接上模拟器后跑一次：python tools/emu-arm64libs.py"
+  fi
+fi
 
 echo
 echo "✅ 构建完成：$OUT"

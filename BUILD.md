@@ -300,22 +300,30 @@ x86_64 模拟器靠 `ndk_translation` 跑 arm64 的 node。踩过的坑与结论
    `CANNOT LINK EXECUTABLE ... library "libz.so.1" not found`）。
    Android Studio 默认**不带**这个开关 —— 在 Device Manager → 编辑该 AVD →
    *Additional emulator command line options* 里填 `-writable-system`；
-3. **每次（重新）启动后补一次 guest 库**：
+3. **每次（重新）启动后补一次 guest 库** —— 现在**已并回构建流程**：
 
-   ```sh
+   ```bash
+   bash tools/build-apk.sh --emulator          # 产物出来后自动补库（检测到模拟器时）
+   # 想跳过自动补库：--no-emu-libs
+   # 模拟器是构建之后才接上的，手动补一次即可（幂等）：
    adb root && adb remount
-   adb push tools/diag/emu-guestlibs.sh /data/local/tmp/
-   adb shell sh /data/local/tmp/emu-guestlibs.sh com.deepseek.harness.community
+   python tools/emu-arm64libs.py               # 可加 --dry-run 先看清单
    ```
 
-   脚本把 payload 里 arm64 的 soname（`libz.so.1`、`libsqlite3.so`、`libicui18n.so.78`、
-   `libicuuc.so.78`、`libicudata.so.78` …）按 `LINKS.txt` 补进 `/system/lib64/arm64/`，
-   并跑 `node -v` 自检。**为什么不能靠 `LD_LIBRARY_PATH`**：实测把同名实体文件放进 LD 路径依然报
-   `libz.so.1 not found`，guest 链接器只搜那个目录；真机 arm64 完全不需要这些。
+   脚本把 node 需要的 arm64 库（`libz.so.1`、`libsqlite3.so`、`libcui18n.so.78`、`libicuuc.so.78`、
+   `libicudata.so.78`、`libc++_shared.so`、`libssl.so.3`、`libcrypto.so.3`、`libcares.so`、`libffi.so`，
+   约 46 MB）按 soname 补进 `/system/lib64/arm64/`。**为什么不能靠 `LD_LIBRARY_PATH`**：实测把同名
+   实体文件（软链 / aarch64 实体 / x86_64 实体三种形态）放进 LD 路径依然报 `libz.so.1 not found`，
+   guest 链接器只搜那个目录；真机 arm64 完全不需要这些。
 
-构建时加 `--emulator`
-会自动带上需要的开关（`DSH_X64_BARE_LIBS`），但你仍需自备
-`x86_64` 的 `libz.so`/`libssl.so`/`libcrypto.so`（从模拟器 `/system/lib64/` 取）。
+   > 历史说明（2026-10 修正）：这一步原本由 `tools/emu-guestlibs.sh` 手工完成，
+   > 该脚本在仓库清理时被误判为"重复脚本"删除，而文档仍指向它 → 照文档做会"找不到脚本"，
+   > 表现就是"以前加个参数就能跑、现在不行了"。现在它由 `tools/emu-arm64libs.py` 承担，
+   > 且 `--emulator` 会自动调用，不再需要手工记这一步。
+
+构建时加 `--emulator` 会自动带上包侧需要的开关（`DSH_X64_BARE_LIBS`），并**自动**给已连接的
+模拟器补 guest 库；你仍需自备 `x86_64` 的 `libz.so`/`libssl.so`/`libcrypto.so`
+（从模拟器 `/system/lib64/` 取，放进 `.cache/x64libs/`）。
 
 ---
 
