@@ -12207,7 +12207,7 @@ public class MainActivity extends Activity {
                         conToast(on ? "已开启：在本应用内也能看到悬浮窗" : "已关闭：回到前台自动隐藏");
                         renderConsole();
                     }}), cWidth(1f, 0));
-            col.addView(swRow, cTop(cGap(10)));
+            col.addView(swRow, cTop(cGap(20)));      // 与下一组（滑动条）之间留出间距
 
             // ── 第二行：两个滑动条并排 ──
             final int[] alphaPct = { Math.round(OverlayService.avatarAlpha() * 100f) };
@@ -12284,7 +12284,7 @@ public class MainActivity extends Activity {
             colB.addView(tActs, cTop(cGap(6)));
             seekRow.addView(colB, cWidth(1f, 0));
 
-            col.addView(seekRow, cTop(cGap(12)));
+            col.addView(seekRow, cTop(cGap(20)));    // 与下一组（消息模板卡）之间留出间距
         }
 
         final EditText eIdle  = cMsgInput(OverlayService.msgIdle(),  "摸鱼中…");
@@ -12300,7 +12300,7 @@ public class MainActivity extends Activity {
         box.addView(cMsgRow(t("title.bubbleTool", "调用工具时"), eTool, OverlayService.KIND_TOOL));
         box.addView(cCardSep());
         box.addView(cMsgRow(t("title.bubbleDone", "结束时"), eDone, OverlayService.KIND_DONE));
-        col.addView(box, cTop(cGap(10)));
+        col.addView(box, cTop(cGap(20)));        // 消息模板卡与上方滑条组之间留出间距
 
         col.addView(cNote(t("desc.bubbleDefaults",
                 "默认：空闲「摸鱼中…」· 思考「思考中…」· 工具「正在调用 {tool}…」· 结束「任务已完成」。"

@@ -596,6 +596,7 @@ public class OverlayService extends Service {
         // 通知栏「显示小鲸鱼」：解除用户隐藏并抖一下示意
         if (intent != null && ACTION_SHOW.equals(intent.getAction())) {
             setUserHidden(false);
+            resetIfParkedAtBottom();     // 被拖到屏幕底部关掉的 → 复位到起始的左上方区域
             applyVisibleNow();
             wiggle();
         }
@@ -976,6 +977,8 @@ public class OverlayService extends Service {
             if (rootView != null) {
                 // ① App 在前台 → 默认隐藏（不挡界面）；但用户开了「在 App 内也显示」就不隐藏。
             boolean show = (!foregroundWantsHidden || sShowInApp) && !userHidden;
+            // 兜底：显示时缩放必须是 1（拖底隐藏动画会把 scale 压到 0.5）
+            if (show) { rootView.setScaleX(1f); rootView.setScaleY(1f); }
                 rootView.setVisibility(show ? View.VISIBLE : View.GONE); layoutCompanions();   // v1.21（重构）：小人隐藏时气泡/面板一起收
             }
         } catch (Throwable ignored) {}
@@ -1509,6 +1512,10 @@ public class OverlayService extends Service {
                     .withEndAction(new Runnable() { @Override public void run() {
                         try {
                             rootView.setAlpha(1f);
+                            // ⚠ 必须同时复位缩放：隐藏动画把 scaleX/Y 压到 0.5，
+                            //   只复位 alpha 的话，下次显示出来就是"缩小版"（维护者真机反馈）。
+                            rootView.setScaleX(1f);
+                            rootView.setScaleY(1f);
                             setDismissHintInternal(false);
                             applyVisibleNow();
                         } catch (Throwable ignored) {}
@@ -1521,6 +1528,27 @@ public class OverlayService extends Service {
                     "小鲸鱼已隐藏：在「控制台 → 悬浮窗消息」里点「显示小鲸鱼」即可恢复"
                             + "（也可展开本通知点『显示小鲸鱼』）", android.widget.Toast.LENGTH_LONG).show();
         } catch (Throwable ignored) {}
+    }
+
+    /**
+     * 如果小人是被「拖到屏幕底部」关掉的，重新显示时把位置复位到**起始的左上方区域**
+     * （初始位置见 addToWindow：dp(12), dp(160)），否则它会从屏幕底部"冒出来"。
+     * 只在窗口确实停在屏幕下三分之一时复位，避免干扰用户自己摆好的位置。
+     */
+    private void resetIfParkedAtBottom() {
+        try {
+            if (lp == null || rootView == null) return;
+            int screenH = getResources().getDisplayMetrics().heightPixels;
+            int h = rootView.getHeight() > 0 ? rootView.getHeight() : dp(56);
+            if ((lp.y + h / 2) <= screenH * 0.72f) return;      // 不在底部 → 保持原样
+            snappedRight = false;
+            lp.y = dp(160);                                     // 与初始 y 一致
+            lp.x = dp(12);
+            snapToEdge();                                       // 重算贴边 x 并同步气泡/面板
+            android.util.Log.i("DSHOverlay", "reset parked avatar -> y=" + lp.y + " x=" + lp.x);
+        } catch (Throwable t) {
+            android.util.Log.w("DSHOverlay", "resetIfParkedAtBottom failed", t);
+        }
     }
 
     private void clampPanelOnScreen() {
