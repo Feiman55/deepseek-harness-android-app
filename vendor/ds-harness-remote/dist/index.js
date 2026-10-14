@@ -13462,7 +13462,7 @@ function normalizeServerUrl(value) {
 }
 
 // src/version.ts
-var PLUGIN_VERSION = "0.5.1";
+var PLUGIN_VERSION = "0.5.2";
 
 // src/server-api.ts
 var ENABLED_QR_PROVIDERS = ["github"];

@@ -43,7 +43,7 @@ DSH 只有看到它在 bundles 里才会组合进插件树。
 
 | 插件 | 版本 | 来源 | 说明 |
 |---|---|---|---|
-| `ds-harness-remote` | **0.5.1** | npm `@blue-soda/dsh-remote`（同源仓库 `github:blue-soda/ds-harness-remote` 的 `packages/plugin`）| 端到端加密的远程访问（桌面/网页/安卓互连）。自带 `dist/index.js` + `dist/client.github.js`；运行时依赖 `qrcode`/`werift`/`ws`/`zod` 一并内置，`@deepseek-ai/schemastery` 由内核树嵌套路径提供、不内置。 |
+| `ds-harness-remote` | **0.5.2** | npm `@blue-soda/dsh-remote`（同源仓库 `github:blue-soda/ds-harness-remote` 的 `packages/plugin`）| 端到端加密的远程访问（桌面/网页/安卓互连）。自带 `dist/index.js` + `dist/client.github.js`；运行时依赖 `qrcode`/`werift`/`ws`/`zod` 一并内置，`@deepseek-ai/schemastery` 由内核树嵌套路径提供、不内置。 |
 
 ## 更新步骤（人工）
 
@@ -152,3 +152,9 @@ bash tools/build-apk.sh
 > `dist/` 拆得更细，体积基本持平）。
 > 随包校验：重新构建后在引擎日志里确认出现 `[dsh-remote] host identity ready …`，且 payload 内
 > `dshhome/profiles/web/node_modules/ds-harness-remote/package.json` 的 version = 0.5.1。
+
+> **2026-10-14 更新到 0.5.2**：仍走**方式 A**（npm 发布版），国内镜像
+> `https://registry.npmmirror.com/@blue-soda/dsh-remote/-/dsh-remote-0.5.2.tgz` 直接命中。
+> `dependencies` 与 0.5.1 **逐项一致** → `node_modules/` 原样保留；整包替换 + 按口径裁剪
+> （丢 `*.map` / `*.d.ts` / `test(s)` / `example(s)` / `docs` / `.bin`）后：**66 文件 / 2.25 MB**。
+> 与 0.5.1 同一批处理方式，随后重新构建三个包并在模拟器验收（含"覆盖安装也能拿到新版"）。

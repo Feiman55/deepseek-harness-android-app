@@ -12219,7 +12219,8 @@ public class MainActivity extends Activity {
             // 左列：透明度
             LinearLayout colA = new LinearLayout(this);
             colA.setOrientation(LinearLayout.VERTICAL);
-            final TextView alphaLab = cText("透明度 " + alphaPct[0] + "%", 12.5f, cSub(), false);
+            // 与第一行标题同字号同色（13.5sp + 主文字色），让第二行看起来是独立功能
+            final TextView alphaLab = cText("透明度 " + alphaPct[0] + "%", 13.5f, cText(), false);
             colA.addView(alphaLab, cTop(cGap(10)));
             final SeekBar sbAlpha = cStyledSeek(80, alphaPct[0] - 20);          // 0.2~1.0
             sbAlpha.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
@@ -12253,7 +12254,7 @@ public class MainActivity extends Activity {
             // 右列：静止贴边露出比例
             LinearLayout colB = new LinearLayout(this);
             colB.setOrientation(LinearLayout.VERTICAL);
-            final TextView tuckLab = cText("静止时悬浮窗露出比例 " + tuckPct[0] + "%", 12.5f, cSub(), false);
+            final TextView tuckLab = cText("静止时悬浮窗露出比例 " + tuckPct[0] + "%", 13.5f, cText(), false);
             colB.addView(tuckLab, cTop(cGap(10)));
             final SeekBar sbTuck = cStyledSeek(85, tuckPct[0] - 15);            // 0.15~1.0
             sbTuck.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
@@ -12284,7 +12285,7 @@ public class MainActivity extends Activity {
             colB.addView(tActs, cTop(cGap(6)));
             seekRow.addView(colB, cWidth(1f, 0));
 
-            col.addView(seekRow, cTop(cGap(20)));    // 与下一组（消息模板卡）之间留出间距
+            col.addView(seekRow, cTop(cGap(32)));    // 与上一组（开关行）之间留间距
         }
 
         final EditText eIdle  = cMsgInput(OverlayService.msgIdle(),  "摸鱼中…");
@@ -12300,7 +12301,7 @@ public class MainActivity extends Activity {
         box.addView(cMsgRow(t("title.bubbleTool", "调用工具时"), eTool, OverlayService.KIND_TOOL));
         box.addView(cCardSep());
         box.addView(cMsgRow(t("title.bubbleDone", "结束时"), eDone, OverlayService.KIND_DONE));
-        col.addView(box, cTop(cGap(20)));        // 消息模板卡与上方滑条组之间留出间距
+        col.addView(box, cTop(cGap(32)));        // 消息模板卡与上方滑条组之间留出间距
 
         col.addView(cNote(t("desc.bubbleDefaults",
                 "默认：空闲「摸鱼中…」· 思考「思考中…」· 工具「正在调用 {tool}…」· 结束「任务已完成」。"
@@ -12317,17 +12318,21 @@ public class MainActivity extends Activity {
             conToast("已保存 · 悬浮窗下次刷新就用新文案");
             renderConsole();          // 重绘：留空的会显示成默认值
         }});
-        acts.addView(save, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        Button reset = cButton(t("btn.bubbleReset", "恢复默认"), false);
+        Button reset = cButton(t("btn.bubbleReset", "恢复默认值"), false);
         reset.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
             OverlayService.resetMessages(MainActivity.this);
             conToast("已恢复默认文案");
             renderConsole();
         }});
-        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        rlp.leftMargin = dp(8);
-        acts.addView(reset, rlp);
-        col.addView(acts, cTop(cGap(14)));
+        // 顺序与第二行（滑动条）一致：先「恢复默认值」、后「保存」
+        relaxButtonMin(reset);
+        relaxButtonMin(save);
+        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        acts.addView(reset, slp);
+        LinearLayout.LayoutParams vlp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        vlp.leftMargin = dp(8);
+        acts.addView(save, vlp);
+        col.addView(acts, cTop(cGap(18)));
     }
 
     /** 一行：标题 + 输入框 + 「预览」。 */

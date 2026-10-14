@@ -670,7 +670,7 @@ public class OverlayService extends Service {
         show.setAction(ACTION_SHOW);
         PendingIntent showPi = PendingIntent.getService(this, 1, show,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        try { b.addAction(new Notification.Action.Builder(null, "显示小鲸鱼", showPi).build()); }
+        try { b.addAction(new Notification.Action.Builder(null, "显示悬浮窗", showPi).build()); }
         catch (Throwable ignored) {
             // 老系统 Action.Builder(null, ...) 不吃图标时退化：不显示动作也不影响主流程
         }
@@ -1525,8 +1525,8 @@ public class OverlayService extends Service {
         }
         try {
             android.widget.Toast.makeText(getApplicationContext(),
-                    "小鲸鱼已隐藏：在「控制台 → 悬浮窗消息」里点「显示小鲸鱼」即可恢复"
-                            + "（也可展开本通知点『显示小鲸鱼』）", android.widget.Toast.LENGTH_LONG).show();
+                    "悬浮窗已隐藏：在「控制台 → 悬浮窗消息」里点「显示悬浮窗」即可恢复"
+                            + "（也可展开本通知点『显示悬浮窗』）", android.widget.Toast.LENGTH_LONG).show();
         } catch (Throwable ignored) {}
     }
 
