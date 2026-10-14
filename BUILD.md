@@ -270,6 +270,36 @@ x86_64 模拟器靠 `ndk_translation` 跑 arm64 的 node。踩过的坑与结论
    · 用 `| Select-Object -First N` 之类的**管道截断**启动模拟器，管道一关模拟器就退出；
    · 漏掉 `-gpu swiftshader_indirect` 时宿主端可能直接崩溃（`EXCEPTION_ACCESS_VIOLATION`）。
 
+### 6.2 为什么 x86_64 包比 arm64 包小约 20 MB
+
+以 v1.19.3 的两个产物为例（`arm64` 134.7 MB / `x86_64` 114.9 MB）。按 **payload.zip 的压缩后体积**
+逐子树对比（压缩后体积才直接决定 APK 大小）：
+
+| 子树 | arm64 | x86_64 | 差值 | 差在哪 |
+|---|---|---|---|---|
+| `runtime/share` | 12.5 MB / 757 文件 | **0 / 0 文件** | **+12.5 MB** | Termux 的 share 树：`man` 438、`doc` 194、`terminfo` 40、`awk`（awklib）29、`info` 29、`readline` 19 … |
+| `runtime/bin` | 21.2 MB / 60 文件 | 17.1 MB / **5 文件** | **+4.1 MB** | x64 只剩 `node`(48.5 MB 未压缩)、`rg`、`curl`、`apksigner`、`LINKS.txt`；少的 55 个里最大的是 `aapt2` 3.5 MB、`coreutils` 1.3 MB、`gawk` 1.0 MB、`openssl` 0.94 MB，以及 `tar/find/less/grep/diff/sed/zip/zstd/xz/patch/jq` … |
+| `runtime/lib` | 28.7 MB / 164 文件 | 25.7 MB / 52 文件 | **+3.0 MB** | 少的 112 个是 Termux 库（libpcre2、libgmp、libncursesw、libreadline、libpng16、protobuf/abseil 等） |
+| **合计** | **126.8 MB** | **107.2 MB** | **19.6 MB** | 与 APK 体积差 19.8 MB 对得上（x86_64 只**多**了 3 个覆盖库 `libz.so`/`libssl.so`/`libcrypto.so`，未压缩约 2.8 MB） |
+
+**为什么排除它们 —— 不只是省体积，更是正确性要求：**
+
+- 被排掉的 927 个文件（`config/runtime-tools-files.txt`，脚本生成；构建日志会打印"已排除 N 个"）
+  全是 **arm64 ELF**：在 x86_64 模拟器上根本跑不起来（见 §6.1：guest 加载器不认 `LD_LIBRARY_PATH`）；
+- 更要紧的是**它们的库会绊倒 host 侧转译运行器** —— 现象就是
+  `CANNOT LINK … is for EM_AARCH64 (183) instead of EM_X86_64 (62)`，**引擎直接起不来**。
+  也就是说：不排除的话，x86_64 包连引擎都跑不起来。
+
+**由此决定的验收分工（别搞错）：**
+
+| 能/该在哪验证 | 内容 |
+|---|---|
+| **模拟器（x86_64 包）** | 引擎启动、Web 界面与接口、remote 插件加载、载荷提取与完整性检查、**内置 apksigner**（apksig 是 dex，与架构无关：`--version` → 0.9、`verify --print-certs`、`sign`） |
+| **真机（arm64 包）** | GNU 工具集行为（如 toybox 与 GNU `grep 'a\|b'` 的差别）、`less`+terminfo、`aapt2`/`ecj`/`dx` 的设备内从零构建链、以及一切需要 arm64 原生的部分 |
+
+> 若强行让 x86_64 包也带上这些工具，就得同时解决"arm64 库与转译运行器冲突"的问题，
+> 得不偿失；建议保持"模拟器验流程、真机验工具链"的分工。
+
 
 
 > **`DSH_X64_BARE_LIBS` 里要放哪些库（v1.25 起由目录内容决定）**：构建期会把该目录（默认
