@@ -4585,6 +4585,7 @@ public class MainActivity extends Activity {
             if (action.isEmpty()) action = "status";
             if (action.equals("status")) {
                 return "{\"ok\":true,\"running\":" + OverlayService.isRunning
+                        + ",\"hidden\":" + OverlayService.isUserHidden()
                         + ",\"engineUp\":" + OverlayService.engineUp
                         + ",\"granted\":" + (Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(this)) + "}";
             }
@@ -11962,13 +11963,81 @@ public class MainActivity extends Activity {
      * 送结构化 `state`，App 据此套模板 —— 不靠中文文案匹配，所以用户改了气泡文案、
      * 或插件将来换措辞，都不会影响判类。
      */
+    /**
+     * 与「插件」页 `cToggle` **同一外观**（conTogglePaint）的开关，但动作由调用方给 ——
+     * 供「显示悬浮窗」这类不是插件开关的地方用。点击后不改自己的 tag 之外的事，
+     * 由调用方决定重绘（我们这边是 renderConsole()）。
+     */
+    private TextView cToggleAction(boolean on, final Runnable act) {
+        final TextView t = new TextView(this);
+        t.setTag(Boolean.valueOf(on));
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f);
+        t.setPadding(dp(12), dp(6), dp(12), dp(6));
+        t.setSingleLine(true);
+        t.setGravity(Gravity.CENTER);
+        conTogglePaint(t);
+        t.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
+            boolean now = !((Boolean) t.getTag()).booleanValue();
+            t.setTag(Boolean.valueOf(now));
+            conTogglePaint(t);
+            act.run();
+        }});
+        return t;
+    }
+
+    /** 「标题 + 右侧状态」一行（控制台用；见「悬浮窗消息」页的悬浮窗开关）。 */
+    private LinearLayout cMsgRow2(String title, String state) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        ovlLabel(row, title, true);
+        ovlLabel(row, state, false);
+        return row;
+    }
+
+    private void ovlLabel(LinearLayout row, String text, boolean left) {
+        TextView tv = new TextView(this);
+        tv.setText(text);
+        tv.setTextSize(left ? 15f : 13f);
+        tv.setTextColor(left ? cText() : cSub());
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        if (left) {
+            lp.weight = 1f;
+            lp.width = 0;
+        } else {
+            lp.leftMargin = (int) (8 * getResources().getDisplayMetrics().density);
+        }
+        row.addView(tv, lp);
+    }
+
     private void renderConsoleOverlayMsg() {
         LinearLayout col = consoleBody;
         col.addView(conBackRow(t("card.overlaymsg", "悬浮窗消息")));
-        col.addView(cNote(t("desc.overlaymsgPage",
-                "这些文字显示在悬浮窗小人的气泡里（展开面板的「任务：」一行同源）。"
-              + "留空 = 用默认值；「调用工具」那条支持 {tool} 占位符，会换成真正的工具名。"
-              + "「预览」会立刻推一条示例气泡 —— 悬浮窗没在跑就看不到，先启动引擎。")), cTop(cGap(8)));
+        // 显示悬浮窗：样式照「插件」页（cCardRowWith + conTogglePaint 同款开关）。
+        // 状态只有两态：已启用 / 已关闭（= 服务没跑，或被用户拖到底部隐藏过）。
+        // 动作走 OverlayService.requestShow/requestHide —— 它们会**先清/设持久化标记**再驱动服务，
+        // 否则服务重启时会把隐藏标记读回来，出现"点了显示却没反应、回来还是已关闭"（实测）。
+        {
+            final boolean on = OverlayService.isRunning && !OverlayService.isUserHidden();
+            LinearLayout box2 = cCardBox();
+            box2.addView(cCardRowWith(t("ovl.title", "显示悬浮窗"),
+                    on ? t("ovl.state.on", "已启用") : t("ovl.state.off", "已关闭"),
+                    cToggleAction(on, new Runnable() { @Override public void run() {
+                        if (on) {
+                            OverlayService.requestHide(MainActivity.this);
+                            conToast(t("ovl.toast.off", "悬浮窗已关闭"));
+                        } else {
+                            OverlayService.requestShow(MainActivity.this);
+                            conToast(t("ovl.toast.on", "悬浮窗已启用"));
+                        }
+                        renderConsole();     // 重绘：状态与开关跟着变
+                    }})));
+            col.addView(box2, cTop(cGap(10)));
+            col.addView(cNote(t("ovl.note",
+                    "App 在前台时悬浮窗会暂时隐藏（不挡界面），退到后台即可看到；拖到底部松手也会关闭，"
+                  + "在这里重新打开即可。")), cTop(cGap(6)));
+        }
 
         final EditText eIdle  = cMsgInput(OverlayService.msgIdle(),  "摸鱼中…");
         final EditText eThink = cMsgInput(OverlayService.msgThink(), "思考中…");

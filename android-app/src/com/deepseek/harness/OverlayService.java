@@ -94,6 +94,52 @@ public class OverlayService extends Service {
 
     /** 是否正在运行（供 MainActivity / HTTP 端点查询） */
     public static volatile boolean isRunning = false;
+
+    /**
+     * 本版：给控制台读的"用户是否主动隐藏过"（与实例字段 userHidden 同步）。
+     * 用户把小人拖到底部松手 = 隐藏，且**持久化**（`KEY_USER_HIDDEN`）—— 因此重新打开 App、
+     * 甚至服务被系统重建都不会自动恢复；以前只能靠通知栏那条容易被折叠/划掉的通知找回。
+     * 现在控制台「悬浮窗消息」页有一个状态按钮，读的就是这个值。
+     */
+    private static volatile boolean sUserHidden = false;
+    public static boolean isUserHidden() { return sUserHidden; }
+
+    /**
+     * 控制台用：请求**显示**悬浮窗。
+     * ⚠ 必须先清掉**持久化**的隐藏标记再拉起服务 —— 拖底隐藏是持久化的，服务被拉起时
+     * onCreate 会把它读回来；只发 ACTION_SHOW 的话，服务重启后会立刻又隐藏
+     * （实测现象：控制台点"显示"没反应，再进控制台状态仍是"已关闭"）。
+     */
+    public static void requestShow(Context c) {
+        sUserHidden = false;
+        try { c.getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_USER_HIDDEN, false).apply(); } catch (Throwable ignored) {}
+        sendAction(c, ACTION_SHOW);
+    }
+
+    /** 控制台用：请求**隐藏**悬浮窗（等价于拖到底部松手）。 */
+    public static void requestHide(Context c) {
+        sUserHidden = true;
+        try { c.getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_USER_HIDDEN, true).apply(); } catch (Throwable ignored) {}
+        sendAction(c, ACTION_HIDE);
+    }
+
+    /** 拉起服务并把 action 交给它（26+ 用 startForegroundService，服务 onCreate 里会 startForeground）。 */
+    private static void sendAction(Context c, String action) {
+        try {
+            Intent i = new Intent(c, OverlayService.class);
+            i.setAction(action);
+            if (Build.VERSION.SDK_INT >= 26) c.startForegroundService(i); else c.startService(i);
+        } catch (Throwable ignored) {}
+    }
+
+    /** 唯一设置点：同步实例字段、静态镜像与持久化（避免三处不一致）。 */
+    private void setUserHidden(boolean v) {
+        userHidden = v;
+        sUserHidden = v;
+        try {
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_USER_HIDDEN, v).apply();
+        } catch (Throwable ignored) {}
+    }
     /** 最近一次引擎探测结果 */
     public static volatile boolean engineUp = false;
     public static volatile long lastProbeAt = 0L;
@@ -436,7 +482,7 @@ public class OverlayService extends Service {
         if (MainActivity.shutdownPending(this)) { stopSelf(); return; }
         // v1.24：恢复「用户/agent 隐藏过」的状态，避免服务被系统重建后悬浮窗自己冒出来
         try {
-            userHidden = getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(KEY_USER_HIDDEN, false);
+            setUserHidden(getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(KEY_USER_HIDDEN, false));
         } catch (Throwable ignored) {}
         isRunning = true;
         instance = this;
@@ -470,15 +516,13 @@ public class OverlayService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         // 通知栏「显示小鲸鱼」：解除用户隐藏并抖一下示意
         if (intent != null && ACTION_SHOW.equals(intent.getAction())) {
-            userHidden = false;
-            try { getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_USER_HIDDEN, false).apply(); } catch (Throwable ignored) {}
+            setUserHidden(false);
             applyVisibleNow();
             wiggle();
         }
         // v1.24：agent（android_overlay action=hide）隐藏悬浮窗 —— 只置标记、不杀服务（START_STICKY 会被系统重建）
         if (intent != null && ACTION_HIDE.equals(intent.getAction())) {
-            userHidden = true;
-            try { getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_USER_HIDDEN, true).apply(); } catch (Throwable ignored) {}
+            setUserHidden(true);
             applyVisibleNow();
         }
         // 允许通过 intent 指定端口（如换端口后重启）
@@ -1372,7 +1416,7 @@ public class OverlayService extends Service {
 
     /** 拖到底部松手：隐藏小鲸鱼（通知栏「显示小鲸鱼」可恢复）。 */
     private void hideByDragToBottom() {
-        userHidden = true;
+        setUserHidden(true);
         try {
             rootView.animate().alpha(0f).scaleX(0.5f).scaleY(0.5f).setDuration(180)
                     .withEndAction(new Runnable() { @Override public void run() {
@@ -1387,7 +1431,8 @@ public class OverlayService extends Service {
         }
         try {
             android.widget.Toast.makeText(getApplicationContext(),
-                    "小鲸鱼已隐藏，可从通知栏「显示小鲸鱼」恢复", android.widget.Toast.LENGTH_LONG).show();
+                    "小鲸鱼已隐藏：在「控制台 → 悬浮窗消息」里点「显示小鲸鱼」即可恢复"
+                            + "（也可展开本通知点『显示小鲸鱼』）", android.widget.Toast.LENGTH_LONG).show();
         } catch (Throwable ignored) {}
     }
 
