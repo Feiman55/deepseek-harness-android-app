@@ -5117,6 +5117,10 @@ public class MainActivity extends Activity {
         ZipEntry e;
         int processed = 0;
         int written = 0;
+        // 上一轮若在写临时文件时被杀，会留下 *.dsh-tmp —— 它们不是载荷的一部分（会被完整性检查
+        // 当成多出来的文件），所以每轮解压前先扫掉自己留下的临时文件。
+        cleanupStaleTemps(destInternal);
+        if (externalRoot != null) cleanupStaleTemps(externalRoot);
         int failed = 0;
         String firstFail = null;
         // v1.17.9 混装树自愈：全量 dshroot 同步时先把 payload 里的条目名收集起来，
@@ -5210,17 +5214,39 @@ public class MainActivity extends Activity {
             if (parent != null && !parent.exists() && !parent.mkdirs()) throw new IOException("mkdir failed: " + parent);
             prepareTarget(target);
             try {
-                FileOutputStream fos = new FileOutputStream(target);
-                int n;
-                while ((n = zis.read(buf)) > 0) fos.write(buf, 0, n);
-                fos.close();
+                // 必须先写临时文件再 rename，不能直接 open(target) 覆盖：
+                //   实测（用户报障，Android 17）解压 runtime/bin/node 报
+                //     open failed: ETXTBSY (Text file busy)
+                //   ETXTBSY 的含义就是：这个文件正被某个进程当作可执行文件跑着，
+                //   直接 truncate 必然失败（升级后旧引擎可能还在跑，或进程被系统冻结但没退出）。
+                //   rename 换的是 inode：旧进程继续用旧 inode，新文件立刻生效，互不冲突；
+                //   顺带还能覆盖只读（0444）的旧文件，不必先删。
+                File tmp = new File(parent, target.getName() + ".dsh-tmp");
+                FileOutputStream fos = new FileOutputStream(tmp);
+                try {
+                    int n;
+                    while ((n = zis.read(buf)) > 0) fos.write(buf, 0, n);
+                } finally {
+                    fos.close();
+                }
+                if (!tmp.renameTo(target)) {
+                    try { tmp.delete(); } catch (Throwable ignored) {}
+                    FileOutputStream fos2 = new FileOutputStream(target);       // 退回直接覆盖
+                    try {
+                        int n;
+                        while ((n = zis.read(buf)) > 0) fos2.write(buf, 0, n);
+                    } finally {
+                        fos2.close();
+                    }
+                }
                 // v1.13.5：dex 必须「不可写」——Android 14+ 的 ART 拒绝加载可写 dex
-                // （logcat: SecurityException: Writable dex file '…' is not allowed → 进程直接
-                //  SIGABRT/exit 134，终端上只看到一个 "Aborted"）。payload.zip 内所有条目都不带
-                // unix 权限（external_attr=0），文件权限完全由本函数决定，所以这里对 *.dex 收成 0444。
+                // （logcat: SecurityException: Writable dex file … is not allowed → 进程直接
+                //  SIGABRT/exit 134，终端上只看到一个 Aborted）。payload.zip 内所有条目都不带
+                //  unix 权限（external_attr=0），文件权限完全由本函数决定，所以这里对 *.dex 收成 0444。
                 if (name.endsWith(".dex")) secureDexPermissions(target);
                 written++;
             } catch (IOException ioe) {
+                try { new File(parent, target.getName() + ".dsh-tmp").delete(); } catch (Throwable ignored) {}
                 // 单个条目失败不中断整体（否则一次 EACCES 就能让整轮解压白干），最后汇总报错
                 failed++;
                 if (firstFail == null) firstFail = name + "（" + ioe.getMessage() + "）";
@@ -5531,14 +5557,52 @@ public class MainActivity extends Activity {
         r.close();
     }
 
+    /**
+     * 写文件（解压/同步 payload 用）。**必须先写临时文件再 rename** —— 见下面 ETXTBSY 的实测记录。
+     */
+    /** 删掉我们写文件时残留的 *.dsh-tmp（进程被杀会留下；它们不属于 payload）。 */
+    private void cleanupStaleTemps(File dir) {
+        if (dir == null || !dir.isDirectory()) return;
+        File[] fs = dir.listFiles();
+        if (fs == null) return;
+        for (File f : fs) {
+            if (f.isDirectory()) cleanupStaleTemps(f);
+            else if (f.getName().endsWith(".dsh-tmp")) { try { f.delete(); } catch (Throwable ignored) {} }
+        }
+    }
+
     private void copyFile(File src, File dst) throws IOException {
+        File tmp = new File(dst.getParentFile(), dst.getName() + ".dsh-tmp");
         FileInputStream in = new FileInputStream(src);
-        FileOutputStream out = new FileOutputStream(dst);
+        FileOutputStream out;
+        try {
+            out = new FileOutputStream(tmp);
+        } catch (IOException e) {
+            in.close();
+            throw e;
+        }
         byte[] b = new byte[128 * 1024];
         int n;
-        while ((n = in.read(b)) > 0) out.write(b, 0, n);
-        out.close();
-        in.close();
+        try {
+            while ((n = in.read(b)) > 0) out.write(b, 0, n);
+        } finally {
+            out.close();
+            in.close();
+        }
+        // rename 会**换一个 inode**：即使目标此刻正被某个进程当可执行文件跑着（或目标被收成 0444），
+        // 也能成功替换 —— 这正是 ETXTBSY 的解药（直接 open(TRUNC) 会失败）。
+        if (!tmp.renameTo(dst)) {
+            // 极少见（跨挂载点/被占用）：退回旧的直接覆盖写法，并把临时文件清掉
+            try { tmp.delete(); } catch (Throwable ignored) {}
+            FileInputStream in2 = new FileInputStream(src);
+            FileOutputStream out2 = new FileOutputStream(dst);
+            try {
+                while ((n = in2.read(b)) > 0) out2.write(b, 0, n);
+            } finally {
+                out2.close();
+                in2.close();
+            }
+        }
     }
 
     private void setExecutables(File payload) {
