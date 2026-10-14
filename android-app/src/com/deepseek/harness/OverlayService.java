@@ -201,7 +201,9 @@ public class OverlayService extends Service {
     private void applyOverlayLook() {
         try {
             if (rootView != null) rootView.setAlpha(sAlpha);
-            updateAvatarWindow();     // v1.24：改小人窗口的唯一出口（内部会同步气泡/面板）
+            // ⚠ 必须走 snapToEdge()：它用 edgeXFor(w) 按**当前**露出比例重算贴边 x
+            //   （updateAvatarWindow 只同步气泡/面板，不重算位置 —— 实测"保存后不生效"就是这里）。
+            snapToEdge();
         } catch (Throwable t) {
             android.util.Log.w("DSHOverlay", "applyOverlayLook failed", t);
         }
@@ -1061,9 +1063,7 @@ public class OverlayService extends Service {
                         } else {
                             int avatarW = (iconView != null && iconView.getWidth() > 0)
                                     ? iconView.getWidth() : dp(40);
-                            int off = Math.max(0,
-                                    Math.round(avatarW * (1f - tuckFraction()))
-                                    - Math.round(screenW * TUCK_INSET_SHIFT_FRACTION));
+                            int off = tuckOffsetPx(avatarW);
                             want = screenW + off - w;
                         }
                         if (lp.x != want) {
@@ -1220,12 +1220,7 @@ public class OverlayService extends Service {
         if (!panelVisible) {
             int avatarW = (iconView != null && iconView.getWidth() > 0) ? iconView.getWidth() : dp(40);
             int inset = avatarInsetInWindow();
-            int off = Math.round(avatarW * (1f - tuckFraction()));
-            // v1.21：半藏之后再朝屏幕内侧收一点（用户要求"静止小人整体右移 5% 左右"，
-            // 并确认最终这个位置"刚刚好" —— 所以这里保持"从半藏偏移里扣掉 shift、不小于 0"的算法，
-            // 别改成叠加平移，否则会再往内挪一段）。
-            int shift = Math.round(screenW * TUCK_INSET_SHIFT_FRACTION);
-            off = Math.max(0, off - shift);
+            int off = tuckOffsetPx(avatarW);
             // v1.21（用户报障修复·二）：停靠右侧不能再用 "screenW + off - (inset + avatarW)"。
             // 那个公式只保证**小人**的右缘落在屏幕边缘 —— 而窗口比小人大得多（气泡槽位 136dp），
             // 窗口右缘会跑到屏幕外 ~220px；气泡画在窗口里，于是无论怎么对齐都会被屏幕边缘截短
@@ -1238,6 +1233,20 @@ public class OverlayService extends Service {
             return -(inset + off);
         }
         return snappedRight ? Math.max(dp(4), screenW - viewWidth - dp(4)) : dp(4);
+    }
+
+    /**
+     * 静止贴边时窗口该"藏到屏幕外"多少像素（按露出比例换算）。
+     *
+     * <p>⚠ 两项必须**同量纲**：露出比例作用在小人宽度上，所以"向内收一点点"也必须按小人宽度算。
+     * 旧代码用「屏幕宽 × TUCK_INSET_SHIFT_FRACTION」——在 1600px 宽的屏幕上就是 80px，
+     * 而 0.8 的偏移只有约 22px、0.45 约 60px，`max(0, off - shift)` 一律变成 0
+     * ⇒ **任何比例都得到同一位置**（实测 winX 恒为 -8；两张截图逐像素对比，小人区域差异为 0）。
+     */
+    private int tuckOffsetPx(int avatarW) {
+        int off = Math.round(avatarW * (1f - tuckFraction()));
+        int shift = Math.round(avatarW * TUCK_INSET_SHIFT_FRACTION);
+        return Math.max(0, off - shift);
     }
 
     /** 小人图标相对 rootView 的左偏移（累加各级 getLeft()）；未布局时按 10dp+4dp 兜底。 */

@@ -43,7 +43,7 @@ DSH 只有看到它在 bundles 里才会组合进插件树。
 
 | 插件 | 版本 | 来源 | 说明 |
 |---|---|---|---|
-| `ds-harness-remote` | **0.5.0** | npm `@blue-soda/dsh-remote`（同源仓库 `github:blue-soda/ds-harness-remote` 的 `packages/plugin`）| 端到端加密的远程访问（桌面/网页/安卓互连）。自带 `dist/index.js` + `dist/client.github.js`；运行时依赖 `qrcode`/`werift`/`ws`/`zod` 一并内置，`@deepseek-ai/schemastery` 由内核树嵌套路径提供、不内置。 |
+| `ds-harness-remote` | **0.5.1** | npm `@blue-soda/dsh-remote`（同源仓库 `github:blue-soda/ds-harness-remote` 的 `packages/plugin`）| 端到端加密的远程访问（桌面/网页/安卓互连）。自带 `dist/index.js` + `dist/client.github.js`；运行时依赖 `qrcode`/`werift`/`ws`/`zod` 一并内置，`@deepseek-ai/schemastery` 由内核树嵌套路径提供、不内置。 |
 
 ## 更新步骤（人工）
 
@@ -140,3 +140,15 @@ bash tools/build-apk.sh
 > 按与构建期相同的口径裁剪后入库：丢 `*.map` / `*.d.ts` / `test(s)` / `example(s)` / `docs` / `.bin`
 > → **3869 文件 49.6 MB**（旧版 0.4.32 是 3577 文件 31.1 MB；体积增长来自依赖树本身变大）。
 > 旧的 0.4.32 副本备份在 `.cache/vendor-old-0432/`（未入库）。
+
+> **2026-10-14 更新到 0.5.1**：走**方式 A**（npm 发布版），国内镜像
+> `https://registry.npmmirror.com/@blue-soda/dsh-remote/-/dsh-remote-0.5.1.tgz` 直接命中
+> （官方 registry 作为回退，本次未用到）。做法与 0.4.31 相同：**整包替换**（除 `node_modules/`
+> 外全部清掉再铺新包），因为 `package.json` 的 `dependencies` 与 0.5.0 **逐项一致**
+> （`@deepseek-ai/schemastery ^3.18.4` / `qrcode ^1.5.4` / `werift 0.24.4` / `ws ^8.21.3` / `zod ^3.24.1`），
+> 所以 `node_modules/` 原样保留。
+> 并按本文件记录的裁剪口径（丢 `*.map` / `*.d.ts` / `test(s)` / `example(s)` / `docs` / `.bin`）
+> 清理：237 → **124 文件 / 2.39 MB**（0.5.0 时为 66 文件 / 2.36 MB —— 文件数变多是因为 0.5.1 的
+> `dist/` 拆得更细，体积基本持平）。
+> 随包校验：重新构建后在引擎日志里确认出现 `[dsh-remote] host identity ready …`，且 payload 内
+> `dshhome/profiles/web/node_modules/ds-harness-remote/package.json` 的 version = 0.5.1。

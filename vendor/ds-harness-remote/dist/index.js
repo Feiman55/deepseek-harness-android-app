@@ -13429,7 +13429,11 @@ function resolveConfig(input2 = {}, env = process.env) {
       jitter: reconnect.jitter ?? 0.2
     },
     codex: {
-      enabled: parsed.codex?.enabled ?? true,
+      // Off by default (2026-10-14). Carrying another agent's workspaces is a capability the user opts into, not
+      // one that quietly starts a second process on their machine: the domain launches `codex app-server`, probes
+      // an account and, while unavailable, retries every minute. The bundled profile patch says the same thing, so
+      // an install that never touches the switch has it off.
+      enabled: parsed.codex?.enabled ?? false,
       binary: parsed.codex?.binary ?? "codex"
     },
     acp: { enabled: parsed.acp?.enabled ?? true, backends: [.../* @__PURE__ */ new Set(["codex", "cursor", "kimi", ...parsed.acp?.backends?.map((item) => item.id) ?? []])].map((id4) => {
@@ -13458,7 +13462,7 @@ function normalizeServerUrl(value) {
 }
 
 // src/version.ts
-var PLUGIN_VERSION = "0.5.0";
+var PLUGIN_VERSION = "0.5.1";
 
 // src/server-api.ts
 var ENABLED_QR_PROVIDERS = ["github"];
@@ -21879,7 +21883,9 @@ var ClientModeRuntime = class {
     };
   }
   async devices() {
-    if (!await this.recoverHostAuthorization()) return [];
+    if (!await this.recoverHostAuthorization()) {
+      throw new ClientModeError("AUTH_REQUIRED", "This device is not authorized on the Server yet.");
+    }
     this.requireIdentity();
     const serverDevices = await this.server.listDevices();
     const remoteDevices = serverDevices.filter((device) => device.deviceId !== this.host?.hostStatus().deviceId);
@@ -26059,6 +26065,24 @@ var PluginControlRuntime = class {
    */
   verifiedDeepSeekToken;
   verifiedDeepSeekAuthorization;
+  /**
+   * Whether a sign-in the user asked for is in flight.
+   *
+   * Only a sign-in the user started may register this device. DSH's own platform session is not consent on its
+   * own: accepting it without a click silently signed a new device into whichever DeepSeek account DSH happened
+   * to hold, and with account creation enabled on the Server that produced a brand-new *empty* account - the
+   * "new device lands in an empty account" report.
+   *
+   * The grant itself is deliberately not compared against what DSH held when the flow started. The user asked for
+   * this sign-in and completed it in the browser, so the account DSH holds afterwards is the one they authorized;
+   * when the platform hands back the same grant - re-authorizing as the same account does exactly that - refusing
+   * it would only loop the user through the browser again. The cost is that a browser page the user opens and
+   * then abandons also ends in an authorization, with the account DSH already held; they still asked for it, and
+   * the alternative was the silent-consent bug above.
+   *
+   * `undefined` means no sign-in is in flight, which is also the state after a completed authorization.
+   */
+  deepSeekSignIn;
   register(connection, webServer) {
     const statusStream = new ControlStatusStream(() => this.streamStatus());
     return registerControlRoute(
@@ -26167,13 +26191,15 @@ var PluginControlRuntime = class {
         throw new ClientModeError("METHOD_NOT_ALLOWED", "DeepSeek account sign-in is unavailable in this profile.");
       }
       const session = await this.deepseekSession.read();
-      if (session === void 0) {
+      const counted = session !== void 0 && this.deepSeekSignIn !== void 0;
+      if (!counted) {
         const started = await this.deepseekSession.startSignIn({
           callbackOrigin: typeof value.callbackOrigin === "string" ? value.callbackOrigin : "",
           loginSource: value.loginSource === "desktop" ? "desktop" : "web",
           locale: typeof value.locale === "string" ? value.locale : "en",
           timezoneOffsetSeconds: typeof value.timezoneOffsetSeconds === "number" ? value.timezoneOffsetSeconds : 0
         });
+        this.deepSeekSignIn = true;
         return {
           status: "deepseek-sign-in-required",
           ...started.authorizeUrl === void 0 ? {} : { authorizeUrl: started.authorizeUrl }
@@ -26186,6 +26212,7 @@ var PluginControlRuntime = class {
         this.verifiedDeepSeekToken = session.token;
         this.verifiedDeepSeekAuthorization = authorization;
       }
+      this.deepSeekSignIn = void 0;
     } else {
       if (typeof value.email !== "string" || typeof value.password !== "string") {
         throw new ClientModeError("INVALID_MESSAGE", "Email and password are required for account authorization.");
@@ -26305,6 +26332,7 @@ var PluginControlRuntime = class {
     const config = resolveConfig(this.settings.get());
     this.verifiedDeepSeekToken = void 0;
     this.verifiedDeepSeekAuthorization = void 0;
+    this.deepSeekSignIn = void 0;
     if (config.serverUrl !== void 0) {
       await Promise.all([
         this.client?.clearClientAuthorization(),

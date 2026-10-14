@@ -3670,7 +3670,12 @@ public class MainActivity extends Activity {
                     File internalDshroot = new File(payload, "dshroot");
                     boolean kernelOnExternal = false;
                     try {
-                        if (dshrootNeedsSync(internalBase)) {
+                        // ⚠ 载荷指纹变化（payloadChanged，例如换了 vendor 插件）也要走一次同步：
+                        //   以前只看 dshrootNeedsSync()（REVISION + .complete），内核版本没变时它是
+                        //   false → 整段跳过 → **插件更新永远到不了老用户**（实测：覆盖安装后设备上
+                        //   仍是 0.5.0，只有卸载重装才变 0.5.1）。放行后按 payloadChanged 走
+                        //   dshroot-add 增量补齐：跳过已存在文件，但强制覆盖名单里的路径会被更新。
+                        if (dshrootNeedsSync(internalBase) || payloadChanged) {
                             boolean revisionChanged = dshrootRevisionChanged(internalBase);
                             boolean full = dshrootNeedsFullSync(internalBase);
                             // v1.20：payload.zip 变了也走「增量补齐」——fast 同步只看 REVISION +
@@ -12044,6 +12049,69 @@ public class MainActivity extends Activity {
      * 送结构化 `state`，App 据此套模板 —— 不靠中文文案匹配，所以用户改了气泡文案、
      * 或插件将来换措辞，都不会影响判类。
      */
+    /** 控制台里一行两列用的宽度参数（weight + 右侧间距 dp）。 */
+    private LinearLayout.LayoutParams cWidth(float weight, int rightMarginDp) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, weight);
+        lp.rightMargin = dp(rightMarginDp);
+        return lp;
+    }
+
+    /**
+     * 一个「开关格」：左边标题+状态，右边插件页同款开关。用于并排放两个开关。
+     * 注意：**只有开关本身可点**（容器不接点击），避免误触到旁边的控件。
+     */
+    private View cSwitchCell(String title, String state, boolean on, final Runnable act) {
+        LinearLayout cell = new LinearLayout(this);
+        cell.setOrientation(LinearLayout.HORIZONTAL);
+        cell.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        LinearLayout left = new LinearLayout(this);
+        left.setOrientation(LinearLayout.VERTICAL);
+        left.addView(cText(title, 13.5f, cText(), false));
+        left.addView(cText(state, 11.5f, cSub(), false));
+        cell.addView(left, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        cell.addView(cToggleAction(on, act));
+        return cell;
+    }
+
+    /**
+     * 控制台风格的滑动条：细圆角轨 + 品牌色已填充 + 小圆点滑块（颜色跟随主题深浅色）。
+     * 原来的系统默认 SeekBar 又粗又橙，与整页不搭（维护者反馈）。
+     */
+    private SeekBar cStyledSeek(int max, int progress) {
+        SeekBar sb = new SeekBar(this);
+        sb.setMax(max);
+        sb.setProgress(Math.max(0, Math.min(max, progress)));
+        float d = getResources().getDisplayMetrics().density;
+        int trackH = Math.max(1, Math.round(5 * d));
+        int thumbD = Math.round(15 * d);
+
+        android.graphics.drawable.GradientDrawable track = new android.graphics.drawable.GradientDrawable();
+        track.setColor(cLine());
+        track.setCornerRadius(trackH / 2f);
+        track.setSize(0, trackH);
+        android.graphics.drawable.GradientDrawable fill = new android.graphics.drawable.GradientDrawable();
+        fill.setColor(cAccent());
+        fill.setCornerRadius(trackH / 2f);
+        fill.setSize(0, trackH);
+        android.graphics.drawable.ClipDrawable clip = new android.graphics.drawable.ClipDrawable(
+                fill, android.view.Gravity.LEFT, android.graphics.drawable.ClipDrawable.HORIZONTAL);
+        android.graphics.drawable.LayerDrawable ld = new android.graphics.drawable.LayerDrawable(
+                new android.graphics.drawable.Drawable[] { track, clip });
+        ld.setId(0, android.R.id.background);
+        ld.setId(1, android.R.id.progress);
+        sb.setProgressDrawable(ld);
+        sb.setMinimumHeight(Math.round(trackH * 3f));
+
+        android.graphics.drawable.GradientDrawable thumb = new android.graphics.drawable.GradientDrawable();
+        thumb.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        thumb.setColor(cAccent());
+        thumb.setSize(thumbD, thumbD);
+        sb.setThumb(thumb);
+        sb.setThumbOffset(0);
+        sb.setPadding(0, Math.round(6 * d), 0, Math.round(6 * d));
+        return sb;
+    }
+
     /**
      * 与「插件」页 `cToggle` **同一外观**（conTogglePaint）的开关，但动作由调用方给 ——
      * 供「显示悬浮窗」这类不是插件开关的地方用。点击后不改自己的 tag 之外的事，
@@ -12095,52 +12163,51 @@ public class MainActivity extends Activity {
     private void renderConsoleOverlayMsg() {
         LinearLayout col = consoleBody;
         col.addView(conBackRow(t("card.overlaymsg", "悬浮窗消息")));
-        // 显示悬浮窗：样式照「插件」页（cCardRowWith + conTogglePaint 同款开关）。
-        // 状态只有两态：已启用 / 已关闭（= 服务没跑，或被用户拖到底部隐藏过）。
-        // 动作走 OverlayService.requestShow/requestHide —— 它们会**先清/设持久化标记**再驱动服务，
-        // 否则服务重启时会把隐藏标记读回来，出现"点了显示却没反应、回来还是已关闭"（实测）。
+        // ── 悬浮窗设置（本版按维护者要求重排）──────────────────────────────
+        // 第一行：两个开关并排；第二行：两个滑动条并排。
+        // 「显示悬浮窗」的状态口径 = **是否被隐藏**（拖到底部 / 手动关闭），不再要求"服务已经在跑"
+        // —— 否则在服务还没起来时点它，按钮看起来"点了没反应"（维护者实测反馈）。
         {
-            final boolean on = OverlayService.isRunning && !OverlayService.isUserHidden();
-            LinearLayout box2 = cCardBox();
-            box2.addView(cCardRowWith(t("ovl.title", "显示悬浮窗"),
-                    on ? t("ovl.state.on", "已启用") : t("ovl.state.off", "已关闭"),
-                    cToggleAction(on, new Runnable() { @Override public void run() {
-                        if (on) {
+            final boolean shown = !OverlayService.isUserHidden();
+            final boolean inApp = OverlayService.showInApp();
+
+            LinearLayout swRow = new LinearLayout(this);
+            swRow.setOrientation(LinearLayout.HORIZONTAL);
+            swRow.addView(cSwitchCell(t("ovl.title", "显示悬浮窗"),
+                    shown ? t("ovl.state.on", "已启用") : t("ovl.state.off", "已关闭"), shown,
+                    new Runnable() { @Override public void run() {
+                        if (!OverlayService.isUserHidden()) {
                             OverlayService.requestHide(MainActivity.this);
                             conToast(t("ovl.toast.off", "悬浮窗已关闭"));
                         } else {
                             OverlayService.requestShow(MainActivity.this);
                             conToast(t("ovl.toast.on", "悬浮窗已启用"));
                         }
-                        renderConsole();     // 重绘：状态与开关跟着变
-                    }})));
-            col.addView(box2, cTop(cGap(10)));
-            col.addView(cNote(t("ovl.note",
-                    "App 在前台时悬浮窗会暂时隐藏（不挡界面），退到后台即可看到；拖到底部松手也会关闭，"
-                  + "在这里重新打开即可。")), cTop(cGap(6)));
-        }
+                        renderConsole();
+                    }}), cWidth(1f, 14));
+            swRow.addView(cSwitchCell(t("ovl.inApp", "本应用内显示悬浮窗"),
+                    inApp ? t("ovl.state.on", "已启用") : t("ovl.state.off", "已关闭"), inApp,
+                    new Runnable() { @Override public void run() {
+                        boolean on = !OverlayService.showInApp();
+                        OverlayService.setShowInApp(MainActivity.this, on);
+                        conToast(on ? "已开启：在本应用内也能看到悬浮窗" : "已关闭：回到前台自动隐藏");
+                        renderConsole();
+                    }}), cWidth(1f, 0));
+            col.addView(swRow, cTop(cGap(10)));
 
-        // 本版（用户建议）：悬浮窗外观 —— 两个滑动条，各自带「恢复默认值」与「保存」。
-        //   · 透明度：0.2~1.0（默认 1.0 完全不透明）
-        //   · 静止贴边露出比例：0.15~1.0（默认 0.8 = 基本完整、贴着屏幕边缘；0.45 = 老版半藏）
-        {
-            final float defAlpha = 1.0f;
-            final float defTuck = OverlayService.DEF_TUCK;
-            final float recTuck = OverlayService.REC_TUCK;
-
-            LinearLayout look = cCardBox();
-            look.addView(cMsgRow2(t("ovl.look", "悬浮窗外观"),
-                    Math.round(OverlayService.avatarAlpha() * 100) + "% 不透明 · 露出 "
-                            + Math.round(OverlayService.tuckFraction() * 100) + "%"));
-            col.addView(look, cTop(cGap(10)));
-
-            // ── ① 透明度（滑动条）──
+            // ── 第二行：两个滑动条并排 ──
             final int[] alphaPct = { Math.round(OverlayService.avatarAlpha() * 100f) };
+            final int[] tuckPct = { Math.round(OverlayService.tuckFraction() * 100f) };
+
+            LinearLayout seekRow = new LinearLayout(this);
+            seekRow.setOrientation(LinearLayout.HORIZONTAL);
+
+            // 左列：透明度
+            LinearLayout colA = new LinearLayout(this);
+            colA.setOrientation(LinearLayout.VERTICAL);
             final TextView alphaLab = cText("透明度 " + alphaPct[0] + "%", 12.5f, cSub(), false);
-            col.addView(alphaLab, cTop(cGap(8)));
-            final SeekBar sbAlpha = new SeekBar(this);
-            sbAlpha.setMax(80);                                      // 0.2~1.0，每格 1%
-            sbAlpha.setProgress(alphaPct[0] - 20);
+            colA.addView(alphaLab, cTop(cGap(10)));
+            final SeekBar sbAlpha = cStyledSeek(80, alphaPct[0] - 20);          // 0.2~1.0
             sbAlpha.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
                 @Override public void onProgressChanged(SeekBar bar, int p, boolean fromUser) {
                     alphaPct[0] = p + 20;
@@ -12149,12 +12216,12 @@ public class MainActivity extends Activity {
                 @Override public void onStartTrackingTouch(SeekBar bar) {}
                 @Override public void onStopTrackingTouch(SeekBar bar) {}
             });
-            col.addView(sbAlpha);
+            colA.addView(sbAlpha);
             LinearLayout aActs = new LinearLayout(this);
             aActs.setOrientation(LinearLayout.HORIZONTAL);
             Button aDef = cButton(t("ovl.alphaDef", "恢复默认值"), false);
             aDef.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
-                sbAlpha.setProgress(Math.round((defAlpha - 0.2f) * 100f));
+                sbAlpha.setProgress(Math.round((1.0f - 0.2f) * 100f));
             }});
             Button aSave = cButton(t("ovl.alphaSave", "保存"), true);
             aSave.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
@@ -12162,40 +12229,35 @@ public class MainActivity extends Activity {
                 conToast("透明度 " + alphaPct[0] + "% 已保存并生效");
                 renderConsole();
             }});
-            LinearLayout.LayoutParams alp1 = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-            alp1.rightMargin = dp(6);
-            aActs.addView(aDef, alp1);
-            aActs.addView(aSave, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            col.addView(aActs, cTop(cGap(6)));
+            aActs.addView(aDef, cWidth(1f, 4));
+            aActs.addView(aSave, cWidth(1f, 0));
+            colA.addView(aActs, cTop(cGap(6)));
+            seekRow.addView(colA, cWidth(1f, 8));
 
-            // ── ② 静止贴边露出比例（滑动条）──
-            col.addView(cNote(t("ovl.tuckNote",
-                    "静止贴边时的「露出比例」：1.0 = 完全露出；0.8 = 默认（基本完整、贴着屏幕边缘）；"
-                  + "0.45 = 老版半藏（只露不到一半）。")), cTop(cGap(14)));
-            final int[] tuckPct = { Math.round(OverlayService.tuckFraction() * 100f) };
-            final TextView tuckLab = cText("露出比例 " + tuckPct[0] + "%", 12.5f, cSub(), false);
-            col.addView(tuckLab, cTop(cGap(8)));
-            final SeekBar sbTuck = new SeekBar(this);
-            sbTuck.setMax(85);                                       // 0.15~1.0，每格 1%
-            sbTuck.setProgress(tuckPct[0] - 15);
+            // 右列：静止贴边露出比例
+            LinearLayout colB = new LinearLayout(this);
+            colB.setOrientation(LinearLayout.VERTICAL);
+            final TextView tuckLab = cText("静止时悬浮窗露出比例 " + tuckPct[0] + "%", 12.5f, cSub(), false);
+            colB.addView(tuckLab, cTop(cGap(10)));
+            final SeekBar sbTuck = cStyledSeek(85, tuckPct[0] - 15);            // 0.15~1.0
             sbTuck.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
                 @Override public void onProgressChanged(SeekBar bar, int p, boolean fromUser) {
                     tuckPct[0] = p + 15;
-                    tuckLab.setText("露出比例 " + tuckPct[0] + "%");
+                    tuckLab.setText("静止时悬浮窗露出比例 " + tuckPct[0] + "%");
                 }
                 @Override public void onStartTrackingTouch(SeekBar bar) {}
                 @Override public void onStopTrackingTouch(SeekBar bar) {}
             });
-            col.addView(sbTuck);
+            colB.addView(sbTuck);
             LinearLayout tActs = new LinearLayout(this);
             tActs.setOrientation(LinearLayout.HORIZONTAL);
-            Button tRec = cButton(t("ovl.tuckRec", "推荐 0.45"), false);
-            tRec.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
-                sbTuck.setProgress(Math.round(recTuck * 100f) - 15);
+            Button tHalf = cButton(t("ovl.tuckHalf", "隐藏一半"), false);
+            tHalf.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
+                sbTuck.setProgress(Math.round(OverlayService.REC_TUCK * 100f) - 15);
             }});
             Button tDef = cButton(t("ovl.tuckDef", "恢复默认值"), false);
             tDef.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
-                sbTuck.setProgress(Math.round(defTuck * 100f) - 15);
+                sbTuck.setProgress(Math.round(OverlayService.DEF_TUCK * 100f) - 15);
             }});
             Button tSave = cButton(t("ovl.tuckSave", "保存"), true);
             tSave.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
@@ -12203,29 +12265,13 @@ public class MainActivity extends Activity {
                 conToast("露出比例 " + tuckPct[0] + "% 已保存并生效");
                 renderConsole();
             }});
-            LinearLayout.LayoutParams tlp1 = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-            tlp1.rightMargin = dp(4);
-            tActs.addView(tRec, tlp1);
-            LinearLayout.LayoutParams tlp2 = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-            tlp2.rightMargin = dp(4);
-            tActs.addView(tDef, tlp2);
-            tActs.addView(tSave, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            col.addView(tActs, cTop(cGap(6)));
+            tActs.addView(tHalf, cWidth(1f, 4));
+            tActs.addView(tDef, cWidth(1f, 4));
+            tActs.addView(tSave, cWidth(1f, 0));
+            colB.addView(tActs, cTop(cGap(6)));
+            seekRow.addView(colB, cWidth(1f, 0));
 
-            // ── ③ 在 App 内也显示悬浮窗（插件页同款开关；默认关）──
-            LinearLayout inAppBox = cCardBox();
-            inAppBox.addView(cCardRowWith(t("ovl.inApp", "在 App 内也显示悬浮窗"),
-                    OverlayService.showInApp() ? t("ovl.state.on", "已启用") : t("ovl.state.off", "已关闭"),
-                    cToggleAction(OverlayService.showInApp(), new Runnable() { @Override public void run() {
-                        boolean on = !OverlayService.showInApp();
-                        OverlayService.setShowInApp(MainActivity.this, on);
-                        conToast(on ? "已开启：在本 App 内也能看到悬浮窗" : "已关闭：回到前台自动隐藏");
-                        renderConsole();
-                    }})));
-            col.addView(inAppBox, cTop(cGap(14)));
-            col.addView(cNote(t("ovl.inAppNote",
-                    "默认关闭：App 在前台时悬浮窗隐藏，不挡界面。开启后在本 App 内也一直显示"
-                  + "（拖到底部隐藏仍然优先）。")), cTop(cGap(6)));
+            col.addView(seekRow, cTop(cGap(12)));
         }
 
         final EditText eIdle  = cMsgInput(OverlayService.msgIdle(),  "摸鱼中…");

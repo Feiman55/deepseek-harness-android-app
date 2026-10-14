@@ -12,7 +12,7 @@
         enabled: true
         serverUrl: https://sakakibara.ink:8443
         codex:
-          enabled: true
+          enabled: false
           binary: codex
     - id: ds-harness-remote-tui
       name: '@blue-soda/dsh-remote'
@@ -26,5 +26,5 @@
         enabled: true
         serverUrl: https://sakakibara.ink:8443
         codex:
-          enabled: true
+          enabled: false
           binary: codex

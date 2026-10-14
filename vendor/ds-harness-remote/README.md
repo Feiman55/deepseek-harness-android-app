@@ -23,7 +23,7 @@ Continue DeepSeek Harness sessions and experimental Codex workspaces from anothe
 Add the current package version to the `web` profile, then restart Harness:
 
 ```sh
-dsh plugin --profile web add -w @blue-soda/dsh-remote@0.4.29
+dsh plugin --profile web add -w @blue-soda/dsh-remote@0.5.1
 ```
 
 ### dsh-TUI Host
@@ -31,7 +31,7 @@ dsh plugin --profile web add -w @blue-soda/dsh-remote@0.4.29
 Remote can also run as a Host in a terminal-only [dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI) profile:
 
 ```sh
-dsh plugin --profile dsh-tui add -w @blue-soda/dsh-remote@0.4.29
+dsh plugin --profile dsh-tui add -w @blue-soda/dsh-remote@0.5.1
 ```
 
 After starting dsh-TUI, manage Remote with `/remote`, `/remote login`, `/remote status`, and `/remote logout`.
@@ -43,7 +43,7 @@ After starting dsh-TUI, manage Remote with `/remote`, `/remote login`, `/remote 
 - Open workspaces on another authorized computer without replacing the native Harness interface.
 - Use the official workspace file tree and bounded read-only previews on supported Harness versions.
 - Use an optional Host-local terminal and authorized loopback development-service previews.
-- Open Host Codex projects in the existing Remote UI through the optional experimental Codex domain.
+- Open Host Codex projects in the existing Remote UI through the optional experimental Codex domain. It is **off by default** since 0.5.1: turn it on in the DeepSeek Remote settings card, which starts `codex app-server` on the Host and applies immediately.
 - Reach the Host without opening a public listening port or configuring router port forwarding.
 
 ## Compatibility
