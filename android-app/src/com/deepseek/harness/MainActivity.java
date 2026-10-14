@@ -12254,13 +12254,13 @@ public class MainActivity extends Activity {
             // 右列：静止贴边露出比例
             LinearLayout colB = new LinearLayout(this);
             colB.setOrientation(LinearLayout.VERTICAL);
-            final TextView tuckLab = cText("静止时悬浮窗露出比例 " + tuckPct[0] + "%", 13.5f, cText(), false);
+            final TextView tuckLab = cText("悬浮窗显示比例 " + tuckPct[0] + "%", 13.5f, cText(), false);
             colB.addView(tuckLab, cTop(cGap(10)));
             final SeekBar sbTuck = cStyledSeek(85, tuckPct[0] - 15);            // 0.15~1.0
             sbTuck.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
                 @Override public void onProgressChanged(SeekBar bar, int p, boolean fromUser) {
                     tuckPct[0] = p + 15;
-                    tuckLab.setText("静止时悬浮窗露出比例 " + tuckPct[0] + "%");
+                    tuckLab.setText("悬浮窗显示比例 " + tuckPct[0] + "%");
                 }
                 @Override public void onStartTrackingTouch(SeekBar bar) {}
                 @Override public void onStopTrackingTouch(SeekBar bar) {}
@@ -12277,7 +12277,7 @@ public class MainActivity extends Activity {
             relaxButtonMin(tSave);
             tSave.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
                 OverlayService.setTuckFraction(MainActivity.this, tuckPct[0] / 100f);
-                conToast("露出比例 " + tuckPct[0] + "% 已保存并生效");
+                conToast("显示比例 " + tuckPct[0] + "% 已保存并生效");
                 renderConsole();
             }});
             tActs.addView(tDef, cWidth(1f, 8));

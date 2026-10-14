@@ -77,9 +77,9 @@ public class OverlayService extends Service {
      * 原来 0.45 的半藏会把人物裁掉一半、认不出是谁；改成 0.8 = 基本完整、又贴着屏幕边缘
      * （留 20% 越界，视觉上"贴边站着"）。想完全露出改 1.0，想恢复半藏改 0.45。
      */
-    /** 默认「露出比例」：0.8 = 基本完整、又贴着屏幕边缘（留 20% 越界）。 */
-    static final float DEF_TUCK = 0.8f;
-    /** 推荐值：0.45 = 老版本的"半藏"（只露 45%）。 */
+    /** 默认「悬浮窗显示比例」：1.0 = 完全露出（维护者要求默认 100%）。 */
+    static final float DEF_TUCK = 1.0f;
+    /** 参考值：0.45 = 老版本的"半藏"（只露 45%）；当前 UI 不再提供一键按钮。 */
     static final float REC_TUCK = 0.45f;
     /** 露出比例的合法区间（1.0 = 完全露出）。 */
     static final float MIN_TUCK = 0.15f;
