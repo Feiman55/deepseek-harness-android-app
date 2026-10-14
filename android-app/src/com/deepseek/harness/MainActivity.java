@@ -40,6 +40,7 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.SeekBar;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -12119,6 +12120,114 @@ public class MainActivity extends Activity {
                   + "在这里重新打开即可。")), cTop(cGap(6)));
         }
 
+        // 本版（用户建议）：悬浮窗外观 —— 两个滑动条，各自带「恢复默认值」与「保存」。
+        //   · 透明度：0.2~1.0（默认 1.0 完全不透明）
+        //   · 静止贴边露出比例：0.15~1.0（默认 0.8 = 基本完整、贴着屏幕边缘；0.45 = 老版半藏）
+        {
+            final float defAlpha = 1.0f;
+            final float defTuck = OverlayService.DEF_TUCK;
+            final float recTuck = OverlayService.REC_TUCK;
+
+            LinearLayout look = cCardBox();
+            look.addView(cMsgRow2(t("ovl.look", "悬浮窗外观"),
+                    Math.round(OverlayService.avatarAlpha() * 100) + "% 不透明 · 露出 "
+                            + Math.round(OverlayService.tuckFraction() * 100) + "%"));
+            col.addView(look, cTop(cGap(10)));
+
+            // ── ① 透明度（滑动条）──
+            final int[] alphaPct = { Math.round(OverlayService.avatarAlpha() * 100f) };
+            final TextView alphaLab = cText("透明度 " + alphaPct[0] + "%", 12.5f, cSub(), false);
+            col.addView(alphaLab, cTop(cGap(8)));
+            final SeekBar sbAlpha = new SeekBar(this);
+            sbAlpha.setMax(80);                                      // 0.2~1.0，每格 1%
+            sbAlpha.setProgress(alphaPct[0] - 20);
+            sbAlpha.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+                @Override public void onProgressChanged(SeekBar bar, int p, boolean fromUser) {
+                    alphaPct[0] = p + 20;
+                    alphaLab.setText("透明度 " + alphaPct[0] + "%");
+                }
+                @Override public void onStartTrackingTouch(SeekBar bar) {}
+                @Override public void onStopTrackingTouch(SeekBar bar) {}
+            });
+            col.addView(sbAlpha);
+            LinearLayout aActs = new LinearLayout(this);
+            aActs.setOrientation(LinearLayout.HORIZONTAL);
+            Button aDef = cButton(t("ovl.alphaDef", "恢复默认值"), false);
+            aDef.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
+                sbAlpha.setProgress(Math.round((defAlpha - 0.2f) * 100f));
+            }});
+            Button aSave = cButton(t("ovl.alphaSave", "保存"), true);
+            aSave.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
+                OverlayService.setAvatarAlpha(MainActivity.this, alphaPct[0] / 100f);
+                conToast("透明度 " + alphaPct[0] + "% 已保存并生效");
+                renderConsole();
+            }});
+            LinearLayout.LayoutParams alp1 = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            alp1.rightMargin = dp(6);
+            aActs.addView(aDef, alp1);
+            aActs.addView(aSave, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            col.addView(aActs, cTop(cGap(6)));
+
+            // ── ② 静止贴边露出比例（滑动条）──
+            col.addView(cNote(t("ovl.tuckNote",
+                    "静止贴边时的「露出比例」：1.0 = 完全露出；0.8 = 默认（基本完整、贴着屏幕边缘）；"
+                  + "0.45 = 老版半藏（只露不到一半）。")), cTop(cGap(14)));
+            final int[] tuckPct = { Math.round(OverlayService.tuckFraction() * 100f) };
+            final TextView tuckLab = cText("露出比例 " + tuckPct[0] + "%", 12.5f, cSub(), false);
+            col.addView(tuckLab, cTop(cGap(8)));
+            final SeekBar sbTuck = new SeekBar(this);
+            sbTuck.setMax(85);                                       // 0.15~1.0，每格 1%
+            sbTuck.setProgress(tuckPct[0] - 15);
+            sbTuck.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+                @Override public void onProgressChanged(SeekBar bar, int p, boolean fromUser) {
+                    tuckPct[0] = p + 15;
+                    tuckLab.setText("露出比例 " + tuckPct[0] + "%");
+                }
+                @Override public void onStartTrackingTouch(SeekBar bar) {}
+                @Override public void onStopTrackingTouch(SeekBar bar) {}
+            });
+            col.addView(sbTuck);
+            LinearLayout tActs = new LinearLayout(this);
+            tActs.setOrientation(LinearLayout.HORIZONTAL);
+            Button tRec = cButton(t("ovl.tuckRec", "推荐 0.45"), false);
+            tRec.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
+                sbTuck.setProgress(Math.round(recTuck * 100f) - 15);
+            }});
+            Button tDef = cButton(t("ovl.tuckDef", "恢复默认值"), false);
+            tDef.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
+                sbTuck.setProgress(Math.round(defTuck * 100f) - 15);
+            }});
+            Button tSave = cButton(t("ovl.tuckSave", "保存"), true);
+            tSave.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
+                OverlayService.setTuckFraction(MainActivity.this, tuckPct[0] / 100f);
+                conToast("露出比例 " + tuckPct[0] + "% 已保存并生效");
+                renderConsole();
+            }});
+            LinearLayout.LayoutParams tlp1 = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            tlp1.rightMargin = dp(4);
+            tActs.addView(tRec, tlp1);
+            LinearLayout.LayoutParams tlp2 = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            tlp2.rightMargin = dp(4);
+            tActs.addView(tDef, tlp2);
+            tActs.addView(tSave, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            col.addView(tActs, cTop(cGap(6)));
+
+            // ── ③ 在 App 内也显示悬浮窗（插件页同款开关；默认关）──
+            LinearLayout inAppBox = cCardBox();
+            inAppBox.addView(cCardRowWith(t("ovl.inApp", "在 App 内也显示悬浮窗"),
+                    OverlayService.showInApp() ? t("ovl.state.on", "已启用") : t("ovl.state.off", "已关闭"),
+                    cToggleAction(OverlayService.showInApp(), new Runnable() { @Override public void run() {
+                        boolean on = !OverlayService.showInApp();
+                        OverlayService.setShowInApp(MainActivity.this, on);
+                        conToast(on ? "已开启：在本 App 内也能看到悬浮窗" : "已关闭：回到前台自动隐藏");
+                        renderConsole();
+                    }})));
+            col.addView(inAppBox, cTop(cGap(14)));
+            col.addView(cNote(t("ovl.inAppNote",
+                    "默认关闭：App 在前台时悬浮窗隐藏，不挡界面。开启后在本 App 内也一直显示"
+                  + "（拖到底部隐藏仍然优先）。")), cTop(cGap(6)));
+        }
+
         final EditText eIdle  = cMsgInput(OverlayService.msgIdle(),  "摸鱼中…");
         final EditText eThink = cMsgInput(OverlayService.msgThink(), "思考中…");
         final EditText eTool  = cMsgInput(OverlayService.msgTool(),  "正在调用 {tool}…");
@@ -12951,13 +13060,30 @@ public class MainActivity extends Activity {
                     raf = new java.io.RandomAccessFile(f, "r");
                     raf.seek(off);
                     if (lf == null) lf = new FileOutputStream(out, true);
-                    lf.write((off == 0L ? "\n===== DSH 内部日志 " + name + " =====\n"
-                                        : "\n----- DSH 内部日志 " + name + "（续）-----\n").getBytes("UTF-8"));
+                    // 格式与 App 自己的日志一致：`[app] …` ↔ `[dsh-root] …`
+                    if (off == 0L) lf.write(("\n[dsh-root] " + name + "\n").getBytes("UTF-8"));
                     byte[] buf = new byte[64 * 1024];
                     int n;
-                    while ((n = raf.read(buf)) > 0) lf.write(buf, 0, n);
+                    int consumed = 0;
+                    while ((n = raf.read(buf)) > 0) {
+                        // 只写**完整行**，最后一行没写完就留到下一轮 —— 否则半行会被加上两个前缀
+                        int lastNl = -1;
+                        for (int i = n - 1; i >= 0; i--) { if (buf[i] == '\n') { lastNl = i; break; } }
+                        if (lastNl < 0) break;
+                        int start = 0;
+                        for (int i = 0; i <= lastNl; i++) {
+                            if (buf[i] != '\n') continue;
+                            if (i > start) {
+                                lf.write("[dsh-root] ".getBytes("UTF-8"));
+                                lf.write(buf, start, i - start + 1);
+                            }
+                            start = i + 1;
+                        }
+                        consumed += lastNl + 1;
+                        if (lastNl + 1 < n) break;           // 余下是半行：停在这里
+                    }
                     lf.flush();
-                    sp.edit().putLong(key, raf.getFilePointer()).apply();
+                    sp.edit().putLong(key, off + consumed).apply();
                 } catch (Throwable t) {
                     Log.w(TAG, "pump dsh log " + name + " failed", t);
                 } finally {

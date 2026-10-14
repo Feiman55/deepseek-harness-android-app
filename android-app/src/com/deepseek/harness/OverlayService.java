@@ -77,7 +77,21 @@ public class OverlayService extends Service {
      * 原来 0.45 的半藏会把人物裁掉一半、认不出是谁；改成 0.8 = 基本完整、又贴着屏幕边缘
      * （留 20% 越界，视觉上"贴边站着"）。想完全露出改 1.0，想恢复半藏改 0.45。
      */
-    private static final float TUCK_VISIBLE_FRACTION = 0.8f;
+    /** 默认「露出比例」：0.8 = 基本完整、又贴着屏幕边缘（留 20% 越界）。 */
+    static final float DEF_TUCK = 0.8f;
+    /** 推荐值：0.45 = 老版本的"半藏"（只露 45%）。 */
+    static final float REC_TUCK = 0.45f;
+    /** 露出比例的合法区间（1.0 = 完全露出）。 */
+    static final float MIN_TUCK = 0.15f;
+    private static final String KEY_TUCK = "overlay_tuck_fraction";
+    private static final String KEY_ALPHA = "overlay_alpha";
+    /** 悬浮窗整体透明度（0.2~1.0，默认 1.0 完全不透明）。 */
+    private static final float DEF_ALPHA = 1.0f;
+    private static volatile float sTuck = DEF_TUCK;
+    private static volatile float sAlpha = DEF_ALPHA;
+    /** 「在 App 内也显示悬浮窗」：默认关（前台时悬浮窗隐藏、不挡界面，是原有行为）。 */
+    private static final String KEY_SHOW_IN_APP = "overlay_show_in_app";
+    private static volatile boolean sShowInApp = false;
     /**
      * v1.21：静置（半藏）时，整体再朝**屏幕内侧**平移的比例（按屏幕宽度算）。
      * 用户要求"静止小人整体右移 5% 左右" —— 贴左边时就是往右挪，贴右边时对称地往左挪。
@@ -130,6 +144,67 @@ public class OverlayService extends Service {
             i.setAction(action);
             if (Build.VERSION.SDK_INT >= 26) c.startForegroundService(i); else c.startService(i);
         } catch (Throwable ignored) {}
+    }
+
+    /** 读一次外观设置（服务启动时调用）。 */
+    private static void loadOverlayLook(Context ctx) {
+        try {
+            android.content.SharedPreferences sp = ctx.getSharedPreferences(PREFS, MODE_PRIVATE);
+            sTuck = clampTuck(sp.getFloat(KEY_TUCK, DEF_TUCK));
+            float a = sp.getFloat(KEY_ALPHA, DEF_ALPHA);
+            sAlpha = a < 0.2f ? 0.2f : (a > 1f ? 1f : a);
+            sShowInApp = sp.getBoolean(KEY_SHOW_IN_APP, false);
+        } catch (Throwable ignored) {}
+    }
+
+    static boolean showInApp() { return sShowInApp; }
+
+    /** 设置「在 App 内也显示悬浮窗」。立刻生效并持久化。 */
+    static void setShowInApp(Context ctx, boolean on) {
+        sShowInApp = on;
+        try {
+            ctx.getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_SHOW_IN_APP, on).apply();
+        } catch (Throwable ignored) {}
+        OverlayService s = instance;
+        if (s != null) s.handler.post(new Runnable() { @Override public void run() { s.applyVisibleNow(); } });
+    }
+
+    static float tuckFraction() { return sTuck; }
+    static float avatarAlpha() { return sAlpha; }
+
+    static float clampTuck(float v) {
+        if (Float.isNaN(v)) return DEF_TUCK;
+        return v < MIN_TUCK ? MIN_TUCK : (v > 1f ? 1f : v);
+    }
+
+    /** 设置「静止贴边时的露出比例」（0.15~1.0）。立刻生效并持久化。 */
+    static void setTuckFraction(Context ctx, float v) {
+        sTuck = clampTuck(v);
+        try {
+            ctx.getSharedPreferences(PREFS, MODE_PRIVATE).edit().putFloat(KEY_TUCK, sTuck).apply();
+        } catch (Throwable ignored) {}
+        OverlayService s = instance;
+        if (s != null) s.handler.post(new Runnable() { @Override public void run() { s.applyOverlayLook(); } });
+    }
+
+    /** 设置悬浮窗透明度（0.2~1.0）。立刻生效并持久化。 */
+    static void setAvatarAlpha(Context ctx, float v) {
+        sAlpha = v < 0.2f ? 0.2f : (v > 1f ? 1f : v);
+        try {
+            ctx.getSharedPreferences(PREFS, MODE_PRIVATE).edit().putFloat(KEY_ALPHA, sAlpha).apply();
+        } catch (Throwable ignored) {}
+        OverlayService s = instance;
+        if (s != null) s.handler.post(new Runnable() { @Override public void run() { s.applyOverlayLook(); } });
+    }
+
+    /** 把外观设置作用到窗口上（透明度 + 因露出比例变化而重算贴边位）。 */
+    private void applyOverlayLook() {
+        try {
+            if (rootView != null) rootView.setAlpha(sAlpha);
+            updateAvatarWindow();     // v1.24：改小人窗口的唯一出口（内部会同步气泡/面板）
+        } catch (Throwable t) {
+            android.util.Log.w("DSHOverlay", "applyOverlayLook failed", t);
+        }
     }
 
     /** 唯一设置点：同步实例字段、静态镜像与持久化（避免三处不一致）。 */
@@ -484,6 +559,7 @@ public class OverlayService extends Service {
         try {
             setUserHidden(getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(KEY_USER_HIDDEN, false));
         } catch (Throwable ignored) {}
+        loadOverlayLook(this);
         isRunning = true;
         instance = this;
         // v1.21：空闲计时从这里起算（服务刚起来不该立刻显示"摸鱼中…"）
@@ -494,6 +570,7 @@ public class OverlayService extends Service {
         startForegroundCompat();
         buildOverlay();
         addToWindow();
+        applyOverlayLook();
         // 前后台联动：App 前台时隐藏悬浮窗（不挡界面），退后台时显示
         foregroundWantsHidden = MainActivity.overlayForeground;   // v1.13.11：改为记状态再统一应用
         applyVisibleNow();
@@ -895,7 +972,8 @@ public class OverlayService extends Service {
     private void applyVisibleNow() {
         try {
             if (rootView != null) {
-                boolean show = !foregroundWantsHidden && !userHidden;
+                // ① App 在前台 → 默认隐藏（不挡界面）；但用户开了「在 App 内也显示」就不隐藏。
+            boolean show = (!foregroundWantsHidden || sShowInApp) && !userHidden;
                 rootView.setVisibility(show ? View.VISIBLE : View.GONE); layoutCompanions();   // v1.21（重构）：小人隐藏时气泡/面板一起收
             }
         } catch (Throwable ignored) {}
@@ -984,7 +1062,7 @@ public class OverlayService extends Service {
                             int avatarW = (iconView != null && iconView.getWidth() > 0)
                                     ? iconView.getWidth() : dp(40);
                             int off = Math.max(0,
-                                    Math.round(avatarW * (1f - TUCK_VISIBLE_FRACTION))
+                                    Math.round(avatarW * (1f - tuckFraction()))
                                     - Math.round(screenW * TUCK_INSET_SHIFT_FRACTION));
                             want = screenW + off - w;
                         }
@@ -1142,7 +1220,7 @@ public class OverlayService extends Service {
         if (!panelVisible) {
             int avatarW = (iconView != null && iconView.getWidth() > 0) ? iconView.getWidth() : dp(40);
             int inset = avatarInsetInWindow();
-            int off = Math.round(avatarW * (1f - TUCK_VISIBLE_FRACTION));
+            int off = Math.round(avatarW * (1f - tuckFraction()));
             // v1.21：半藏之后再朝屏幕内侧收一点（用户要求"静止小人整体右移 5% 左右"，
             // 并确认最终这个位置"刚刚好" —— 所以这里保持"从半藏偏移里扣掉 shift、不小于 0"的算法，
             // 别改成叠加平移，否则会再往内挪一段）。
