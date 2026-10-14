@@ -12049,6 +12049,20 @@ public class MainActivity extends Activity {
      * 送结构化 `state`，App 据此套模板 —— 不靠中文文案匹配，所以用户改了气泡文案、
      * 或插件将来换措辞，都不会影响判类。
      */
+    /**
+     * 放开一个控制台按钮的最小宽度。
+     *
+     * <p>为什么需要：`cButton` 默认次按钮 68dp / 主按钮 96dp 最小宽度。把三个按钮塞进
+     * **半屏**（约 195dp）时加权布局压不下去 → 最后一个拿到最小宽度、前面两个被挤成 0 宽
+     * → 用户看到的就是"前两个按钮消失了"（真机反馈：露出比例那行只剩保存）。
+     * 这些按钮文字都很短（≤5 字），放开最小宽度后可安全随权重收缩。
+     */
+    private void relaxButtonMin(Button b) {
+        b.setMinWidth(0);
+        b.setMinimumWidth(0);
+        b.setPadding(dp(6), dp(9), dp(6), dp(9));
+    }
+
     /** 控制台里一行两列用的宽度参数（weight + 右侧间距 dp）。 */
     private LinearLayout.LayoutParams cWidth(float weight, int rightMarginDp) {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, weight);
@@ -12220,10 +12234,12 @@ public class MainActivity extends Activity {
             LinearLayout aActs = new LinearLayout(this);
             aActs.setOrientation(LinearLayout.HORIZONTAL);
             Button aDef = cButton(t("ovl.alphaDef", "恢复默认值"), false);
+            relaxButtonMin(aDef);
             aDef.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
                 sbAlpha.setProgress(Math.round((1.0f - 0.2f) * 100f));
             }});
             Button aSave = cButton(t("ovl.alphaSave", "保存"), true);
+            relaxButtonMin(aSave);
             aSave.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
                 OverlayService.setAvatarAlpha(MainActivity.this, alphaPct[0] / 100f);
                 conToast("透明度 " + alphaPct[0] + "% 已保存并生效");
@@ -12251,22 +12267,19 @@ public class MainActivity extends Activity {
             colB.addView(sbTuck);
             LinearLayout tActs = new LinearLayout(this);
             tActs.setOrientation(LinearLayout.HORIZONTAL);
-            Button tHalf = cButton(t("ovl.tuckHalf", "隐藏一半"), false);
-            tHalf.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
-                sbTuck.setProgress(Math.round(OverlayService.REC_TUCK * 100f) - 15);
-            }});
             Button tDef = cButton(t("ovl.tuckDef", "恢复默认值"), false);
+            relaxButtonMin(tDef);
             tDef.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
                 sbTuck.setProgress(Math.round(OverlayService.DEF_TUCK * 100f) - 15);
             }});
             Button tSave = cButton(t("ovl.tuckSave", "保存"), true);
+            relaxButtonMin(tSave);
             tSave.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
                 OverlayService.setTuckFraction(MainActivity.this, tuckPct[0] / 100f);
                 conToast("露出比例 " + tuckPct[0] + "% 已保存并生效");
                 renderConsole();
             }});
-            tActs.addView(tHalf, cWidth(1f, 4));
-            tActs.addView(tDef, cWidth(1f, 4));
+            tActs.addView(tDef, cWidth(1f, 8));
             tActs.addView(tSave, cWidth(1f, 0));
             colB.addView(tActs, cTop(cGap(6)));
             seekRow.addView(colB, cWidth(1f, 0));
