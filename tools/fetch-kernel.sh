@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 用**官方 npm registry + 仓库内 lock** 安装 DSH 内核树（唯一来源，v1.25 起）。
+# 用**官方 npm registry + 仓库内 lock** 安装 DSH 内核树（唯一来源，本版 起）。
 #
 # 为什么不再从上游 APK 里抠 dshroot：
 #   实测上游 payload 的 dshroot 是 **npm** 装的（`…/@deepseek-ai/dsh/node_modules/.package-lock.json`，
@@ -8,7 +8,7 @@
 #   本脚本改用那份**真实 lock 的等价物**（`android-app/kernel/package-lock.json`，一次性从 payload
 #   提升 530 条 + 补 80 条平台可选依赖）直接从官方 registry 复刻：9 秒、零漂移、不需要上游 APK。
 #
-# 构建缓存（v1.25）：装好的树会打成一枚 tar 存在 `.cache/kernel/`，并写 sha256 sidecar：
+# 构建缓存（本版）：装好的树会打成一枚 tar 存在 `.cache/kernel/`，并写 sha256 sidecar：
 #   · 第二次起直接解 tar（秒级、离线、不联网、不跑 npm）；
 #   · lock 变了（sha 变）或改了下方的安装口径（RECIPE 版本号）→ 自动重装；
 #   · 强制重装：DSH_KERNEL_REFRESH=1 或删掉 tar。
@@ -81,7 +81,7 @@ if [ ! -f "$TAR" ]; then
   rm -rf "$BUILD"
   mkdir -p "$BUILD"
   cp "$KERNEL_DIR/package.json" "$KERNEL_DIR/package-lock.json" "$BUILD/"
-  # ── registry 选择（v1.25）：默认用 config/mirrors.env 里的国内源，失败回落官方 ──
+  # ── registry 选择（本版）：默认用 config/mirrors.env 里的国内源，失败回落官方 ──
   #   为什么换源安全：lock 里每个包都带 integrity（sha512），npm 会逐包校验；
   #   实测 npmmirror 与官方逐项相同（667 包 / 25,849 文件 / 222.4 MB）。
   #   缓存 tar 命中时**完全不联网**，这里的顺序只影响冷启动那次。

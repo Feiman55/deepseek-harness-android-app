@@ -45,7 +45,7 @@
 - peerDependencies：`@deepseek-ai/dsh-tools`、`@deepseek-ai/cordis`（版本见各 package.json）
 - 调试 rish：`app_process -Djava.class.path=<rish dex> /system/bin --system --nice-name=rish rikka.shizuku.shell.ShizukuShellLoader -c "<命令>"`，环境变量 `RISH_APPLICATION_ID=com.deepseek.harness.community`
 
-## 来源与维护（v1.25 补充，2026-10-14 核对）
+## 来源与维护（本版 补充，2026-10-14 核对）
 
 本目录是**上游源码的副本**，不是持续自研的插件目录 —— 这里的"上游"指 **Android 上游项目
 （`woaiys3/deepseek-harness-android-app`，本仓库按版本同步它的源码）**，而不是 DSH 官方内核。

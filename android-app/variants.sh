@@ -2,7 +2,7 @@
 # ============================================================================
 # 变体表（单一真源）—— 由 android-app/build.sh 与 tools/build-apk.sh source。
 #
-# v1.25：**只保留社区版（community）**。此前还支持 official / lite / compat 三个变体：
+# 本版：**只保留社区版（community）**。此前还支持 official / lite / compat 三个变体：
 #   · official（com.deepseek.harness，用私有 release.jks 签）—— 与官方包同包名，
 #     本地调试密钥签不出可覆盖安装的包，实际只用于自测；
 #   · lite（.beta）与 compat（.compat，内嵌 GeckoView）—— 兼容版/救援版整条线已按维护者

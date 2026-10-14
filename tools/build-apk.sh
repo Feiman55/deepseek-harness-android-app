@@ -4,7 +4,7 @@
 #   bash tools/build-apk.sh                      # 构建（首次会装内核 + 取运行时资产，之后走缓存）
 #   bash tools/build-apk.sh --emulator           # 额外适配 x86_64 模拟器（ndk_translation）
 #   bash tools/build-apk.sh --original-look      # 用上游原版图标 + 原版悬浮窗形象
-#   （v1.25：只构建社区版 community，无 --variant 参数）
+#   （本版：只构建社区版 community，无 --variant 参数）
 #   bash tools/build-apk.sh --clean              # 清缓存重来（内核缓存也清，会重新联网装）
 #   bash tools/build-apk.sh --out ~/x.apk        # 指定产物路径
 #
@@ -29,7 +29,7 @@ DO_EMU_LIBS=1
 DO_VERIFY=1
 DO_SMOKE=0
 ANDROID_JAR_OPT=""
-DSH_VARIANT="community"   # v1.25：只保留社区版（见 android-app/variants.sh）
+DSH_VARIANT="community"   # 本版：只保留社区版（见 android-app/variants.sh）
 DO_ORIGINAL_LOOK=0
 OUT_SET=0
 
@@ -390,7 +390,7 @@ if [ "$DO_VERIFY" = 1 ]; then
 # 本 fork 的补丁（v1.20 起）：
 @deepseek-ai/dsh-bash-local/lib/index.js:DSH_BASH_PATH
 @deepseek-ai/dsh-subprocess-local/lib/runner-launch-*.js:dsh-android-patch
-# W4（v1.25）：Android 环境陷阱写进 bash 工具自己的描述（overlay 里改的是 dsh-tool-bash）
+# W4（本版）：Android 环境陷阱写进 bash 工具自己的描述（overlay 里改的是 dsh-tool-bash）
 @deepseek-ai/dsh-tool-bash/lib/index.js:Android 环境（本仓库注入
 "
   # 校验对象必须是**真正进包的那棵树**（staging），不是构建用的 devhome 缓存 ——
@@ -480,7 +480,7 @@ fi
 
 mark "记录构建信息"
 
-# ── v1.25：模拟器包**自动**补 guest 库（让 `--emulator` 真的"一个参数就够"）──────────────
+# ── 本版：模拟器包**自动**补 guest 库（让 `--emulator` 真的"一个参数就够"）──────────────
 # 为什么必须做：x86_64 模拟器靠 ndk_translation 跑 arm64 的 node，而**guest 加载器不认
 # LD_LIBRARY_PATH**（实测三种形态同样报 `library "libz.so.1" not found`），只搜镜像的
 # guest 库目录 /system/lib64/arm64/ —— 那里只有 libz.so，没有 libz.so.1 / libc++_shared.so /

@@ -73,6 +73,14 @@ LF 闸门、Java 语法体检、产物签名校验。
 | skill 说「`android.jar` 必须自备」，但 payload 里就有 | ✅ 成立（`runtime/share/java/android.jar` 3,881,757 B + `android-24.jar`） | skill 与 `THIRD_PARTY_NOTICES` §0.1 按事实改写：payload 随包提供、可直接用；**再分发合规性留作维护者决策** |
 | 版本自检「`build-apk.sh` 里有 `payload.zip` 相关代码 = 旧版」会误报 | ✅ 成立（那 5 处是**校验产物自身完整性**用的） | skill 去掉该判据，只保留 `--kernel/--runtime`，并注明 `payload.zip` 字样属正常 |
 
+**已处理（2026-10-14 第三批 · 平台环境三条）**：
+
+| 问题 | 能不能修 | 做法 / 实测 |
+|---|---|---|
+| 内置 node 的 `child_process` 默认 shell 指向 `/data/data/com.termux/files/usr/bin/sh`（必崩） | **能，已从根上修** | 该路径是明文嵌在 node 二进制里的 JS 源码（Termux 给 Android 打的补丁），环境变量救不了 → 构建期用**等长字节替换**改成 `/system/bin/sh`（`tools/patch-node-shell.py`，补成 JS 块注释保持源码合法、字节数不变；带自检，node 换版本时会提醒复核）。实测（模拟器）：`execSync("echo …")` → OK，`spawnSync(cmd,{shell:true})` → status 0，二进制内已无 Termux 串 |
+| `/tmp` 不可写 | **部分：引擎侧已解决** | 引擎 env 早就设了 `TMPDIR=<cacheDir>/tmp`（并设 `HOME`/`DSH_HOME`）→ 认 `TMPDIR` 的工具（coreutils/less/我们的脚本）都正常；`/tmp` 本身在 Android 上无 root 建不出来，属平台限制 |
+| `/sdcard` 不支持符号链接（`pnpm install` 失败） | **能缓解** | 随包 `.npmrc` 增加 `node-linker=hoisted` → pnpm 改用 npm 式平铺布局、不建软链；文档同时建议依赖目录放应用私有目录 |
+
 **已处理（2026-10-14 第二批）**：
 
 - **`aapt2` 缺符号 —— 已修（方案 B）**：随包 `libc++_shared.so` 换成 Termux 新版
@@ -82,12 +90,19 @@ LF 闸门、Java 语法体检、产物签名校验。
   `libc++_shared.so` 明确**工具集版本优先**（`tools/build-runtime-asset.py` 的 `PREFER_TOOLS`）。
   实测（模拟器，把库补进 guest 目录后）：`node --version` → `v26.4.0`（无回归）；
   `aapt2 version` → `Android Asset Packaging Tool (aapt) 2.20-android-16.0.0_r4`（真能跑）。
-- **`ecj` / `dx` 需要 JVM** —— 按维护者决定**不带 JDK**；skill 已写明这条路径需自备 JDK。
+- **`ecj` / `dx` 已修好（不需要 JDK）** —— 按设备端 agent 给出的药方（与内置 apksigner 同构）：
+  构建期生成包装脚本 `CLASSPATH=<jar> + ANDROID_DATA/ANDROID_ROOT + LD_LIBRARY_PATH 只留系统库 +
+  先 chmod 444`，主类分别是 `org.eclipse.jdt.internal.compiler.batch.Main`、
+  `dx.dx.command.Main`、`dx.dx.merge.DexMerger`。两层根因：① 现代 Android **没有 `dalvikvm`**；
+  ② ART **拒载可写 dex**（jar 0600 → 静默 SIGABRT/134）。
+  实测（模拟器，把链文件推上去跑）：`Hello.java → Hello.class（528 B）→ classes.dex（864 B，
+  magic `dex\n035\0`）`，`ecj 3.18.0` / `dx 1.16`，jar 权限自动 `-r--r--r--` ✓。
+  **本仓库不随包分发 JDK**，而设备内 Java 链也不再需要它。
 - **图标不动**（维护者决定）；另出 **`--original-look` 包**（蓝鲸鱼图标 + 鲸鱼悬浮窗）。
 
 ### 七、已知问题
 
-1. ~~x86_64 模拟器包：引擎起不来（`library "libz.so.1" not found`）~~ —— **已解决**（v1.25）。
+1. ~~x86_64 模拟器包：引擎起不来（`library "libz.so.1" not found`）~~ —— **已解决**（本版）。
    根因不是载荷：ndk_translation 里 **guest（arm64）加载器完全不看 `LD_LIBRARY_PATH`**，
    只在镜像的 guest 库目录 `/system/lib64/arm64/` 里找，而那里没有 `libz.so.1` /
    `libc++_shared.so` / `libicu*.so.78`。修法：用 `-writable-system` 启动模拟器后执行

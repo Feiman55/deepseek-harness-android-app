@@ -55,7 +55,7 @@ def main() -> None:
             shutil.copy2(src, stage / d)
 
     # 2) 覆盖工具集
-    #    ⚠ 例外（v1.25.1）：`libc++_shared.so` 必须用**工具集那份**。原因（安卓 agent 实测）：
+    #    ⚠ 例外（本版）：`libc++_shared.so` 必须用**工具集那份**。原因（安卓 agent 实测）：
     #      aapt2 是用比 node 随包 libc++ 更新的 NDK 编的，需要 `__hash_memory` 等新符号，而
     #      devhome（node 那份，1,374,336 B）里没有 → aapt2 一跑就报
     #      `cannot locate symbol "_ZNSt6__ndk113__hash_memoryEPKvm"`。

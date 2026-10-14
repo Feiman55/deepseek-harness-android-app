@@ -60,7 +60,7 @@ Linux、macOS 理论上同样可用，但**仅在 Windows + Git Bash 上实测�
 
 ---
 
-## 2. 它做了什么（v1.25 起只有一条路）
+## 2. 它做了什么（本版 起只有一条路）
 
 | 步 | 动作 |
 |---|---|
@@ -243,7 +243,7 @@ Linux / CI 上没有这个问题，构建同样在 **1 分钟出头**量级。
 
 ## 6. 在 x86_64 模拟器上运行
 
-### 6.1 让引擎真的跑起来（v1.25 实测结论）
+### 6.1 让引擎真的跑起来（本版 实测结论）
 
 x86_64 模拟器靠 `ndk_translation` 跑 arm64 的 node。踩过的坑与结论：
 
@@ -302,7 +302,7 @@ x86_64 模拟器靠 `ndk_translation` 跑 arm64 的 node。踩过的坑与结论
 
 
 
-> **`DSH_X64_BARE_LIBS` 里要放哪些库（v1.25 起由目录内容决定）**：构建期会把该目录（默认
+> **`DSH_X64_BARE_LIBS` 里要放哪些库（本版 起由目录内容决定）**：构建期会把该目录（默认
 > `.cache/x64libs`）里的**每一个文件**按**同名**注入 `runtime/lib`，并从 `LINKS.txt` 移除对应条目
 > —— 不再写死三个名字。为什么必须同名：ndk_translation 的翻译运行器（host 侧 x86_64）会从
 > `LD_LIBRARY_PATH`（= `runtime/lib`）解析**它自己**需要的库，撞上同名 arm64 文件就
@@ -311,7 +311,7 @@ x86_64 模拟器靠 `ndk_translation` 跑 arm64 的 node。踩过的坑与结论
 > ```bash
 > mkdir -p .cache/x64libs
 > for n in libz.so libssl.so libcrypto.so; do adb pull /system/lib64/$n .cache/x64libs/$n; done
-> # v1.25 实测还需要这个（注意存成**报错里的全名**）：
+> # 本版 实测还需要这个（注意存成**报错里的全名**）：
 > adb pull /system/lib64/liblzma.so .cache/x64libs/liblzma.so.5.8.4
 > ```
 >

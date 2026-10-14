@@ -20,7 +20,7 @@ description: 当任务要求"改这个 App 自己"（改 DSH/壳的行为、改�
 | **社区签名密钥** | `android-app/community.jks` —— **已入库，公开密钥** |
 | · store 密码 / alias / key 密码 | `dsh-community` / `community` / `dsh-community` |
 | · 证书 SHA-256 | `18:C9:7C:04:0B:B7:AB:30:15:60:63:41:E8:99:05:9B:4C:9D:05:25:3E:2D:E4:1B:4F:A5:D0:E4:B4:10:A8:E3` |
-| 其它变体密钥 | `release.jks`（**不入仓库**，需自行准备；可用 `DSH_KEYSTORE` 覆盖）；v1.25 起构建只剩社区版 |
+| 其它变体密钥 | `release.jks`（**不入仓库**，需自行准备；可用 `DSH_KEYSTORE` 覆盖）；本版 起构建只剩社区版 |
 | 固定取文件（raw，分支写死 `master`） | `https://raw.githubusercontent.com/blue-soda/deepseek-harness-android-app/master/<路径>` |
 | 镜像同路径（raw 不可达时首选） | `https://cdn.jsdelivr.net/gh/blue-soda/deepseek-harness-android-app@master/<路径>` |
 
@@ -48,7 +48,7 @@ done
 > 顺序与镜像列表的**单一真源**是仓库里的 `config/mirrors.env`（取文件时按它排序，别自己另编一套）。
 > 每一路失败都要**显式**；全部失败再报告 —— 报告里要写清"试过哪些源、各自什么错"。
 
-> **版本自检**：本 skill 描述的是 **v1.25+** 的仓库 —— 单一构建路径（内核来自官方 npm registry +
+> **版本自检**：本 skill 描述的是 **本版+** 的仓库 —— 单一构建路径（内核来自官方 npm registry +
 > 仓库内冻结 lock、arm64 运行时来自 sha256 pin 的资产），`tools/build-apk.sh` **没有**
 > `--kernel` / `--runtime` 参数，也**不再**下载上游 APK。若你取到的 `tools/build-apk.sh` 里还有
 > 这两个参数，说明你拿到的是旧版（改动尚未推到 `master`）——
@@ -112,13 +112,20 @@ bash tools/build-apk.sh        # 社区版（唯一变体；公开密钥签名�
 - 可以只用用户态工具链（JDK + `d8` + `aapt2` + `apksigner` + 一个 `android.jar`），
   **不需要 Gradle/AGP/SDK 规范布局**；工具链约 0.5–2 GB（进 Gradle/NDK 则更夸张）；
   **v1.19.3 起 `aapt2` / `apksigner` / `ecj` / `dx` 已随 payload 内置**（`runtime/bin/`），其中：
-  · **`aapt2` 可直接用**（v1.25.1 起随包 `libc++_shared.so` 已换成与它匹配的新版，实测
+  · **`aapt2` 可直接用**（本版 起随包 `libc++_shared.so` 已换成与它匹配的新版，实测
     `aapt2 version` → `Android Asset Packaging Tool (aapt) 2.20-android-16.0.0_r4`）；
   · **`apksigner` 可直接用**（不依赖 JVM，见上一节"安装后自证"）；
-  · ⚠ **`ecj` / `dx` 需要 JVM，而本仓库的 payload 里没有 JDK** ⇒ 真正"从零编译 Java"这条路径
-    需要**自备 JDK**（本仓库明确不带，避免再塞几十 MB）。只做"改现成包 + 重签"时不需要它们。
+  · **`ecj` / `dx` 也**可直接用，**不需要 JDK**（本版 起包装脚本改成 `app_process` + 预置 jar；
+    实测设备内 `Hello.java → Hello.class → classes.dex` 全通：ecj 3.18.0 / dx 1.16）。
+    这里的两个坑值得记住（都实测过）：
+      ① 现代 Android **删掉了 `dalvikvm`**（只有 `app_process`）—— 照 Termux 那套写法会报
+         `dalvikvm: inaccessible or not found`；
+      ② ART **拒载可写 dex**：jar 若是 0600 会**静默 SIGABRT(exit 134)**，所以包装脚本先
+         `chmod 444`（apksigner 的 `classes.dex` 早就踩过同一个坑）。
+    `dx --dex` 还有个使用细节：**输入要用相对路径/目录**（它要求类名与路径匹配，
+    给绝对路径会报 `class name (X) does not match path (...)`）。
 
-**共存规则**（v1.25 起只有社区版；端口与外部目录都避开官方包）：
+**共存规则**（本版 起只有社区版；端口与外部目录都避开官方包）：
 
 | 变体 | 包名 | 引擎/通知 | 无障碍 | 虚拟屏 桥/核心 | 外部目录 |
 |---|---|---|---|---|---|
@@ -179,6 +186,18 @@ ls "$P/dshhome" >/dev/null 2>&1 && echo "payload 在位 ✓"
 - **要持久**：走仓库的补丁机制 —— 改 `dsh-patches/overlay/`、`sh dsh-patches/apply.sh`、
   并把该文件加进 `FORCE_OVERWRITE_PREFIXES`，然后**重新打包 APK**，这样它随包下发、升级也保留。
 - 运行期"临时验证"用直接改文件是完全可以的，只要知道它会在下次同步时消失。
+
+## 3.9 平台环境陷阱（与 DSH/本仓库无关，但会咬人）
+
+实测（设备端 agent 报告 + 我们自己的复现），下面三条**不是配置问题**，写脚本时按此规避：
+
+| 现象 | 原因 | 规避 |
+|---|---|---|
+| `child_process.execSync`/`spawnSync` 报 `spawnSync /data/data/com.termux/files/usr/bin/sh ENOENT` | 内置 node 是 **Termux 构建**，Android 分支的默认 shell 被写死成 Termux 的 `sh`（明文嵌在二进制里的 JS 源码，环境变量救不了） | **本版 起已从根上修好**：构建期用等长字节替换把该串改成 `/system/bin/sh`（`tools/patch-node-shell.py`，实测 `execSync` 正常）。自己写脚本时仍建议显式给 `{ shell: process.env.DSH_BASH_PATH }` |
+| 往 `/tmp` 写文件失败 | Android 没有可写的全局 `/tmp` | **只用 `$TMPDIR`**（引擎 env 已指向可写目录），例如 `mktemp -d "$TMPDIR/xxx.XXXXXX"` |
+| `pnpm install` / 建软链失败 | `/sdcard` 是 FUSE，**不支持符号链接** | 随包 `.npmrc` 已设 `node-linker=hoisted`（pnpm 用 npm 式平铺、不建软链）；依赖目录仍建议放**应用私有目录**（`$HOME`/`$DSH_HOME`），`/sdcard` 只放源码 |
+
+（这三条已在 bash 工具的描述里提示过一遍；写成表格是为了让写脚本的 agent 也能直接查到。）
 
 ## 4. 常见坑
 

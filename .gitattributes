@@ -5,7 +5,7 @@ dsh-patches/overlay/** -text
 dsh-patches/apply.sh   -text
 mobile-patch/**        -text
 
-# ── v1.25.1：设备端会执行的脚本一律 **LF** ──────────────────────────────────────────────
+# ── 本版：设备端会执行的脚本一律 **LF** ──────────────────────────────────────────────
 # 背景（实测）：payload-extra/bin/mirror-get 曾被写成 CRLF → 设备上 mksh 直接
 #   `set: -: invalid option` / `syntax error near unexpected token $'in\r'`，而新 skill 让
 #   agent 第一步就用它。构建期已有「LF 闸门」覆盖 payload-extra / tools/diag / overlay，

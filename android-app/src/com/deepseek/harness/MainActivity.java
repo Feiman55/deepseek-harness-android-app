@@ -801,7 +801,7 @@ public class MainActivity extends Activity {
      * 为什么用**动态**而不是静态（res/xml + manifest meta-data）：
      *   · Intent 在代码里构造，可以带 FLAG_ACTIVITY_SINGLE_TOP —— App 已在运行时交给
      *     onNewIntent（否则 MainActivity 是 standard 启动模式，会再起一个 Activity 实例）；
-     *   · 不必为每个变体各改写一份 XML 里的包名（v1.25 起只有社区版）。
+     *   · 不必为每个变体各改写一份 XML 里的包名（本版 起只有社区版）。
      * 代价：App 至少冷启动过一次才会有这一项（对"用着用着把权限关了"的场景完全够）。
      * 幂等：每次冷启动重发一次，防止启动器把它丢掉。
      *
@@ -916,7 +916,7 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * v1.25（W2）：镜像源开关 —— **控制台可关**。
+     * 本版（W2）：镜像源开关 —— **控制台可关**。
      * 默认开：走 config/mirrors.env（随包为 bin/mirrors.env）里的国内源。
      * 关掉：完全不注入 NPM_CONFIG_REGISTRY / PIP_* ，各工具回落到自己的官方默认源。
      */
@@ -930,6 +930,38 @@ public class MainActivity extends Activity {
      * 单一真源是仓库里的 config/mirrors.env —— 构建期原样复制到 payload 的 bin/mirrors.env，
      * 所以这里读到的就是"当前这次构建用的那套源"，不会与脚本侧脱节。
      */
+    /**
+     * 给 .npmrc 补齐**受管键**（缺才补；用户显式设过的值不动）。
+     * 目前受管键：`node-linker=hoisted` —— /sdcard 是 FUSE、不支持符号链接，
+     * pnpm 默认的软链布局在那里装不上；hoisted 用 npm 式平铺，不建软链。
+     */
+    private void ensureNpmrcKeys(File npmrc) {
+        try {
+            if (npmrc == null) return;
+            String text = "";
+            if (npmrc.isFile()) {
+                byte[] b = new byte[(int) Math.min(npmrc.length(), 65536)];
+                FileInputStream in = new FileInputStream(npmrc);
+                int n = in.read(b);
+                in.close();
+                if (n > 0) text = new String(b, 0, n, "UTF-8");
+            }
+            if (text.contains("node-linker")) return;      // 已有（无论值是什么）→ 不动
+            File parent = npmrc.getParentFile();
+            if (parent != null && !parent.exists()) parent.mkdirs();
+            FileOutputStream out = new FileOutputStream(npmrc, true);
+            String add = (text.isEmpty() || text.endsWith("\n") ? "" : "\n")
+                    + "\n# 本版补：pnpm 在 /sdcard（FUSE）上建不了符号链接 → 用 npm 式平铺布局。\n"
+                    + "# 依赖目录仍建议放应用私有目录（$HOME/$DSH_HOME），/sdcard 只放源码。\n"
+                    + "node-linker=hoisted\n";
+            out.write(add.getBytes("UTF-8"));
+            out.close();
+            Log.i(TAG, "npmrc: 已补 node-linker=hoisted");
+        } catch (Throwable t) {
+            Log.w(TAG, "npmrc 补齐失败（不致命）", t);
+        }
+    }
+
     private java.util.Map<String, String> readMirrorsEnv(File f) {
         java.util.HashMap<String, String> out = new java.util.HashMap<String, String>();
         if (f == null || !f.isFile()) return out;
@@ -1531,7 +1563,7 @@ public class MainActivity extends Activity {
                 env.put("DSH_HOME", home.getAbsolutePath());
                 env.put("TMPDIR", tmp.getAbsolutePath());
                 env.put("TERM", "xterm");
-        // v1.25（W2）：镜像注入 —— 单一真源是随包的 bin/mirrors.env（= 仓库 config/mirrors.env）。
+        // 本版（W2）：镜像注入 —— 单一真源是随包的 bin/mirrors.env（= 仓库 config/mirrors.env）。
         // payload 里已有 .npmrc（管 npm/pnpm），这里补 env：pip 只认 env，而部分工具链更认 env 而非 rc。
         if (mirrorsEnabled()) {
             java.util.Map<String, String> mv = readMirrorsEnv(new File(bin, "mirrors.env"));
@@ -1547,10 +1579,16 @@ public class MainActivity extends Activity {
             if (pipHost != null) env.put("PIP_TRUSTED_HOST", pipHost);
         }
         env.put("PIP_DISABLE_PIP_VERSION_CHECK", "1");
-        // v1.25（W3）：less/clear 之类要 terminfo 数据库 —— 随运行时资产在 runtime/share/terminfo。
+        // 本版（W3）：less/clear 之类要 terminfo 数据库 —— 随运行时资产在 runtime/share/terminfo。
         // 不给 TERMINFO 时 less 会去 /system/etc/terminfo 找不到条目并退化（甚至报 "terminals database is inaccessible"）。
         File terminfoDir = new File(payload, "runtime/share/terminfo");
         if (terminfoDir.isDirectory()) env.put("TERMINFO", terminfoDir.getAbsolutePath());
+        // 本版：<dshhome>/.npmrc 的**受管键**补齐。为什么需要：payload-extra 里的 .npmrc 对
+        // **已存在**的文件不会覆盖（保护用户自己改的 registry 等），于是升级用户的 .npmrc 会一直缺
+        // `node-linker=hoisted` —— 而 /sdcard 是 FUSE 不支持符号链接，缺它时 pnpm 会在那里装不上
+        // （设备端 agent 实测：`pnpm config get node-linker` → undefined，node_modules 里是软链）。
+        // 只补"文件里没有这个键"的情况：用户显式设过的值一律不动。
+        ensureNpmrcKeys(new File(home, ".npmrc"));
                 env.put("SHELL", new File(bin, "bash").getAbsolutePath());
                 env.put("DSH_BASH_PATH", new File(bin, "bash").getAbsolutePath());
                 pb.redirectErrorStream(true);
@@ -5432,7 +5470,7 @@ public class MainActivity extends Activity {
 
     private void applyLinks(File payload) throws IOException {
         applyLinksIn(new File(payload, "runtime/lib"));
-        // v1.25（W3）：runtime/bin 也有一份别名清单 —— Termux 的 coreutils 是「1 个多调用二进制 +
+        // 本版（W3）：runtime/bin 也有一份别名清单 —— Termux 的 coreutils 是「1 个多调用二进制 +
         // 100 个别名」，包内只留那一个二进制，别名在这里按 LINKS.txt 重建（与 soname 别名同构）。
         // 不处理的话设备上 awk / coreutils 各命令（sort/head/stat/…）全缺，只剩 toybox 那套。
         applyLinksIn(new File(payload, "runtime/bin"));
@@ -5473,7 +5511,7 @@ public class MainActivity extends Activity {
                     Os.link(src.getAbsolutePath(), link.getAbsolutePath());
                     n++;
                 } catch (ErrnoException e1) {
-                    // ⚠ v1.25 实测结论（踩过一次）：**不要**在这里对 x86_64/ndk_translation 特判成"直接复制"。
+                    // ⚠ 本版 实测结论（踩过一次）：**不要**在这里对 x86_64/ndk_translation 特判成"直接复制"。
                     //    当时的推理是"软链在转译下加载不了"，于是硬链失败就复制 —— 结果引擎反而起不来
                     //    （`libz.so.1` 变成独立副本后 node 报 `library "libz.so.1" not found`），
                     //    而回滚成"硬链→软链→复制"的原有顺序后一切正常。转译运行器对软链是能用的，
@@ -5532,7 +5570,7 @@ public class MainActivity extends Activity {
             File f = new File(payload, p);
             if (f.exists()) f.setExecutable(true, false);
         }
-        // v1.25（W3）：runtime/bin 里现在是一整套 GNU 工具（grep/sed/gawk/coreutils/…）与设备内
+        // 本版（W3）：runtime/bin 里现在是一整套 GNU 工具（grep/sed/gawk/coreutils/…）与设备内
         // 构建链（aapt2/ecj/dx）。逐个列名字不现实，直接整目录给执行位 —— payload.zip 的
         // unix 权限全为 0（external_attr=0），不给 x 位这些工具会报"找不到命令"。
         File binDir = new File(payload, "runtime/bin");
@@ -5542,7 +5580,7 @@ public class MainActivity extends Activity {
                 if (b.isFile()) b.setExecutable(true, false);
             }
         }
-        // v1.25.1：payload 根 bin/ 也整目录补执行位（bash/git/npm/pnpm… 以及 payload-extra 的
+        // 本版：payload 根 bin/ 也整目录补执行位（bash/git/npm/pnpm… 以及 payload-extra 的
         // mirror-get）。实测（安卓 agent 报告）：payload.zip 不保存权限位，mirror-get 解出来是
         // 0600 且无 x 位 → 直接调用报 Permission denied；逐个列名字容易漏（新加附加件就忘一次）。
         File pbinDir = new File(payload, "bin");
@@ -10345,7 +10383,7 @@ public class MainActivity extends Activity {
             // ① 别名（LINKS.txt 里的名字）必须排除在字节统计之外：
             //    File.length() 会跟随软链返回**目标大小**，硬链也会各自计一次 —— 不排除就会把
             //    一份库算成三份（首版检查就是这么误报 +81MB 的）。
-            //    v1.25（W3）：runtime/bin 也有一份别名清单（coreutils 的多调用别名 + awk 等），
+            //    本版（W3）：runtime/bin 也有一份别名清单（coreutils 的多调用别名 + awk 等），
             //    同样要排除，否则设备上会误报"文件数不符"。
             java.util.HashMap<String, String> libAliases = readLinks(new File(payloadDir(), "runtime/lib/LINKS.txt"));
             java.util.HashMap<String, String> binAliases = readLinks(new File(payloadDir(), "runtime/bin/LINKS.txt"));
@@ -10427,7 +10465,7 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * 读一份 LINKS.txt → 别名名 → 目标名（v1.25：lib 与 bin 各一份，所以返回 map 而不是 set）。
+     * 读一份 LINKS.txt → 别名名 → 目标名（本版：lib 与 bin 各一份，所以返回 map 而不是 set）。
      * 只按 Tab 切分（与 applyLinks / build.sh 的规范化口径一致）。
      */
     private java.util.HashMap<String, String> readLinks(File linksFile) {

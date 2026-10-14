@@ -40,7 +40,7 @@ import sys
 import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# v1.25：默认对照上一次构建的 staging 内核树（devhome 现在只有运行时，没有 dshroot）。
+# 本版：默认对照上一次构建的 staging 内核树（devhome 现在只有运行时，没有 dshroot）。
 # 想要干净基线：bash tools/fetch-kernel.sh .cache/kernel-tree 后 --tree .cache/kernel-tree
 DEFAULT_TREE = os.path.join(REPO, "android-app", "staging", "dshroot", "lib")
 DEFAULT_OVERLAY = os.path.join(REPO, "dsh-patches", "overlay", "lib")
@@ -48,7 +48,7 @@ DEFAULT_OVERLAY = os.path.join(REPO, "dsh-patches", "overlay", "lib")
 # 我们改过、但历史 overlay 里没有对应文件的路径（相对 overlay/lib）。
 # 新增补丁后往这里加一行；路径必须相对内核树的 lib/。
 #
-# ⚠ v1.25 更新：内核树现在来自**官方 npm 包**（`tools/fetch-kernel.sh`，见
+# ⚠ 本版 更新：内核树现在来自**官方 npm 包**（`tools/fetch-kernel.sh`，见
 #   android-app/kernel/README.md），那份干净树就是"上游基线" —— 下面这些路径正是
 #   与官方 npm 树逐字节不同的 13 个补丁文件（2026-10-14 探针实测）。
 #   维护建议：改内核补丁后，用 `tools/fetch-kernel.sh` 装一份官方树，与之 diff，
@@ -56,7 +56,7 @@ DEFAULT_OVERLAY = os.path.join(REPO, "dsh-patches", "overlay", "lib")
 ADD_PATHS = [
     # v1.20：Android 平台门禁（createProcessInspector 认 android）——文件名是 0.2.0 的 bundle 名
     "node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-subprocess-local/lib/runner-launch-B2zsQ1Dz.js",
-    # v1.25：把"与官方 npm 包不同的 13 个补丁文件"全部登记，避免重采 overlay 时被判成残骸丢掉
+    # 本版：把"与官方 npm 包不同的 13 个补丁文件"全部登记，避免重采 overlay 时被判成残骸丢掉
     "node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js",
     "node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-attachment-local/lib/index.js",
     "node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-bash-local/lib/index.js",

@@ -7,7 +7,7 @@
 ```
 android-app/
 ├── build.sh              一键打包脚本（7 步：组装 payload → aapt → javac → d8 → 打包 → zipalign → 签名）
-├── variants.sh           变体表（单一真源；**v1.25 起只有 community**）
+├── variants.sh           变体表（单一真源；**本版 起只有 community**）
 ├── kernel/               内核树来源：package.json + 冻结 lock（由 tools/fetch-kernel.sh 安装）
 ├── AndroidManifest.xml   包名/targetSdk(28)/自由旋转/Shizuku 声明/版本号（versionCode/versionName）
 ├── libs/                 Shizuku 官方 aar（api/provider/aidl）
@@ -21,7 +21,7 @@ android-app/
 
 ## 构建环境（必备）
 
-构建输入由 `tools/build-apk.sh` 自动准备（v1.25 起无需手工搭 devhome）：
+构建输入由 `tools/build-apk.sh` 自动准备（本版 起无需手工搭 devhome）：
 
 - **内核树** —— 官方 npm registry 的 `@deepseek-ai/dsh@0.2.0-rc.2` + 仓库内冻结 lock
   （`android-app/kernel/`，`tools/fetch-kernel.sh` 安装，带 `.cache/kernel/*.tar` 缓存）；
@@ -56,7 +56,7 @@ sh build.sh
 
 改 `AndroidManifest.xml` 的 `android:versionCode` / `android:versionName` 后重新打包（小改动可走快速重打包：`jar uf` 就地更新 + zipalign + 重签）。
 
-## 变体构建（v1.25：只有社区版）
+## 变体构建（本版：只有社区版）
 
 包名/端口/外部目录/显示名/密钥全部来自 **`android-app/variants.sh`**（单一真源）：
 
@@ -64,9 +64,9 @@ sh build.sh
 |---|---|---|---|---|---|
 | `community` | `com.deepseek.harness.community` | 3086 / 3087 | 9029 / 9028 | `/sdcard/DeepSeekHarnessCommunity` | `community.jks`（**公开**） |
 
-> v1.25 起只保留社区版：`official` / `lite` 两个变体与 `compat`（GeckoView 兼容版）、
+> 本版 起只保留社区版：`official` / `lite` 两个变体与 `compat`（GeckoView 兼容版）、
 > `android-app-fix`（救援版）整条线已删除（连同 `legacy-patch/`）。此前它们各自的构建脚本
-> 是早期 build.sh 的分支，未跟上 v1.18~v1.25 的变体表/插件同步/node-pty/清单闸门等改动。
+> 是早期 build.sh 的分支，未跟上 v1.18~本版 的变体表/插件同步/node-pty/清单闸门等改动。
 
 ```sh
 bash tools/build-apk.sh        # 一键构建（唯一入口；默认且只构建社区版）

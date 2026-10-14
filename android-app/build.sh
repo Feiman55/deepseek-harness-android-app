@@ -22,7 +22,7 @@ case "$(uname -s 2>/dev/null)" in
   MINGW*|MSYS*|CYGWIN*) CP_SEP=";"; D8="d8.bat"; APKSIGNER="apksigner.bat" ;;
 esac
 # 变体表：appId / 端口 / 外部目录 / 显示名 / 默认密钥文件名的单一真源。
-# v1.25：**只有社区版**（official / lite / compat 已删；见 variants.sh 头部说明）。
+# 本版：**只有社区版**（official / lite / compat 已删；见 variants.sh 头部说明）。
 [ -f "$P/variants.sh" ] || { echo "!! 缺少 android-app/variants.sh（变体表）"; exit 1; }
 . "$P/variants.sh"
 
@@ -34,7 +34,7 @@ KEY="${DSH_KEYSTORE:-$P/$V_KEY_FILE}"
 APK_OUT="${DSH_APK_OUT:-$P/DeepSeekHarness${V_SUFFIX}.apk}"
 
 # ============================================================================
-# 提交前两道轻量闸门（v1.25）
+# 提交前两道轻量闸门（本版）
 # ============================================================================
 # 闸门 1：设备端会执行/加载的**文本**文件不得有 CRLF 行尾（*.md 文档不管）。
 #   `/system/bin/sh` 遇到 CRLF 会把 \r 当成命令名的一部分（报 "not found"）；
@@ -84,7 +84,7 @@ fi
 echo "== 0/7 组装 payload =="
 # v1.19.0 硬闸门：payload 里的 JSON/YAML 绝不能带 UTF-8 BOM ——
 # node 的 JSON.parse 会因为 BOM 直接抛 SyntaxError，表现为"引擎起不来"（真机实锤过一次）。
-# v1.25：改为检查**真正进包的 staging 树**（以前查 devhome 的 dshroot，而它现在只有运行时，
+# 本版：改为检查**真正进包的 staging 树**（以前查 devhome 的 dshroot，而它现在只有运行时，
 # 没有 dshroot；查 staging 才是"进包内容"的事实）。调用点在 staging 组装完成之后。
 bom_gate() {
   _hit=$(find "$P/staging/dshroot" "$P/staging/dshhome" \( -name '*.json' -o -name '*.yml' -o -name '*.yaml' \) -type f 2>/dev/null \
@@ -139,7 +139,7 @@ if [ -f "$H/runtime/bin/curl" ]; then
 fi
 fi
 
-# v1.25（W3）：runtime/bin 里的**全部**文件都要进包 —— GNU 工具集（grep/sed/gawk/coreutils/
+# 本版（W3）：runtime/bin 里的**全部**文件都要进包 —— GNU 工具集（grep/sed/gawk/coreutils/
 # findutils/diffutils/patch/less/tar/zip/unzip/xz/zstd/jq/openssl）与 W5 的设备内构建链
 # （aapt2/ecj/dx）。此前这里只挑 node/rg/curl 三个复制，新工具会静默留在 devhome 里不生效。
 if [ -d "$H/runtime/bin" ]; then
@@ -341,7 +341,7 @@ if [ -n "$DSH_X64_BARE_LIBS" ]; then
   #     · tools/build-apk.sh 默认不设；只有显式 `--emulator` 才设
   echo "⚠⚠ 正在使用模拟器(x86_64)适配构建：DSH_X64_BARE_LIBS=$DSH_X64_BARE_LIBS" >&2
   echo "⚠⚠ 这个 APK 不要装到真机 arm64（node 的 OpenSSL 会 dlopen 失败并直接崩溃）" >&2
-  # ── x86_64 覆盖表：**目录里有几个就注入几个**（v1.25 起不再写死三个名字）──────────
+  # ── x86_64 覆盖表：**目录里有几个就注入几个**（本版 起不再写死三个名字）──────────
   # 为什么必须可扩展：翻译运行器（host 侧 x86_64）会从 LD_LIBRARY_PATH（= runtime/lib）解析**它自己**
   # 需要的库，撞上同名 arm64 文件就 CANNOT LINK、引擎起不来。实测踩到两个：
   #   · libz / libssl / libcrypto（裸名，历史遗留）；
@@ -376,7 +376,7 @@ if [ -n "$DSH_X64_BARE_LIBS" ]; then
   fi
   echo "  [模拟器] 已注入 x86_64 覆盖库 $_x64_n 个（$(cd "$DSH_X64_BARE_LIBS" && ls -1 | paste -sd' ' -)）并从 LINKS.txt 移除对应条目"
 
-  # ── v1.25（W3）：模拟器构建**排除** arm64-only 的工具集与其新库 ──────────────────
+  # ── 本版（W3）：模拟器构建**排除** arm64-only 的工具集与其新库 ──────────────────
   # 为什么必须排：ndk_translation 的运行器（host 侧 x86_64）会从 LD_LIBRARY_PATH（= runtime/lib）
   # 解析**它自己**需要的库；W3 带进来的 arm64 新库（libpng16 / libpcre2-8 / libgmp …）会盖住
   # 对应的 x86_64 版本 → 每次 arm64 exec 都
@@ -436,7 +436,7 @@ if [ -n "$DSH_X64_BARE_LIBS" ]; then
 fi
 
 mkdir -p "$P/staging/dshroot/lib"
-# ── 内核树（v1.25：唯一来源 = 官方 npm registry + 仓库内冻结 lock）──────────────
+# ── 内核树（本版：唯一来源 = 官方 npm registry + 仓库内冻结 lock）──────────────
 # 由 tools/fetch-kernel.sh 安装（A2′，来历与实测见 android-app/kernel/README.md）；
 # 该脚本自带构建缓存：第二次起直接从 .cache/kernel/*.tar 解出，不联网、不重装。
 # 官方包是「干净」的，所以下面必须叠加 dsh-patches/overlay 补丁层。
@@ -539,7 +539,7 @@ fi
 # ============================================================================
 # v1.24：把 `plugins/` 下的插件同步进 staging（插件补丁的唯一生效路径）。
 #
-# ⚠ 归属说明（v1.25 更正）：`plugins/dsh-tool-*` 是**上游源码的副本**，不是本项目自研 ——
+# ⚠ 归属说明（本版 更正）：`plugins/dsh-tool-*` 是**上游源码的副本**，不是本项目自研 ——
 #   它们是随 `3819e7d「v1.19.0：同步源码」` 进来的（那条提交信息里就列了
 #   "浏览器工具插件：plugins/dsh-tool-browser/" 与"四个插件 accessibility/android/shizuku/vscreen"）。
 #   之所以在本仓库里"多出来"，是因为本仓库 pin 的 payload 是上游 v1.17.3，而 plugins/ 跟着
@@ -614,7 +614,7 @@ echo "$DSHROOT_REV" > "$P/assets/dshroot_revision.txt"
 
 # 内核树布局标记：布局本身变了（如依赖树结构换了）必须全量重推 dshroot。
 # 否则同内核升级走 fast 同步（只补白名单文件），整棵树仍是旧结构，修好的补丁包不生效。
-# v1.25：W3/W5 往 runtime/{bin,lib,share} 加了大批文件（GNU 工具集 + apksig dex）—— 布局变了，
+# 本版：W3/W5 往 runtime/{bin,lib,share} 加了大批文件（GNU 工具集 + apksig dex）—— 布局变了，
 #   必须 bump（实测：不 bump 时设备走 fast 同步，新文件根本没进去，`runtime/bin/apksigner`
 #   在设备上不存在，而 APK 里明明有）。
 DSHROOT_LAYOUT="hoisted-2"
@@ -926,7 +926,7 @@ else
 fi
 
 # ============================================================================
-# 本仓库自带的 payload 附加件（v1.25）：payload-extra/ + config/mirrors.env
+# 本仓库自带的 payload 附加件（本版）：payload-extra/ + config/mirrors.env
 #   · bin/mirror-get       —— 设备侧多源取仓库文件（失败显式；镜像顺序见 mirrors.env）
 #   · bin/mirrors.env      —— 镜像清单随包一份（设备端可读、可改；仓库里的是单一真源）
 #   · dshhome/.npmrc       —— 引擎 HOME 的 npm 默认（国内 registry + copy 导入 + 关 audit/fund）
@@ -1175,7 +1175,21 @@ fi
 echo "--- payload 各部分大小 ---"
 du -sh "$P/staging/runtime" "$P/staging/dshroot" "$P/staging/dshhome" "$P/staging/bin"
 
-# v1.25.1：Termux 包的脚本 shebang 指向 **Termux 前缀**（设备上不存在）→ 机械改写为 /system/bin/sh。
+# ── 本版：内置 node 的 child_process 默认 shell ────────────────────────────────
+# Termux 构建的 node 把 Android 分支的默认 shell 写死成 /data/data/com.termux/files/usr/bin/sh
+# （明文嵌在二进制里的 JS 源码）→ 非 Termux 设备上任何 execSync 都报 ENOENT，且环境变量救不了。
+# 用等长字节替换改成 /system/bin/sh（tools/patch-node-shell.py，补成 JS 注释保持源码合法）。
+_NODE_BIN="$P/staging/runtime/bin/node"
+if [ -f "$_NODE_BIN" ]; then
+  "$PY_BIN" "$P/../tools/patch-node-shell.py" "$_NODE_BIN" 2>&1 | sed 's/^/  /' || true
+  if "$PY_BIN" "$P/../tools/patch-node-shell.py" "$_NODE_BIN" --check >/dev/null 2>&1; then
+    echo "  node child_process 默认 shell 已指向 /system/bin/sh ✓"
+  else
+    echo "  !! node 的 Termux shell 未替换（child_process 仍会 ENOENT）—— 复核 node 版本"
+  fi
+fi
+
+# 本版：Termux 包的脚本 shebang 指向 **Termux 前缀**（设备上不存在）→ 机械改写为 /system/bin/sh。
 # 实测（安卓 agent 报告）：dx / dx-merge / ecj / ecj-24 / egrep / fgrep / xz* / *-config 等
 # 十几个脚本因此报 "No such file or directory：/data/data/com.termux/files/usr/bin/sh"。
 # ⚠ 放在**打包前**、且**不按执行位过滤**：这些文件在 Windows 上解出来没有 x 位（-a---），
@@ -1194,7 +1208,7 @@ _sb_left="$(find "$P/staging/runtime" -type f -size -200k 2>/dev/null \
     done | head -3)"
 [ -z "$_sb_left" ] || { echo "!! 仍有 Termux shebang："; printf '%s\n' "$_sb_left"; exit 1; }
 
-# v1.25.1（续）：脚本体里**写死的 Termux 前缀**同样要改。实测（安卓 agent 报告）：
+# 本版（续）：脚本体里**写死的 Termux 前缀**同样要改。实测（安卓 agent 报告）：
 #   · runtime/bin/dx / dx-merge：`-cp /data/data/com.termux/files/usr/share/dex/dx.jar`
 #   · runtime/bin/*-config：`prefix=/data/data/com.termux/files/usr`
 # 这些路径在设备上不存在（我们的运行时在 <files>/payload/runtime）。只改 runtime/bin 下的小文本文件，
@@ -1209,6 +1223,71 @@ while IFS= read -r _f; do
   fi
 done < <(find "$P/staging/runtime/bin" -type f -size -64k 2>/dev/null)
 echo "  Termux 前缀改写：$_prefix_fixed 个（改指 $_dst_prefix）"
+
+# ============================================================================
+# 本版（续）：重写 ecj / dx 的包装脚本 —— 设备内 Java 工具链**不需要 JDK**
+#
+# 安卓 agent 实测报告给了两层根因与可用药方（他端到端跑通了 Hello.java → .class → classes.dex）：
+#   ① Termux 原来那两个脚本调 `dalvikvm -cp …/share/dex/ecj.jar` —— 而现代 Android **删掉了
+#      dalvikvm**（只有 `app_process`），于是 `ecj: dalvikvm: inaccessible or not found`；
+#   ② 就算换成 app_process，ART 还会**静默 SIGABRT(exit 134)**：因为 jar 是可写的（0600），
+#      而 ART 拒载可写 dex —— apksigner 的 classes.dex 早就踩过同一个坑（那边是 chmod 444）。
+# 所以这里生成与 apksigner 同构的包装：CLASSPATH=<jar> + 干净环境 + 先 chmod 444。
+# ============================================================================
+_gen_chain_wrapper() {   # $1=文件名 $2=主类 $3=jar 相对 runtime 的路径
+  cat > "$P/staging/runtime/bin/$1" <<WRAP_EOF
+#!/system/bin/sh
+# 设备内 $1（Termux 分发，许可见 share/doc/*/COPYING*）—— 不需要 JDK：app_process + 预置 jar。
+# 实测坑：① 现代 Android 没有 dalvikvm（只有 app_process）；② ART 拒载**可写** dex，
+#         所以 jar 先 chmod 444，否则静默 SIGABRT(exit 134)。
+RT="\$(CDPATH= cd -- "\$(dirname -- "\$0")/.." && pwd)"
+JAR="\$RT/$3"
+[ -f "\$JAR" ] || { echo "$1: 缺 \$JAR" >&2; exit 1; }
+chmod 444 "\$JAR" 2>/dev/null || true
+CLASSPATH="\$JAR" ANDROID_DATA=/data ANDROID_ROOT=/system \
+  LD_LIBRARY_PATH=/system/lib64:/system/lib \
+  exec app_process /system/bin $2 "\$@"
+WRAP_EOF
+  chmod 755 "$P/staging/runtime/bin/$1"
+}
+# ecj 专用：默认给 bootclasspath（不覆盖用户显式传的 -- 见下），其余与 dx 同构。
+_gen_ecj_wrapper() {   # $1=文件名
+  cat > "$P/staging/runtime/bin/$1" <<'WRAP_EOF'
+#!/system/bin/sh
+# 设备内 $1（Eclipse ecj 3.18，Termux 分发）—— **不需要 JDK**：app_process + 预置 jar。
+# 实测坑：① 现代 Android 没有 dalvikvm（只有 app_process）；② ART 拒载**可写** dex → 先 chmod 444。
+RT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+JAR="$RT/share/dex/ecj.jar"
+[ -f "$JAR" ] || { echo "ecj: 缺 $JAR" >&2; exit 1; }
+chmod 444 "$JAR" 2>/dev/null || true
+# 用户自己给了类路径就别再塞默认值；没给时用 payload 自带的 android.jar 当框架类路径，
+# 否则 ecj 会报找不到 java.lang（它默认的源/目标比 Android 框架新）。
+_d=1
+for a in "$@"; do
+  case "$a" in -bootclasspath|-cp|-classpath) _d=0 ;; esac
+done
+_def=""
+if [ "$_d" = 1 ] && [ -f "$RT/share/java/android.jar" ]; then
+  _def="-proc:none -7 -bootclasspath $RT/share/java/android.jar"
+fi
+CLASSPATH="$JAR" ANDROID_DATA=/data ANDROID_ROOT=/system \
+  LD_LIBRARY_PATH=/system/lib64:/system/lib \
+  exec app_process /system/bin org.eclipse.jdt.internal.compiler.batch.Main $_def "$@"
+WRAP_EOF
+  chmod 755 "$P/staging/runtime/bin/$1"
+}
+_gen_ecj_wrapper ecj
+_gen_ecj_wrapper ecj-24
+_gen_chain_wrapper dx       dx.dx.command.Main    share/dex/dx.jar
+_gen_chain_wrapper dx-merge dx.dx.merge.DexMerger share/dex/dx.jar
+for _w in ecj ecj-24 dx dx-merge; do
+  _f="$P/staging/runtime/bin/$_w"
+  grep -q 'app_process' "$_f" || { echo "!! $_w 包装脚本没写成 app_process"; exit 1; }
+  # 注意：只查**非注释行** —— 我们的注释里就写着 dalvikvm 这个词（第一版自检因此误报）
+  grep -v '^#' "$_f" | grep -q 'dalvikvm' && { echo "!! $_w 里仍引用 dalvikvm（非注释行）"; exit 1; }
+  grep -q 'chmod 444' "$_f" || { echo "!! $_w 缺 chmod 444（ART 拒载可写 dex）"; exit 1; }
+done
+echo "  设备内 Java 链包装：ecj / ecj-24 / dx / dx-merge（app_process + jar 0444 + 干净环境）"
 ( cd "$P/staging" && jar cMf "$P/assets/payload.zip" . )
 echo "payload.zip: $(du -sh "$P/assets/payload.zip" | cut -f1)"
 
@@ -1239,7 +1318,7 @@ _sum_bytes() {
 _PAYLOAD_FILES=$(find "$P/staging" -type f | wc -l | tr -d ' ')
 _PAYLOAD_BYTES=$(_sum_bytes "$P/staging")
 _LINKS_N=$(grep -cv '^[[:space:]]*$' "$P/staging/runtime/lib/LINKS.txt" 2>/dev/null || echo 0)
-# v1.25（W3）：bin 的别名同样由设备端重建，也要计入期望值（coreutils 的 100 个多调用别名 + awk 等）
+# 本版（W3）：bin 的别名同样由设备端重建，也要计入期望值（coreutils 的 100 个多调用别名 + awk 等）
 _LINKS_BIN_N=$(grep -cv '^[[:space:]]*$' "$P/staging/runtime/bin/LINKS.txt" 2>/dev/null || echo 0)
 _LINKS_N=$((_LINKS_N + _LINKS_BIN_N))
 # 每个目录算一行：files / bytes

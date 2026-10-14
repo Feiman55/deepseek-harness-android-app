@@ -131,7 +131,7 @@ def main() -> None:
     node = pz.read("runtime/bin/node")
     want = set()
     queue = dt_needed(node)
-    # v1.25.1：--also <payload 内路径>：把该二进制的依赖闭包一并补上（用于验证 aapt2 之类，
+    # 本版：--also <payload 内路径>：把该二进制的依赖闭包一并补上（用于验证 aapt2 之类，
     # 它们的依赖与 node 不同 —— 只补 node 的闭包时 aapt2 仍会缺 libfmt/libprotobuf/…）。
     for extra in a.also:
         rel = extra.strip("/")
