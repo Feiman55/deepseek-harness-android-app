@@ -36,16 +36,22 @@ public final class PayloadScript {
     /**
      * 把随包脚本落到私有目录，返回可执行的文件路径。
      * 每次覆盖写（脚本很小），避免"改了脚本但设备上还是旧版"这类静默失败。
+     *
+     * <p>⚠ 必须**先写临时文件再 rename**：这个 .mjs 会被 payload 的 node **执行**，
+     * 直接 open(TRUNC) 覆盖正在运行的可执行/脚本文件会得到 {@code ETXTBSY (Text file busy)}
+     * —— 用户报障（Android 17）在解压 runtime/bin/node 时正是这个错。rename 换的是 inode：
+     * 旧进程继续用旧 inode，新文件立刻生效，互不冲突。
      */
     public static File ensure(Context ctx, String script) throws IOException {
         File dir = new File(ctx.getFilesDir(), "tools");
         if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("无法创建目录：" + dir.getAbsolutePath());
         File out = new File(dir, script);
+        File tmp = new File(dir, script + ".dsh-tmp");
         InputStream in = null;
         OutputStream os = null;
         try {
             in = ctx.getAssets().open(script);
-            os = new FileOutputStream(out);
+            os = new FileOutputStream(tmp);
             byte[] buf = new byte[16384];
             int n;
             while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
@@ -53,6 +59,25 @@ public final class PayloadScript {
         } finally {
             try { if (in != null) in.close(); } catch (Throwable ignored) {}
             try { if (os != null) os.close(); } catch (Throwable ignored) {}
+        }
+        if (tmp.length() <= 0) {
+            try { tmp.delete(); } catch (Throwable ignored) {}
+            throw new IOException("随包脚本复制为空：" + script);
+        }
+        if (!tmp.renameTo(out)) {
+            // 极少见（跨挂载点/被占用）：退回直接覆盖，并清掉临时文件
+            try { tmp.delete(); } catch (Throwable ignored) {}
+            InputStream in2 = ctx.getAssets().open(script);
+            OutputStream os2 = new FileOutputStream(out);
+            try {
+                byte[] buf = new byte[16384];
+                int n;
+                while ((n = in2.read(buf)) > 0) os2.write(buf, 0, n);
+                os2.flush();
+            } finally {
+                try { in2.close(); } catch (Throwable ignored) {}
+                try { os2.close(); } catch (Throwable ignored) {}
+            }
         }
         if (out.length() <= 0) throw new IOException("随包脚本复制为空：" + script);
         return out;

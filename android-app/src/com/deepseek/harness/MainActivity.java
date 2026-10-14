@@ -338,6 +338,8 @@ public class MainActivity extends Activity {
     // → 用户再点一次「启动引擎」就又拉起一个 node → EADDRINUSE（用户实测的“启动一会又变回去”）。
     private volatile boolean engineAliveCached = false;
     private volatile long engineProbeAt = 0L;
+    /** DSH 内部日志汇入 dsh-web.log 的节流（见 pumpDshLogs）。 */
+    private volatile long dshLogPumpAt = 0L;
     private volatile boolean engineProbeBusy = false;
     private volatile boolean notifyServerStarted = false;  // v1.13：通知通道幂等启动标记
     // 引擎 node 进程
@@ -3337,11 +3339,7 @@ public class MainActivity extends Activity {
                 return dex;
             }
             InputStream in = getAssets().open("rish_shizuku.dex");
-            FileOutputStream out = new FileOutputStream(dex);
-            byte[] b = new byte[8192];
-            int n;
-            while ((n = in.read(b)) > 0) out.write(b, 0, n);
-            out.close();
+            writeStreamAtomic(dex, in);       // 原子写：这颗 dex 会被 app_process 加载
             in.close();
             // v1.13.5：刚写出来的是 rw-rw-rw-，而 Android 14+ 拒绝加载可写 dex（SIGABRT）——
             // 插件侧每次调用会 chmod，但“App 自己刚提取、插件还没跑”的窗口期同样会中招，所以这里就收权。
@@ -3401,12 +3399,7 @@ public class MainActivity extends Activity {
                 if (parent == null || (!parent.exists() && !parent.mkdirs())) {
                     continue;
                 }
-                java.io.FileOutputStream fos = new java.io.FileOutputStream(out);
-                int n;
-                while ((n = zis.read(buf)) > 0) {
-                    fos.write(buf, 0, n);
-                }
-                fos.close();
+                writeStreamAtomic(out, zis);           // 载荷条目：原子写
                 copied++;
             }
         } catch (Throwable t) {
@@ -3460,21 +3453,15 @@ public class MainActivity extends Activity {
             if (extDir.exists() || extDir.mkdirs()) {
                 File out = new File(extDir, "vscreen_shizuku.jar");
                 InputStream in = getAssets().open("vscreen_shizuku.jar");
-                FileOutputStream fos = new FileOutputStream(out);
-                byte[] b = new byte[8192];
-                int n;
-                while ((n = in.read(b)) > 0) fos.write(b, 0, n);
-                fos.close();
+                writeStreamAtomic(out, in);       // 原子写：这个 jar 会被 app_process 加载
                 in.close();
                 // v1.18.0：写出后核对随包分发的 SHA-256（共享存储上的 jar 会被替换 → shell 身份执行任意代码）
                 String wantHash = assetText("vscreen_jar_sha256.txt");
                 String gotHash = sha256Of(out);
                 if (wantHash.isEmpty() || !wantHash.equalsIgnoreCase(gotHash)) {
                     Log.w(TAG, "vscreen jar 哈希不符（期望 " + wantHash + "，实际 " + gotHash + "），重写一次");
-                    java.io.FileOutputStream fos2 = new java.io.FileOutputStream(out);
                     InputStream in2 = getAssets().open("vscreen_shizuku.jar");
-                    while ((n = in2.read(b)) > 0) fos2.write(b, 0, n);
-                    fos2.close();
+                    writeStreamAtomic(out, in2);
                     in2.close();
                     gotHash = sha256Of(out);
                     if (!wantHash.isEmpty() && !wantHash.equalsIgnoreCase(gotHash)) {
@@ -3492,11 +3479,7 @@ public class MainActivity extends Activity {
             if (!dir.exists()) dir.mkdirs();
             File dex = new File(dir, "vscreen_shizuku.jar");
             InputStream in = getAssets().open("vscreen_shizuku.jar");
-            FileOutputStream out = new FileOutputStream(dex);
-            byte[] b = new byte[8192];
-            int n;
-            while ((n = in.read(b)) > 0) out.write(b, 0, n);
-            out.close();
+            writeStreamAtomic(dex, in);
             in.close();
             return dex;
         } catch (Exception e) {
@@ -4331,12 +4314,10 @@ public class MainActivity extends Activity {
                     java.io.File parent = out.getParentFile();
                     if (parent != null && !parent.exists()) parent.mkdirs();
                     java.io.InputStream in = zf.getInputStream(e);
-                    java.io.FileOutputStream fos = new java.io.FileOutputStream(out);
-                    byte[] buf = new byte[8192];
-                    int r;
                     try {
-                        while ((r = in.read(buf)) > 0) { fos.write(buf, 0, r); totalBytes += r; }
-                    } finally { try { in.close(); } catch (Throwable ignored) {} try { fos.close(); } catch (Throwable ignored) {} }
+                        writeStreamAtomic(out, in);      // 载荷条目：可能是 node/脚本，必须原子写
+                        totalBytes += Math.max(0, (int) Math.min(Integer.MAX_VALUE, out.length()));
+                    } finally { try { in.close(); } catch (Throwable ignored) {} }
                     files.put(out.getAbsolutePath());
                     copied++;
                 }
@@ -4976,13 +4957,7 @@ public class MainActivity extends Activity {
 
     /** v1.21：写文本文件（覆盖）。用于把内置插件注册进 profile/package.json。 */
     private void writeFileText(File f, String text) throws IOException {
-        java.io.FileOutputStream out = new java.io.FileOutputStream(f, false);
-        try {
-            out.write(text.getBytes("UTF-8"));
-            out.flush();
-        } finally {
-            try { out.close(); } catch (Throwable ignored) {}
-        }
+        writeBytesAtomic(f, text.getBytes("UTF-8"));
     }
 
     private String builtinDshrootRevision() {
@@ -5078,12 +5053,10 @@ public class MainActivity extends Activity {
     private void writeDshrootComplete(File dshrootBase) {
         File complete = new File(dshrootBase, "dshroot/" + DSHROOT_COMPLETE);
         try {
-            FileOutputStream fos = new FileOutputStream(complete);
             // 记录 <构建时间戳>|<布局标记>：布局标记用于判断是否需要全量重推（见 dshrootLayoutChanged）。
             String layout = builtinDshrootLayout();
             String marker = layout.isEmpty() ? builtinDshrootRevision() : builtinDshrootRevision() + "|" + layout;
-            fos.write(marker.getBytes("UTF-8"));
-            fos.close();
+            writeBytesAtomic(complete, marker.getBytes("UTF-8"));
         } catch (Throwable t) {
             Log.w(TAG, "write dshroot complete marker failed", t);
         }
@@ -5447,10 +5420,7 @@ public class MainActivity extends Activity {
                 updated++;
                 continue;
             }
-            FileOutputStream fos = new FileOutputStream(target);
-            int n;
-            while ((n = zis.read(buf)) > 0) fos.write(buf, 0, n);
-            fos.close();
+            writeStreamAtomic(target, zis);        // 同解压主路径：原子写，避免 ETXTBSY
             zis.closeEntry();
             updated++;
         }
@@ -5569,6 +5539,55 @@ public class MainActivity extends Activity {
             if (f.isDirectory()) cleanupStaleTemps(f);
             else if (f.getName().endsWith(".dsh-tmp")) { try { f.delete(); } catch (Throwable ignored) {} }
         }
+    }
+
+    /**
+     * 原子写字节：先写同目录 {@code <名字>.dsh-tmp}，再 rename 到目标。
+     *
+     * <p>为什么必须这样（本版统一收口）：rename 换的是 **inode** —— 即使目标此刻正被某个进程
+     * 当可执行文件/脚本跑着，或目标被收成只读 0444，也能成功替换；而直接 {@code open(TRUNC)}
+     * 覆盖正在运行的可执行文件会得到 {@code ETXTBSY (Text file busy)}（用户报障，Android 17）。
+     * rename 会立刻摘掉旧的目录项；旧 inode 若仍被进程持有，等它退出后才回收空间。
+     */
+    private void writeBytesAtomic(File target, byte[] data) throws IOException {
+        File parent = target.getParentFile();
+        if (parent != null && !parent.exists() && !parent.mkdirs()) throw new IOException("mkdir failed: " + parent);
+        File tmp = new File(parent, target.getName() + ".dsh-tmp");
+        FileOutputStream out = new FileOutputStream(tmp);
+        try { out.write(data); out.flush(); } finally { out.close(); }
+        finishAtomic(tmp, target);
+    }
+
+    /** 原子写流：把 {@code in} 全部写到目标（不动 in 的开关，调用方负责关闭）。 */
+    private void writeStreamAtomic(File target, java.io.InputStream in) throws IOException {
+        File parent = target.getParentFile();
+        if (parent != null && !parent.exists() && !parent.mkdirs()) throw new IOException("mkdir failed: " + parent);
+        File tmp = new File(parent, target.getName() + ".dsh-tmp");
+        FileOutputStream out = new FileOutputStream(tmp);
+        try {
+            byte[] buf = new byte[128 * 1024];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            out.flush();
+        } finally { out.close(); }
+        finishAtomic(tmp, target);
+    }
+
+    /** rename 到目标；失败（跨挂载点/被占用）就退回"从临时文件复制"再删临时文件。 */
+    private void finishAtomic(File tmp, File target) throws IOException {
+        if (tmp.renameTo(target)) return;
+        FileInputStream in = new FileInputStream(tmp);
+        FileOutputStream out = new FileOutputStream(target);
+        try {
+            byte[] buf = new byte[128 * 1024];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            out.flush();
+        } finally {
+            try { in.close(); } catch (Throwable ignored) {}
+            try { out.close(); } catch (Throwable ignored) {}
+        }
+        try { tmp.delete(); } catch (Throwable ignored) {}
     }
 
     private void copyFile(File src, File dst) throws IOException {
@@ -5828,12 +5847,7 @@ public class MainActivity extends Activity {
         }
         File parent = target.getParentFile();
         if (parent != null && !parent.exists() && !parent.mkdirs()) throw new IOException("mkdir failed: " + parent);
-        FileOutputStream fos = new FileOutputStream(target);
-        try {
-            fos.write(out.getBytes("UTF-8"));
-        } finally {
-            fos.close();
-        }
+        writeBytesAtomic(target, out.getBytes("UTF-8"));
     }
 
     private File ensureSystemCaBundle(File payload) {
@@ -6081,6 +6095,12 @@ public class MainActivity extends Activity {
                         fos.flush();
                         if (extFos != null) {
                             try { extFos.write(b, 0, n); extFos.flush(); } catch (Throwable ignored) {}
+                        }
+                        // 本版：把 DSH 内部日志（dshhome/logs/*.log）也汇进这个文件 ——
+                        // 插件加载期的 warn/error 只在那边，用户分享的却是 dsh-web.log。
+                        if (System.currentTimeMillis() - dshLogPumpAt > 5000L) {
+                            dshLogPumpAt = System.currentTimeMillis();
+                            pumpDshLogs();
                         }
                         // v1.12：一次 read 可能在行中间断开，token URL 会被截成两半 → 拼接后再切行
                         String s = carry + new String(b, 0, n, "UTF-8");
@@ -6952,9 +6972,7 @@ public class MainActivity extends Activity {
                     byte[] data = readAllBytes(in);
                     File out = new File(dir, n);
                     if (!(out.exists() && out.length() == data.length)) {
-                        java.io.FileOutputStream fos = new java.io.FileOutputStream(out);
-                        fos.write(data);
-                        fos.close();
+                        writeBytesAtomic(out, data);
                     }
                     if (!out.exists() || out.length() != data.length) all = false;
                 } catch (Throwable e) {
@@ -7011,9 +7029,7 @@ public class MainActivity extends Activity {
                     boolean need = old == null || (managed && old.length() != data.length);
                     if (need) {
                         if (!dir.exists() && !dir.mkdirs()) { all = false; continue; }
-                        java.io.FileOutputStream fos = new java.io.FileOutputStream(out);
-                        fos.write(data);
-                        fos.close();
+                        writeBytesAtomic(out, data);
                     }
                 } catch (Throwable e) {
                     all = false;
@@ -12902,6 +12918,58 @@ public class MainActivity extends Activity {
         col.addView(box2, cTop(cGap(8)));
     }
 
+    /**
+     * 把 DSH 内部日志（{@code $DSH_HOME/logs/*.log}，例如 plugins.log 里插件加载期的 warn/error）
+     * **增量**汇入 {@code files/dsh-web.log}。
+     *
+     * <p>为什么需要：插件的 warn/error 走内核 logger 落到 dshhome/logs/plugins.log，**不进**引擎
+     * stdout，所以用户从控制台导出的 dsh-web.log 里看不到它们 —— 真实排查时因此绕了一大圈
+     * （Agent 预设"加载失败"的真正原因：tool-bash 的 ESM 编译错误，就写在 plugins.log 里）。
+     * 汇入之后，"查看日志 / 分享日志 / 外镜像"三条路自然都带上。
+     *
+     * <p>偏移量记在 SharedPreferences，重启不重复；文件被截断（长度回退）则从头再来。
+     */
+    private void pumpDshLogs() {
+        try {
+            File dir = new File(new File(payloadDir(), "dshhome"), "logs");
+            File[] fs = dir.listFiles();
+            if (fs == null || fs.length == 0) return;
+            SharedPreferences sp = getSharedPreferences(PREFS, MODE_PRIVATE);
+            File out = new File(getFilesDir(), "dsh-web.log");
+            FileOutputStream lf = null;
+            for (File f : fs) {
+                if (!f.isFile()) continue;
+                String name = f.getName();
+                if (!name.endsWith(".log")) continue;
+                String key = "dshlog_off_" + name;
+                long off = sp.getLong(key, 0L);
+                long len = f.length();
+                if (len < off) off = 0L;                       // 被截断/重建 → 从头
+                if (len <= off) continue;
+                java.io.RandomAccessFile raf = null;
+                try {
+                    raf = new java.io.RandomAccessFile(f, "r");
+                    raf.seek(off);
+                    if (lf == null) lf = new FileOutputStream(out, true);
+                    lf.write((off == 0L ? "\n===== DSH 内部日志 " + name + " =====\n"
+                                        : "\n----- DSH 内部日志 " + name + "（续）-----\n").getBytes("UTF-8"));
+                    byte[] buf = new byte[64 * 1024];
+                    int n;
+                    while ((n = raf.read(buf)) > 0) lf.write(buf, 0, n);
+                    lf.flush();
+                    sp.edit().putLong(key, raf.getFilePointer()).apply();
+                } catch (Throwable t) {
+                    Log.w(TAG, "pump dsh log " + name + " failed", t);
+                } finally {
+                    try { if (raf != null) raf.close(); } catch (Throwable ignored) {}
+                }
+            }
+            try { if (lf != null) lf.close(); } catch (Throwable ignored) {}
+        } catch (Throwable t) {
+            Log.w(TAG, "pumpDshLogs failed", t);
+        }
+    }
+
     private File conLogFile() { return new File(getFilesDir(), "dsh-web.log"); }
 
     /**
@@ -13642,9 +13710,7 @@ public class MainActivity extends Activity {
                     File out = new File(getFilesDir(), name.substring("files/".length()));
                     File parent = out.getParentFile();
                     if (parent != null && !parent.exists() && !parent.mkdirs()) throw new IOException("mkdir failed: " + parent);
-                    FileOutputStream fos = new FileOutputStream(out);
-                    try { int r; while ((r = zis.read(buf)) > 0) fos.write(buf, 0, r); }
-                    finally { fos.close(); }
+                    writeStreamAtomic(out, zis);       // 恢复备份：同样原子写
                     backupWorkspaceFiles++;
                     n++;
                     zis.closeEntry();
@@ -13654,9 +13720,7 @@ public class MainActivity extends Activity {
                     File out = new File(base, name);
                     File parent = out.getParentFile();
                     if (parent != null && !parent.exists() && !parent.mkdirs()) throw new IOException("mkdir failed: " + parent);
-                    FileOutputStream fos = new FileOutputStream(out);
-                    try { int r; while ((r = zis.read(buf)) > 0) fos.write(buf, 0, r); }
-                    finally { fos.close(); }
+                    writeStreamAtomic(out, zis);       // 恢复备份：同样原子写
                     n++;
                 }
                 zis.closeEntry();
@@ -13697,9 +13761,7 @@ public class MainActivity extends Activity {
         if (parent != null && !parent.exists() && !parent.mkdirs()) throw new IOException("mkdir failed: " + parent);
         java.io.FileInputStream in = new java.io.FileInputStream(src);
         try {
-            FileOutputStream out = new FileOutputStream(dst);
-            try { byte[] b = new byte[64 * 1024]; int r; while ((r = in.read(b)) > 0) out.write(b, 0, r); }
-            finally { out.close(); }
+            writeStreamAtomic(dst, in);
         } finally { in.close(); }
     }
 
@@ -13732,11 +13794,7 @@ public class MainActivity extends Activity {
                 }
                 if (!want) { zis.closeEntry(); continue; }
                 File out = new File(dir, name.substring(prefix.length()));
-                FileOutputStream fos = new FileOutputStream(out);
-                try {
-                    int r;
-                    while ((r = zis.read(buf)) > 0) fos.write(buf, 0, r);
-                } finally { fos.close(); }
+                writeStreamAtomic(out, zis);           // 随包 profile 文件：原子写
                 zis.closeEntry();
                 n++;
             }
