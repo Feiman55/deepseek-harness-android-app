@@ -54,8 +54,8 @@
 
 | 产物 | 大小 | SHA-256 |
 |---|---|---|
-| `DeepSeekHarness-community-1.19.3-arm64.apk`（真机） | 134.7 MB | `cd2fb0d2af3e562dddee84b234331d4d092cc737ef61cf9afe4545598d888867` |
-| `DeepSeekHarness-community-1.19.3-x86_64.apk`（模拟器） | 114.9 MB | `53f25e1fd44f692ed32f5c4fc3dd79d154c8ae1e4a5eb1b84f4deda9c2184784` |
+| `DeepSeekHarness-community-1.19.3-arm64.apk`（真机） | 134.7 MB | `b9591ccaf1de554dc362d61826812c3c737d9cb6b799853e7d10bff1b1650220` |
+| `DeepSeekHarness-community-1.19.3-x86_64.apk`（模拟器） | 114.9 MB | `a0a85a199069440ecee9cfba293d4ff42a911ecda93dab51e6d5dbdfd51c9a0b` |
 
 体积构成（相对 v1.19.2 的 ~105 MB）：W3 的 GNU 工具集与设备内构建链 **+21 MB**、remote 插件
 0.4.32→0.5.0 **+9 MB**。两个包都通过构建期闸门：清单 entries/bytes 一致、**16/16 补丁特征串**、
