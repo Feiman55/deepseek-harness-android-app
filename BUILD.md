@@ -243,6 +243,35 @@ Linux / CI 上没有这个问题，构建同样在 **1 分钟出头**量级。
 
 ## 6. 在 x86_64 模拟器上运行
 
+### 6.1 让引擎真的跑起来（v1.25 实测结论）
+
+x86_64 模拟器靠 `ndk_translation` 跑 arm64 的 node。踩过的坑与结论：
+
+1. **转译进程里的 guest（arm64）加载器完全不看 `LD_LIBRARY_PATH`** —— 实测：往 `LD_LIBRARY_PATH`
+   指一个目录，放垃圾文件、放真 ELF、什么都不放，报错**完全相同**：
+   `CANNOT LINK … library "libz.so.1" not found: needed by main executable`。
+   它只在 **`/system/lib64/arm64/`** 里找（该镜像的 guest 库目录），而那里有 `libz.so`，
+   却**没有** `libz.so.1` / `libc++_shared.so` / `libicu*.so.78` —— 所以 node 起不来、
+   引擎启动超时。
+2. 因此模拟器需要**把 node 依赖的 arm64 库按 soname 放进 guest 库目录**，仓库给了脚本：
+
+   ```bash
+   # ① 模拟器必须用「可写系统」启动（否则 /system 不可写）；图形后端用 swiftshader 更稳
+   emulator -avd <你的AVD> -writable-system -no-boot-anim -gpu swiftshader_indirect -no-snapshot-load
+   # ② 装库（幂等；只推 node 真正需要的 10 个 arm64 库，约 46 MB）
+   adb root && adb remount
+   python tools/emu-arm64libs.py            # 可加 --dry-run 先看清单
+   # ③ 之后再启动 App / 引擎即可
+   ```
+
+   验证：`adb shell su 0 sh -c '<payload>/runtime/bin/node --version'` 应打印 `v26.4.0`。
+3. **真机（arm64 原生）不需要这一步**，也**不要**跑这个脚本。
+4. 两个把人绕远的现象，记下来省时间：
+   · 用 `| Select-Object -First N` 之类的**管道截断**启动模拟器，管道一关模拟器就退出；
+   · 漏掉 `-gpu swiftshader_indirect` 时宿主端可能直接崩溃（`EXCEPTION_ACCESS_VIOLATION`）。
+
+
+
 > **`DSH_X64_BARE_LIBS` 里要放哪些库（v1.25 起由目录内容决定）**：构建期会把该目录（默认
 > `.cache/x64libs`）里的**每一个文件**按**同名**注入 `runtime/lib`，并从 `LINKS.txt` 移除对应条目
 > —— 不再写死三个名字。为什么必须同名：ndk_translation 的翻译运行器（host 侧 x86_64）会从

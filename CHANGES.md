@@ -55,13 +55,14 @@ LF 闸门、Java 语法体检、产物签名校验。
 
 ### 六、已知问题
 
-1. **x86_64 模拟器包：引擎起不来（`library "libz.so.1" not found`）** —— 仅影响模拟器包，
-   真机 arm64 不受影响。现象：模拟器（x86_64 + `ndk_translation`）上 node 报
-   `CANNOT LINK … library "libz.so.1" not found: needed by main executable`，而该文件确实在
-   `runtime/lib` 里（软链/副本两种形态都试过）。**载荷本身是好的**：提取完成、
-   `payload integrity OK runtime files=58/58 bytes=…/… 别名=35/35`、内置 apksigner 可用、
-   remote 0.5.0 在位。本会话早先（同一 AVD，未重启时）同类模拟器包**能起引擎**，
-   故倾向判断为模拟器环境/AVD 状态问题，而非载荷回归；真机路径与本次改动无交叉。
+1. ~~x86_64 模拟器包：引擎起不来（`library "libz.so.1" not found`）~~ —— **已解决**（v1.25）。
+   根因不是载荷：ndk_translation 里 **guest（arm64）加载器完全不看 `LD_LIBRARY_PATH`**，
+   只在镜像的 guest 库目录 `/system/lib64/arm64/` 里找，而那里没有 `libz.so.1` /
+   `libc++_shared.so` / `libicu*.so.78`。修法：用 `-writable-system` 启动模拟器后执行
+   **`python tools/emu-arm64libs.py`**（把 node 需要的 10 个 arm64 库按 soname 推进 guest 目录，
+   约 46 MB，幂等），随后引擎正常起来（实测 `engine token url captured` ✓，
+   `node --version` → `v26.4.0` ✓）。**真机不受影响、也不需要这一步**；
+   详见 `BUILD.md` §6.1。
 2. **控制台镜像开关只有开关量没有 UI 行**：`mirrors_off` 偏好已生效（默认镜像开），
    控制台那一行属声明式主题树（`layout.pages[].children[]`），留待后续。
 3. **设备内从零构建链缺 `android.jar`**：SDK 许可不允许再分发，需用户自备
