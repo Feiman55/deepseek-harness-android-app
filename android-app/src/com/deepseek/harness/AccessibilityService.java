@@ -85,6 +85,8 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
     private static final long MAX_GESTURE_TOTAL_MS = 120000;
 
     private final Object gestureLock = new Object();
+    /** 当前手势预计占用到什么时候（ms 时间戳）；> now 时新的注入请求直接快速失败，不再闷等超时。 */
+    private volatile long gestureBusyUntil = 0L;
     private final boolean[] fingerDown = new boolean[MAX_FINGERS];
     private final float[] fingerX = new float[MAX_FINGERS];
     private final float[] fingerY = new float[MAX_FINGERS];
@@ -99,6 +101,8 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
         long startTime;
         long duration;
         boolean willContinue;
+        /** true = 这笔是上一笔的延续（用 continueStroke 接上，避免中间出现 UP）。 */
+        boolean continuation = false;
         StrokeDesc(Path p, long s, long d, boolean wc) {
             path = p;
             startTime = s;
@@ -427,6 +431,13 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
      * down 后未 up 的手指保持按住，可跨请求延续；下次请求自动带上延续笔。
      */
     private String executeGesture(JSONArray ops) {
+        // v1.19.3 P0：注入是串行的（gestureLock）。以前新请求会一直排队到插件侧 12s 超时，
+        // 报错还被改写成"无障碍未开启"；现在直接快速失败并说清原因。
+        long busyLeft = gestureBusyUntil - System.currentTimeMillis();
+        if (busyLeft > 0) {
+            return jsonError("上一条手势仍在执行（预计还需 " + busyLeft
+                    + " ms）：坐标注入是串行的，请稍后重试，或把 durationMs 调小");
+        }
         synchronized (gestureLock) {
             try {
                 int[] size = screenSize();
@@ -458,6 +469,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                 int[] y2s = new int[n];
                 long[] starts = new long[n];
                 long[] ends = new long[n];
+                long[] holds = new long[n];   // swipe 的「按住阶段」（毫秒）
                 // 真实按住且被本请求接管的手指 → 其首个 op 开始时刻（补「保持到 op 开始」的延续笔）
                 long[] firstOpStart = new long[MAX_FINGERS];
                 for (int f = 0; f < MAX_FINGERS; f++) firstOpStart[f] = -1;
@@ -506,6 +518,9 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                         }
                     } else if ("swipe".equals(kind)) {
                         seg = dur >= 0 ? dur : 300;
+                        // v1.19.3 P0：拖拽要先"按住"再动，否则第一个 MOVE 就带着整段距离的速度，
+                        // 会被应用当成 fling/滚动（游戏里选朝向、画板画线全部失效）。默认 150ms。
+                        holds[i] = Math.max(0, Math.min(2000, op.optLong("holdBeforeMoveMs", 150)));
                         if (x < 0 || y < 0 || x2 < 0 || y2 < 0) {
                             return jsonError("swipe 需要起点(x/y 或 fx/fy)和终点(x2/y2 或 fx2/fy2)");
                         }
@@ -573,6 +588,12 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                 System.arraycopy(fingerX, 0, curX, 0, MAX_FINGERS);
                 System.arraycopy(fingerY, 0, curY, 0, MAX_FINGERS);
 
+                // v1.19.3 P0：单 op 的 swipe 若要求"按住阶段"，按住笔与移动段分两次 dispatch
+                // （continuation 必须在独立 dispatch 里续上，否则系统会取消整条手势）。
+                GestureDescription.StrokeDescription pendingHold = null;
+                Path pendingMovePath = null;
+                long pendingMoveMs = 0;
+
                 for (int i = 0; i < n; i++) {
                     String kind = kinds[i];
                     int finger = fings[i];
@@ -583,6 +604,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                     long start = starts[i];
                     long end = ends[i];
                     long seg = end - start;
+                    long holdMs = holds[i];
                     boolean held = finger >= 0 && finger < MAX_FINGERS && fingerDown[finger];
 
                     if ("wait".equals(kind)) {
@@ -650,6 +672,33 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                             fingerDown[finger] = false;
                             fingerX[finger] = x2;
                             fingerY[finger] = y2;
+                        } else if (holdMs > 0 && holdMs < seg && n == 1) {
+                            // 按住阶段：单独一段 dispatch（willContinue 保持指针不抬起）。
+                            Path holdPath = new Path();
+                            holdPath.moveTo(x, y);
+                            holdPath.lineTo(x + 2, y);
+                            holdPath.lineTo(x, y);
+                            StrokeDesc hs = new StrokeDesc(holdPath, start, holdMs, true);
+                            strokes.add(hs);
+                            // 移动段：>=20 个采样点，等第一段完成后再 continueStroke 续上
+                            Path movePath = new Path();
+                            movePath.moveTo(x, y);
+                            int samples = Math.max(20, (int) ((seg - holdMs) / 16));
+                            for (int s = 1; s <= samples; s++) {
+                                float f = s / (float) samples;
+                                movePath.lineTo(x + (x2 - x) * f, y + (y2 - y) * f);
+                            }
+                            pendingMovePath = movePath;
+                            pendingMoveMs = seg - holdMs;
+                            Log.i(TAG, "swipe hold=" + holdMs + "ms move=" + pendingMoveMs
+                                    + "ms samples=" + samples + " -> (" + x2 + "," + y2 + ") [two-phase]");
+                        } else if (holdMs > 0 && holdMs < seg) {
+                            // 多笔手势里不拆段（continuation 必须独占一次 dispatch），退回单笔
+                            Path path = new Path();
+                            path.moveTo(x, y);
+                            path.lineTo(x2, y2);
+                            strokes.add(new StrokeDesc(path, start, seg, false));
+                            Log.w(TAG, "multi-op gesture：按住阶段未生效（仅单 op 的 swipe 支持）");
                         } else {
                             Path path = new Path();
                             path.moveTo(x, y);
@@ -681,8 +730,29 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                     releaseAllFingersUnlocked();
                     return jsonError("笔画数超限（单次最多 " + (MAX_FINGERS + 2) + " 笔）");
                 }
+                GestureDescription.StrokeDescription prevStroke = null;
                 for (StrokeDesc sd : strokes) {
-                    gb.addStroke(new GestureDescription.StrokeDescription(sd.path, sd.startTime, sd.duration, sd.willContinue));
+                    GestureDescription.StrokeDescription ns;
+                    if (pendingMovePath != null && sd.willContinue && sd.duration > 0) {
+                        // 这是按住笔：记下它，移动段在下一段 dispatch 里续接
+                    }
+                    if (sd.continuation && prevStroke != null) {
+                        // 延续笔：startTime 相对上一笔结束；不会产生中间的 UP
+                        ns = prevStroke.continueStroke(sd.path, Math.max(0, sd.startTime),
+                                Math.max(1, sd.duration), sd.willContinue);
+                    } else {
+                        ns = new GestureDescription.StrokeDescription(sd.path, Math.max(0, sd.startTime),
+                                Math.max(1, sd.duration), sd.willContinue);
+                    }
+                    gb.addStroke(ns);
+                    prevStroke = ns;
+                }
+                gestureBusyUntil = System.currentTimeMillis() + totalT + 3000;
+                if (pendingMovePath != null) {
+                    pendingHold = prevStroke;   // 按住笔 = 刚才最后一笔
+                    if (pendingHold == null || !pendingHold.willContinue()) {
+                        pendingMovePath = null;   // 拿不到可续接的笔 → 退回"无按住阶段"
+                    }
                 }
                 final GestureDescription gesture = gb.build();
 
@@ -710,6 +780,29 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                     return jsonError("手势被系统取消（可能被新手势或手动触摸打断），已复位所有手指");
                 }
 
+                // 第二段：把按住笔续成移动段（指针仍按住，不会出现 UP）
+                if (pendingHold != null && pendingMovePath != null) {
+                    GestureDescription.StrokeDescription cont =
+                            pendingHold.continueStroke(pendingMovePath, 0, Math.max(1, pendingMoveMs), false);
+                    GestureDescription.Builder gb2 = new GestureDescription.Builder();
+                    gb2.addStroke(cont);
+                    final CountDownLatch latch2 = new CountDownLatch(1);
+                    final boolean[] ok2 = {false};
+                    dispatchGesture(gb2.build(), new GestureResultCallback() {
+                        @Override
+                        public void onCompleted(GestureDescription g) { ok2[0] = true; latch2.countDown(); }
+                        @Override
+                        public void onCancelled(GestureDescription g) { latch2.countDown(); }
+                    }, null);
+                    boolean done2 = latch2.await(pendingMoveMs + 5000, TimeUnit.MILLISECONDS);
+                    if (!done2 || !ok2[0]) {
+                        releaseAllFingersUnlocked();
+                        return jsonError("拖拽的移动段被系统取消（按住 " + "笔已注入，移动段未完成）；"
+                                + "可减小 durationMs 重试，或改用 android_touch 的 down/move 手动控制");
+                    }
+                    Log.i(TAG, "swipe move phase completed (" + pendingMoveMs + "ms)");
+                }
+
                 // 返回当前按住的手指
                 JSONArray held = new JSONArray();
                 for (int f = 0; f < MAX_FINGERS; f++) {
@@ -731,6 +824,8 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
             } catch (Throwable t) {
                 releaseAllFingersUnlocked();
                 return jsonError("gesture error: " + t.getMessage());
+            } finally {
+                gestureBusyUntil = 0L;
             }
         }
     }

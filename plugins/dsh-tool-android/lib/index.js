@@ -446,8 +446,7 @@ function apply(ctx) {
         if (now - lastAt < MIN_GAP_MS && !sticky) return;       // 节流（终态不丢）
         lastText = text;
         lastAt = now;
-        console.log("[bubble] " + text + (sticky ? " (sticky)" : "")
-          + (state ? " [" + state + (tool ? ":" + tool : "") + "]" : ""));
+          // 诊断日志已按维护者要求移除（不再往 dsh-web.log 刷气泡文案）
         appPost("/overlay", { action: "bubble", text, sticky: !!sticky, ttl: 0,
                               state: state || "", tool: tool || "" });
       } catch (e) { /* 忽略：状态气泡是尽力而为 */ }
@@ -487,7 +486,6 @@ function apply(ctx) {
       const tool = findToolName(f, 0);
       if (!frameShapeLogged && !tool && f && typeof f === "object") {
         frameShapeLogged = true;
-        try { console.log("[bubble] assistant-stream 帧结构（用于校正工具名提取）: " + JSON.stringify(f).slice(0, 400)); } catch (e) {}
       }
       if (tool) {
         busy = true;

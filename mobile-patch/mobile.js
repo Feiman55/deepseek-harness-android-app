@@ -285,7 +285,14 @@
     function note(msg) {
       try { if (window.dshshell && window.dshshell.note) window.dshshell.note(String(msg).slice(0, 500)); } catch (e) {}
     }
+    // 浏览器良性噪音：ResizeObserver 每帧只投递有限次通知，超出的被丢弃并派发一条 error。
+    // 不影响功能（下一帧重算），按维护者要求不再记进日志。
+    function isBenignNoise(msg) {
+      var s = String(msg || '');
+      return s.indexOf('ResizeObserver loop') >= 0;
+    }
     window.addEventListener('error', function (e) {
+      try { if (isBenignNoise(e && e.message)) return; } catch (x) {}
       try { note('[js-error] ' + (e && e.message ? e.message : 'unknown') + ' @ ' + (e && e.filename ? e.filename : '') + ':' + (e && e.lineno ? e.lineno : '')); } catch (x) {}
     });
     window.addEventListener('unhandledrejection', function (e) {

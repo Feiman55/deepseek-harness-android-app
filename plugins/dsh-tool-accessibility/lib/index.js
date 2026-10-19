@@ -186,57 +186,145 @@ const privilegedChannel = () => {
   return "";
 };
 
-function a11yRequest(path, params, timeoutMs) {
+/**
+ * a11y 传输失败日志（会进 dsh-web.log）。
+ *
+ * 为什么加：以前传输层失败被 parseResult 改写成「无障碍服务未开启或不可用」，
+ * 排查时被彻底带偏（见 v1.19.3 P0 反馈：状态显示运行中、tap/hold 正常，
+ * 但 touch/gesture 一直报"无障碍不可用"）。现在失败本身要留痕。
+ */
+function a11yLog(msg) {
+  try { console.error("[dsh-a11y] " + msg); } catch (e) { /* 无 console 时忽略 */ }
+}
+
+/** 原始 GET（不探活；供 a11yRequest 与探活自身复用，避免递归）。 */
+function a11yRawGet(path, params, timeoutMs) {
   return new Promise((resolve) => {
     const qs = params
       ? "?" + Object.entries(params).map(([k, v]) =>
           encodeURIComponent(k) + "=" + encodeURIComponent(v)).join("&")
       : "";
-    const req = httpGet({
-      host: "127.0.0.1",
-      port: a11yPort(),
-      path: path + qs,
-      timeout: timeoutMs || 8000,
-      // v1.18.0：App 侧本地服务要校验调用方（127.0.0.1 对本机所有应用开放，不是访问控制）
-      headers: { "X-DSH-Token": process.env.APP_LOCAL_TOKEN || "" }
-    }, (res) => {
-      let data = "";
-      res.setEncoding("utf8");
-      res.on("data", (c) => { data += c; if (data.length > 262144) req.destroy(); });
-      res.on("end", () => resolve(data || "{\"ok\":false,\"error\":\"empty response\"}"));
-    });
-    req.on("error", () => resolve("{\"ok\":false,\"error\":\"App 本地服务不可用\"}"));
-    req.on("timeout", () => { req.destroy(); resolve("{\"ok\":false,\"error\":\"App 本地服务超时\"}"); });
+    let settled = false;
+    const done = (r) => { if (!settled) { settled = true; resolve(r); } };
+    let req;
+    try {
+      req = httpGet({
+        host: "127.0.0.1",
+        port: a11yPort(),
+        path: path + qs,
+        timeout: timeoutMs || 8000,
+        // v1.18.0：App 侧本地服务要校验调用方（127.0.0.1 对本机所有应用开放，不是访问控制）
+        headers: { "X-DSH-Token": process.env.APP_LOCAL_TOKEN || "" }
+      }, (res) => {
+        let data = "";
+        res.setEncoding("utf8");
+        res.on("data", (c) => { data += c; if (data.length > 262144) req.destroy(); });
+        res.on("end", () => done({ kind: data ? "ok" : "empty", raw: data }));
+      });
+    } catch (e) {
+      done({ kind: "unreachable", raw: String((e && e.message) || e) });
+      return;
+    }
+    req.on("error", (e) => done({ kind: "unreachable", raw: String((e && e.message) || e) }));
+    req.on("timeout", () => { try { req.destroy(); } catch (e) {} done({ kind: "timeout", raw: "" }); });
     req.end();
   });
 }
 
-/** POST JSON（/gesture 用）。 */
-function a11yPost(path, body, timeoutMs) {
+/** 原始 POST（不探活）。 */
+function a11yRawPost(path, body, timeoutMs) {
   return new Promise((resolve) => {
     const payload = JSON.stringify(body);
-    const req = httpRequest({
-      host: "127.0.0.1",
-      port: a11yPort(),
-      path,
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Content-Length": Buffer.byteLength(payload),
-        // v1.18.0：本地服务鉴权令牌（App 启动引擎时经 env 注入）
-        "X-DSH-Token": process.env.APP_LOCAL_TOKEN || ""
-      },
-      timeout: timeoutMs || 8000
-    }, (res) => {
-      let data = "";
-      res.setEncoding("utf8");
-      res.on("data", (c) => { data += c; if (data.length > 262144) req.destroy(); });
-      res.on("end", () => resolve(data || "{\"ok\":false,\"error\":\"empty response\"}"));
-    });
-    req.on("error", () => resolve("{\"ok\":false,\"error\":\"App 本地服务不可用\"}"));
-    req.on("timeout", () => { req.destroy(); resolve("{\"ok\":false,\"error\":\"App 本地服务超时\"}"); });
+    let settled = false;
+    const done = (r) => { if (!settled) { settled = true; resolve(r); } };
+    let req;
+    try {
+      req = httpRequest({
+        host: "127.0.0.1",
+        port: a11yPort(),
+        path,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(payload),
+          // v1.18.0：本地服务鉴权令牌（App 启动引擎时经 env 注入）
+          "X-DSH-Token": process.env.APP_LOCAL_TOKEN || ""
+        },
+        timeout: timeoutMs || 8000
+      }, (res) => {
+        let data = "";
+        res.setEncoding("utf8");
+        res.on("data", (c) => { data += c; if (data.length > 262144) req.destroy(); });
+        res.on("end", () => done({ kind: data ? "ok" : "empty", raw: data }));
+      });
+    } catch (e) {
+      done({ kind: "unreachable", raw: String((e && e.message) || e) });
+      return;
+    }
+    req.on("error", (e) => done({ kind: "unreachable", raw: String((e && e.message) || e) }));
+    req.on("timeout", () => { try { req.destroy(); } catch (e) {} done({ kind: "timeout", raw: "" }); });
     req.end(payload);
   });
+}
+
+/**
+ * 失败时探活：把「到底缺什么能力」写清楚。
+ * 探 /status（服务是否在跑、前台包、解绑原因、是否刚重连）+ /touch-status（是否还有手指按住）。
+ */
+async function a11yExplain(kind, path, raw) {
+  const why = kind === "unreachable" ? "连不上本地服务（连接被拒/重置，常见于服务刚被系统重启）"
+    : kind === "timeout" ? "请求超时（服务在忙，或上一条手势还占着注入队列）"
+    : kind === "empty" ? "服务返回空响应"
+    : "响应不是 JSON";
+  let statusTxt = "探活也失败（" + kind + "）";
+  let running = null;
+  const st = await a11yRawGet("/status", null, 1500);
+  if (st.kind === "ok") {
+    try {
+      const s = JSON.parse(st.raw);
+      running = !!s.running;
+      statusTxt = "a11y 服务运行中=" + (s.running ? "是" : "否")
+        + "；前台包=" + (s.package || "未知")
+        + (s.unboundReason ? "；上次解绑原因=" + s.unboundReason : "")
+        + (s.reconnectedRecently ? "；刚刚重连过（疑似被系统杀掉后恢复）" : "");
+    } catch (e) {
+      statusTxt = "探活响应不可解析：" + String(st.raw).slice(0, 80);
+    }
+  }
+  let heldTxt = "";
+  if (running) {
+    const ts = await a11yRawGet("/touch-status", null, 1500);
+    if (ts.kind === "ok") {
+      try {
+        const t = JSON.parse(ts.raw);
+        const n = Array.isArray(t.held) ? t.held.length : 0;
+        heldTxt = n > 0
+          ? "；仍有 " + n + " 根手指按住（会串行排队）：" + JSON.stringify(t.held).slice(0, 120)
+          : "；当前没有按住的手指";
+      } catch (e) { /* 忽略 */ }
+    }
+  }
+  const rawBit = raw ? "；原始响应=" + String(raw).slice(0, 100) : "";
+  return why + " · 接口 " + path + " · " + statusTxt + heldTxt + rawBit
+    + (running === false ? "（服务未运行：请在系统设置里重新开启无障碍服务）" : "");
+}
+
+/** 带探活的 GET：失败时返回 {"ok":false,"error":"<探活结论>","transport":"<kind>"}。 */
+async function a11yRequest(path, params, timeoutMs) {
+  const r = await a11yRawGet(path, params, timeoutMs);
+  if (r.kind === "ok") return r.raw;
+  a11yLog("请求失败 [" + r.kind + "] " + path + (r.raw ? " :: " + String(r.raw).slice(0, 120) : ""));
+  const explain = await a11yExplain(r.kind, path, r.raw);
+  return JSON.stringify({ ok: false, error: explain, transport: r.kind });
+}
+
+/** POST JSON（/gesture 用），同样带探活。 */
+async function a11yPost(path, body, timeoutMs) {
+  const r = await a11yRawPost(path, body, timeoutMs);
+  if (r.kind === "ok") return r.raw;
+  a11yLog("请求失败 [" + r.kind + "] POST " + path + (r.raw ? " :: " + String(r.raw).slice(0, 120) : ""));
+  const explain = await a11yExplain(r.kind, path, r.raw);
+  return JSON.stringify({ ok: false, error: explain, transport: r.kind });
 }
 
 // ============================================================================
@@ -337,9 +425,11 @@ function treeFingerprint(v) {
 function parseResult(raw, hint) {
   try {
     const v = JSON.parse(raw);
-    if (!v.ok && v.error && /服务不可用|超时|empty response/.test(v.error)) {
-      return { ok: false, error: (hint || GUIDE_TEXT) };
-    }
+    if (v && typeof v === "object" && v.transport) {
+        // 传输层失败：文案已由 a11yRequest/a11yPost 探活拼好（含"服务是否在跑/是否还有手指按住"），
+        // 这里**不再改写**成「无障碍服务未开启」——那会把排查带偏。
+        return { ok: false, error: v.error };
+      }
     return v;
   } catch (e) {
     return { ok: false, error: "无障碍服务响应解析失败: " + String(raw).slice(0, 120) };
@@ -1124,7 +1214,7 @@ function apply(ctx) {
   // 滑动
   ctx.tools.register(defineTool({
     name: "android_swipe",
-    description: "从起点滑动到终点（按下→移动→抬起，单指）。坐标用 fx1/fy1→fx2/fy2（0~1，推荐）或 x1/y1→x2/y2 绝对像素；durationMs 默认 300，慢速拖动可给 800~1500。需要无障碍服务。",
+    description: "从起点滑动到终点（按下→**静止 holdBeforeMoveMs（默认 150ms）**→逐点移动→抬起，单指）。坐标用 fx1/fy1→fx2/fy2（0~1，推荐）或 x1/y1→x2/y2 绝对像素；durationMs 默认 300（慢速拖 800~1500）。拖动型操作（游戏选朝向、画板画线、拖拽物品）务必保留默认的按住阶段，否则会被当成快速滑动/滚动。需要无障碍服务。",
     parameters: {
       x1: { type: "number", description: "起点 x（像素）" },
       y1: { type: "number", description: "起点 y（像素）" },
@@ -1139,6 +1229,7 @@ function apply(ctx) {
       ix2: { type: "number", description: "区域截图专用：终点在图里的 x 像素" },
       iy2: { type: "number", description: "区域截图专用：终点在图里的 y 像素" },
       durationMs: { type: "number", description: "滑动时长毫秒（默认 300）" },
+      holdBeforeMoveMs: { type: "number", description: "按下后先静止多少毫秒再开始移动（默认 150）。游戏拖拽/画线必须 >0，否则会被当成快速滑动；给 0 = 旧行为" },
       finger: { type: "number", description: "可选：指定手指（0~7）；若该手指正按住则从当前位置滑到终点并抬起" }
     },
     output: touchOutput,
@@ -1153,6 +1244,7 @@ function apply(ctx) {
       const cropErr2 = applyCropPoint(args, "ix2", "iy2", params, "x2", "y2");
       if (cropErr2) return { ok: false, error: cropErr2 };
       if (args.durationMs !== undefined) params.duration = String(Number(args.durationMs));
+      if (args.holdBeforeMoveMs !== undefined) params.holdBeforeMoveMs = String(Number(args.holdBeforeMoveMs));
       if (args.finger !== undefined) params.finger = String(Number(args.finger));
       if (!(("x1" in params || "fx1" in params) && ("y1" in params || "fy1" in params) &&
             ("x2" in params || "fx2" in params) && ("y2" in params || "fy2" in params))) {
@@ -1285,6 +1377,7 @@ function apply(ctx) {
             ix2: { type: "number", description: "区域截图专用：swipe 终点在图内 x 像素" },
             iy2: { type: "number", description: "区域截图专用：swipe 终点在图内 y 像素" },
             durationMs: { type: "number", description: "时长（wait=等待毫秒；tap 默认60；swipe 默认300；hold 默认500；move/up 默认100）" },
+            holdBeforeMoveMs: { type: "number", description: "swipe 专用：按下后先静止多少毫秒再移动（默认 150；0 = 旧行为）" },
             ms: { type: "number", description: "wait 的等待毫秒" }
           }
         },
@@ -1297,7 +1390,7 @@ function apply(ctx) {
       if (!Array.isArray(strokes) || strokes.length === 0) {
         return { ok: false, error: "android_gesture 需要 strokes 数组" };
       }
-      const ALLOWED = ["kind", "finger", "x", "y", "fx", "fy", "x2", "y2", "fx2", "fy2", "durationMs", "ms"];
+      const ALLOWED = ["kind", "finger", "x", "y", "fx", "fy", "x2", "y2", "fx2", "fy2", "durationMs", "ms", "holdBeforeMoveMs"];
       // v1.19（真机对话实测）：模型常用 android_gesture 只传一个 wait 当"睡眠"用，
       // 而服务端会回"手势没有可执行的笔"→ 白白浪费一次调用。纯 wait 直接在本地睡，不再往返。
       if (strokes.every((s) => s && s.kind === "wait")) {
