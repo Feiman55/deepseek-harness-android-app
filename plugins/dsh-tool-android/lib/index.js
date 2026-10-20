@@ -295,6 +295,57 @@ function privCmd(command, timeoutMs) {
   return shizukuCmd(command, process.env.SHIZUKU_DEX, process.env.SHIZUKU_APP_ID, timeoutMs);
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ── v1.20.1（AI 测试员建议②③）：结构化返回需要的事实查询 ──────────────────
+
+/** 屏幕尺寸（wm size；缓存 60 秒）。拿不到回 null。 */
+let _screenCache = null;
+let _screenAt = 0;
+async function screenSize() {
+  const now = Date.now();
+  if (_screenCache && now - _screenAt < 60000) return _screenCache;
+  const r = await privCmd("wm size", 8000);
+  const m = /(\d+)\s*x\s*(\d+)/.exec(String(r.stdout || ""));
+  if (m) {
+    _screenCache = { w: parseInt(m[1], 10), h: parseInt(m[2], 10) };
+    _screenAt = now;
+  }
+  return _screenCache;
+}
+
+/** 当前前台包名（dumpsys window）。拿不到回 ""。 */
+async function currentPackage() {
+  const r = await privCmd("dumpsys window | grep -m2 -E 'mCurrentFocus|mFocusedApp'", 8000);
+  const s = String(r.stdout || "");
+  const m = /u0 ([A-Za-z0-9_.]+)\//.exec(s) || /u0 ([A-Za-z0-9_.]+)/.exec(s);
+  return m ? m[1] : "";
+}
+
+/**
+ * harness 的悬浮窗是否**真的可见**（v1.20.1 · AI 建议①）。
+ * App 的 /overlay 只回 running/engineUp/granted，区分不了 show 和 hide ——
+ * 这里用特权 shell 查窗口状态：APPLICATION_OVERLAY 窗口里出现 mViewVisibility=0x0 即算可见。
+ * ⚠ 同屏查看（browser 面板）也是 APPLICATION_OVERLAY；它开着时这里也会是 true，属已知边界。
+ */
+async function overlayVisible() {
+  const r = await privCmd("dumpsys window windows | grep -A18 'appop=SYSTEM_ALERT_WINDOW' | grep -E 'mViewVisibility'", 10000);
+  const s = String(r.stdout || "");
+  if (!s.trim()) return null;
+  return /mViewVisibility=0x0/.test(s);
+}
+
+/** 已知系统设置项的量纲提示（AI 建议③：别让 "8" 被读成 8%）。 */
+const SETTING_RANGE = {
+  screen_brightness: "0-255 原始值（不是百分比）",
+  screen_off_timeout: "毫秒",
+  volume_music: "设备音量档位（具体上限随机型）",
+  volume_alarm: "设备音量档位（具体上限随机型）",
+  volume_ring: "设备音量档位（具体上限随机型）",
+  screen_brightness_mode: "0=手动 / 1=自动",
+  navigation_mode: "0=三键 / 1=双键 / 2=手势",
+};
+
 /** 会话式安装 APK。必须绕开两个坑：
  *  ① system_server 无权读 FUSE 挂载的 /storage/emulated/0，pm 直接报 "Can't open file"；
  *  ② ColorOS 上单发 `pm install -r` 会卡死无输出。
@@ -379,8 +430,8 @@ function renderResult(value) {
 /** android_usage 专用渲染：把 apps 数组展示出来（通用 renderResult 只读 shell 字段，会吞掉数据）。 */
 function renderUsage(value) {
   if (!value.ok) return renderResult(value);
-  const lines = [`应用使用时长（最近 ${value.days ?? 1} 天，按时长降序）：`];
   const apps = Array.isArray(value.apps) ? value.apps : [];
+  const lines = [`应用使用时长（最近 ${value.days ?? 1} 天，共 ${value.count ?? apps.length} 个应用，按时长降序）：`];
   if (apps.length === 0) {
     lines.push("（无数据：可能未授予「使用情况访问」权限，或该时段无使用记录）");
   }
@@ -392,13 +443,15 @@ function renderUsage(value) {
   return [{ type: "text", text: lines.join("\n") }];
 }
 
-/** android_overlay 专用渲染：展示 running/engineUp/granted（通用 renderResult 只读 shell 字段）。 */
+/** android_overlay 专用渲染：展示真实可见性/是否变化（v1.20.1 · AI 建议①）。 */
 function renderOverlay(value) {
   if (!value.ok) return renderResult(value);
   const parts = [];
-  if (typeof value.running === "boolean") parts.push("悬浮窗运行中: " + value.running);
+  if (typeof value.visible === "boolean") parts.push("悬浮窗可见: " + (value.visible ? "是" : "否"));
+  if (typeof value.changed === "boolean") parts.push("本次" + (value.changed ? "已改变" : "无变化"));
   if (typeof value.engineUp === "boolean") parts.push("引擎在线: " + value.engineUp);
   if (typeof value.granted === "boolean") parts.push("悬浮窗权限: " + (value.granted ? "已授予" : "未授予"));
+  if (typeof value.running === "boolean") parts.push("悬浮窗服务运行中: " + value.running);
   if (parts.length === 0) parts.push("操作成功。");
   return [{ type: "text", text: parts.join("，") }];
 }
@@ -547,6 +600,7 @@ function apply(ctx) {
           ok: { type: "boolean", required: true },
           error: { type: "string" },
           days: { type: "number" },
+          count: { type: "number" },
           apps: {
             type: "array",
             items: {
@@ -565,7 +619,9 @@ function apply(ctx) {
       render: (_a, v) => renderUsage(v)
     },
     async execute(args, exec) {
-      return await appRequest("/usage", args.days ? { days: String(Math.max(1, Math.min(30, Number(args.days) || 1))) } : undefined);
+      const r = await appRequest("/usage", args.days ? { days: String(Math.max(1, Math.min(30, Number(args.days) || 1))) } : undefined);
+      const apps = Array.isArray(r.apps) ? r.apps : [];
+      return { ...r, count: apps.length };
     }
   }));
 
@@ -597,13 +653,30 @@ function apply(ctx) {
           hidden: { type: "boolean" },        // v1.24：hide/toggle 后为 true（App 侧返回值）
           engineUp: { type: "boolean" },
           granted: { type: "boolean" },
+          action: { type: "string" },
+          visible: { type: "boolean" },
+          changed: { type: "boolean" },
           msg: { type: "string" }
         }
       },
       render: (_a, v) => renderOverlay(v)
     },
     async execute(args, exec) {
-      return await appRequest("/overlay", { action: String(args.action || "status") });
+      const action = String(args.action || "status");
+      const before = await overlayVisible();
+      const r = await appRequest("/overlay", { action });
+      let after = before;
+      if (action === "show" || action === "hide") {
+        await sleep(900);                    // 等窗口真正 add/remove 完
+        after = await overlayVisible();
+      }
+      return {
+        ...r,
+        action,
+        changed: before !== null && after !== null ? before !== after : false,
+        // ⚠ schema 里 visible 是 boolean：dumpsys 解析不出来时**不能**塞 null
+        ...(after === null ? {} : { visible: after })
+      };
     }
   }));
   }   // ← if (ENABLE_OVERLAY_TOOL)
@@ -1088,7 +1161,14 @@ function apply(ctx) {
       third_party_only: { type: "boolean", description: "list 时是否只列第三方应用" },
       filter: { type: "string", description: "list 时按关键字过滤包名" }
     },
-    output: { schema: resultSchema(), render: (_a, v) => renderResult(v) },
+    output: {
+      schema: resultSchema({
+        count: { type: "number" },
+        thirdPartyOnly: { type: "boolean" },
+        packages: { type: "array", items: { type: "string" } }
+      }),
+      render: (_a, v) => renderResult(v)
+    },
     async execute(args, exec) {
       await maybeApprove(ctx, exec, "android_package", args.action, args.package || args.apk_path || "");
       const a = safe(args.action);
@@ -1111,7 +1191,16 @@ function apply(ctx) {
         case "revoke": cmd = "pm revoke " + pkg + " " + perm; break;
         default: throw new Error("未知 action: " + a);
       }
-      return await privCmd(cmd, 60000);
+      const r = await privCmd(cmd, 60000);
+      if (a === "list") {
+        // v1.20.1（AI 建议③）：把 pm 的纯文本收敛成 count + packages 数组，别再让调用方逐行数
+        const pkgs = String(r.stdout || "").split(/\r?\n/)
+          .map((s) => s.trim())
+          .filter((s) => s.startsWith("package:"))
+          .map((s) => s.slice("package:".length).trim());
+        return { ...r, count: pkgs.length, thirdPartyOnly: !!args.third_party_only, packages: pkgs.slice(0, 200) };
+      }
+      return r;
     }
   }));
 
@@ -1159,7 +1248,15 @@ function apply(ctx) {
       key: { type: "string", description: "设置项 key" },
       value: { type: "string", description: "put 时写入的值" }
     },
-    output: { schema: resultSchema(), render: (_a, v) => renderResult(v) },
+    output: {
+      schema: resultSchema({
+        namespace: { type: "string" },
+        key: { type: "string" },
+        value: { type: "string" },
+        range: { type: "string" }
+      }),
+      render: (_a, v) => renderResult(v)
+    },
     async execute(args, exec) {
       await maybeApprove(ctx, exec, "android_setting", args.action, (args.namespace || "") + " " + (args.key || ""));
       const a = safe(args.action);
@@ -1173,7 +1270,24 @@ function apply(ctx) {
         case "list": cmd = "settings list " + ns; break;
         default: throw new Error("未知 action: " + a);
       }
-      return await privCmd(cmd, 30000);
+      const r = await privCmd(cmd, 30000);
+      if (a === "get") {
+        // v1.20.1（AI 建议③）：回 namespace/key/value + 量纲提示；读不到明确报 not found。
+        // ⚠ AI 实测：同一个 settings get，值有时落 stdout、有时落 stderr（特权通道实现差异）——
+        // 所以取值必须 stdout || stderr，否则会把成功读取误判成失败。
+        const value = String(r.stdout || "").trim() || String(r.stderr || "").trim();
+        const found = r.ok && value !== "" && value !== "null";
+        return {
+          ...r,
+          ok: found,
+          namespace: ns,
+          key,
+          value,
+          range: SETTING_RANGE[key] || "",
+          ...(found ? {} : { error: r.error || ("not found: " + ns + "/" + key) })
+        };
+      }
+      return r;
     }
   }));
 
@@ -1218,18 +1332,62 @@ function apply(ctx) {
       text: { type: "string", description: "text 动作要输入的文本（支持中文：非 ASCII 会自动走剪贴板粘贴）" },
       keycode: { type: "number", description: "keyevent 的按键码，如 3=HOME, 4=BACK, 26=POWER" }
     },
-    output: { schema: resultSchema(), render: (_a, v) => renderResult(v) },
+    output: {
+      schema: resultSchema({
+        action: { type: "string" },
+        injected: { type: "boolean" },
+        x: { type: "number" }, y: { type: "number" },
+        screenW: { type: "number" }, screenH: { type: "number" },
+        targetPackage: { type: "string" }
+      }),
+      render: (_a, v) => [{
+        type: "text",
+        text: v.ok
+          ? `已执行 ${v.action || "?"}${v.injected ? "（已注入）" : "（未注入）"}` +
+            (typeof v.x === "number" ? ` @(${v.x},${v.y}) 屏幕 ${v.screenW}x${v.screenH}` : "") +
+            (v.targetPackage ? ` → 前台 ${v.targetPackage}` : "") +
+            (v.stdout ? "\n" + v.stdout : "")
+          : "执行失败：" + (v.error || v.stderr || "未知错误")
+      }]
+    },
     async execute(args, exec) {
       await maybeApprove(ctx, exec, "android_input", args.action, args.text || "");
       const a = safe(args.action);
+      const sz = await screenSize();
+      // ⚠ 输出 schema 是 additionalProperties:false 且 x/y 声明为 number ——
+      //   text/keyevent 没有坐标，**不能**把 x/y 放成 null（会被判非法输出：value.x 必须为数字）。
+      const base = {
+        action: a, injected: false,
+        screenW: sz ? sz.w : 0, screenH: sz ? sz.h : 0, targetPackage: ""
+      };
+      const withXY = (x, y) => { base.x = x; base.y = y; return base; };
+      const bad = (msg, extra) => ({ ...base, ok: false, exit_code: -1, stdout: "", stderr: "", error: msg, ...(extra || {}) });
       let cmd = "";
       switch (a) {
-        case "tap": cmd = "input tap " + Math.round(Number(args.x) || 0) + " " + Math.round(Number(args.y) || 0); break;
-        case "swipe":
-          cmd = "input swipe " + Math.round(Number(args.x) || 0) + " " + Math.round(Number(args.y) || 0) + " " +
-                Math.round(Number(args.x2) || 0) + " " + Math.round(Number(args.y2) || 0) + " " +
-                Math.round(Number(args.duration) || 300);
+        case "tap": {
+          const x = Math.round(Number(args.x) || 0);
+          const y = Math.round(Number(args.y) || 0);
+          // v1.20.1（AI 建议②）：越界必须明确失败，不能给一个 exit_code=0 的"静默成功"
+          if (!sz) return bad("拿不到屏幕尺寸（wm size 无返回），拒绝盲点");
+          if (x < 0 || y < 0 || x >= sz.w || y >= sz.h) {
+            return bad(`坐标越界：(${x},${y}) 不在 0..${sz.w - 1} × 0..${sz.h - 1}`, { x, y });
+          }
+          withXY(x, y);
+          cmd = "input tap " + x + " " + y;
           break;
+        }
+        case "swipe": {
+          const nums = [args.x, args.y, args.x2, args.y2].map((v) => Math.round(Number(v) || 0));
+          if (!sz) return bad("拿不到屏幕尺寸（wm size 无返回），拒绝盲滑");
+          for (const [i, n] of nums.entries()) {
+            const lim = i % 2 === 0 ? sz.w : sz.h;
+            if (n < 0 || n >= lim) return bad(`swipe 坐标越界：${n} 不在 0..${lim - 1}`, { x: nums[0], y: nums[1] });
+          }
+          withXY(nums[0], nums[1]);
+          cmd = "input swipe " + nums[0] + " " + nums[1] + " " + nums[2] + " " + nums[3] + " " +
+                Math.max(50, Math.round(Number(args.duration) || 300));
+          break;
+        }
         case "text": {
           const text = String(args.text ?? "");
           if (!/^[\x20-\x7e]*$/.test(text)) {
@@ -1237,27 +1395,29 @@ function apply(ctx) {
             // 所以改走「剪贴板 + 粘贴」；写剪贴板走 App 本地 HTTP POST（GET 会被当成 read，见 appPost）。
             const wrote = await appPost("/clipboard", { action: "write", content: text });
             if (!wrote || wrote.ok !== true) {
-              return {
-                ok: false, exit_code: -1, stdout: "", stderr: "",
-                error: "文本含非 ASCII 字符，需经剪贴板粘贴，但写入剪贴板失败：" +
-                  ((wrote && wrote.error) || "未知错误")
-              };
+              return bad("文本含非 ASCII 字符，需经剪贴板粘贴，但写入剪贴板失败：" +
+                ((wrote && wrote.error) || "未知错误"));
             }
             const pasted = await privCmd("input keyevent 279", 15000); // 279 = KEYCODE_PASTE
-            if (!pasted.ok) return pasted;
+            const pkg = await currentPackage();
             return {
-              ok: true, exit_code: 0, stderr: "",
-              stdout: "已通过剪贴板粘贴输入（" + text.length + " 字符，含非 ASCII）"
+              ...base, ...pasted, injected: !!pasted.ok, targetPackage: pkg,
+              stdout: pasted.ok ? ("已通过剪贴板粘贴输入（" + text.length + " 字符，含非 ASCII）" + (pasted.stdout ? "\n" + pasted.stdout : "")) : pasted.stdout
             };
           }
           // ASCII：空格必须转成 %s，否则会被命令解析当成参数分隔符吃掉
           cmd = "input text " + shq(text.replace(/ /g, "%s"));
           break;
         }
-        case "keyevent": cmd = "input keyevent " + Math.round(Number(args.keycode) || 0); break;
+        case "keyevent":
+          cmd = "input keyevent " + Math.round(Number(args.keycode) || 0);
+          break;
         default: throw new Error("未知 action: " + a);
       }
-      return await privCmd(cmd, 15000);
+      const r = await privCmd(cmd, 15000);
+      const pkg = await currentPackage();
+      // v1.20.1（AI 建议②）：把"注入到底有没有发生"变成可判定字段，而不是空 stdout
+      return { ...base, ...r, injected: !!r.ok, targetPackage: pkg };
     }
   }));
 }

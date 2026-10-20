@@ -1,5 +1,10 @@
 /**
- * 虚拟屏幕插件（v1.10）：给 AI 提供真正的独立虚拟屏（createVirtualDisplay）能力。
+ * 虚拟屏幕插件（v1.11）：给 AI 提供真正的独立虚拟屏（createVirtualDisplay）能力。
+ *
+ * v1.11（2026-10-18，AI 试用反馈）：动作可验证 / 参数不踩空——
+ *   · launch 透出 package/component/displayId，并用启动前后截图 sha256 回 screenChanged（不再「假成功」）；
+ *   · see 支持 waitMs 轮询 + errorCode（no_display / not_rendered / no_frame），用 status 的 hasFrame 判别；
+ *   · create 接受 orientation=0/1/"0"/portrait 并回 displayId/尺寸/dpi；key 支持 KEYCODE_BACK 等别名。
  *
  * v1.10 架构：虚拟屏服务由 App 进程内嵌启动（打开 App 即自动运行，监听 8999）——
  * 不再需要 root/Shizuku 启动特权进程（shell/app_process 在 Android 15 enforcing 下
@@ -17,6 +22,7 @@
  */
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmodSync, existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { get as httpGet, request as httpRequest } from "node:http";
@@ -208,6 +214,77 @@ const renderOp = (_args, value) => {
   }];
 };
 
+/** create 渲染：直接把 displayId / 实际尺寸 / dpi 说清楚，省掉创建后再调一次 status。 */
+function renderCreate(_args, value) {
+  value = renderValue(value, _args);
+  if (!value.ok) return [{ type: "text", text: "创建失败：" + (value.error || "未知错误") }];
+  const size = (typeof value.width === "number" ? value.width : 0) + "x" + (typeof value.height === "number" ? value.height : 0);
+  const lines = ["虚拟屏已就绪：displayId=" + value.displayId + "，" + size + " @" + value.dpi + "dpi"];
+  if (value.orientation) lines.push("朝向：" + value.orientation);
+  if (value.reused) lines.push("（复用了已存在的同尺寸虚拟屏，未重建）");
+  lines.push("下一步：android_vscreen_launch 把 app 启动到这块屏，或 android_vscreen_see 截图。");
+  return [{ type: "text", text: lines.join("\n") }];
+}
+
+// ==================== v1.11：参数归一 + 可验证 ====================
+
+/** orientation 归一：portrait/landscape 与 0/1（含字符串 "0"/"1"）都收；非法值返回 ""。 */
+function normalizeOrientation(raw) {
+  if (typeof raw === "number") return raw === 1 ? "landscape" : (raw === 0 ? "portrait" : "");
+  const s = String(raw == null ? "" : raw).trim().toLowerCase();
+  if (s === "" ) return "";
+  if (s === "0" || s === "portrait" || s === "vertical" || s === "v" || s === "p") return "portrait";
+  if (s === "1" || s === "landscape" || s === "horizontal" || s === "h" || s === "l") return "landscape";
+  return "";
+}
+
+const ORIENTATION_ACCEPTED = ["portrait", "landscape", 0, 1];
+
+/** 按键归一：back/home/enter/menu/volume_up/volume_down/app_switch，兼容 KEYCODE_BACK / BACK / 4 等写法。 */
+const KEYCODES = { back: 4, home: 3, enter: 66, menu: 82, volume_up: 24, volume_down: 25, app_switch: 187 };
+const KEYCODE_BY_NUM = { 4: "back", 3: "home", 66: "enter", 82: "menu", 24: "volume_up", 25: "volume_down", 187: "app_switch" };
+
+function normalizeKey(raw) {
+  if (typeof raw === "number") return KEYCODE_BY_NUM[raw] || "";
+  let s = String(raw == null ? "" : raw).trim().toLowerCase();
+  if (s === "") return "";
+  if (s.indexOf("keycode_") === 0) s = s.slice("keycode_".length);
+  s = s.replace(/[\s-]+/g, "_");
+  if (Object.prototype.hasOwnProperty.call(KEYCODES, s)) return s;
+  if (/^\d+$/.test(s) && KEYCODE_BY_NUM[Number(s)]) return KEYCODE_BY_NUM[Number(s)];
+  return "";
+}
+
+/** 拍一张虚拟屏截图并算 sha256（launch 前后对比「画面到底变没变」）；失败返回 ok:false。 */
+async function captureHash() {
+  const r = await vsReq("/vscreen/see", 12000);
+  if (!r.ok || !r.path) return { ok: false, error: r.error || "截图失败", path: "" };
+  try {
+    const buf = await readFile(r.path);
+    return { ok: true, path: r.path, bytes: buf.length, hash: createHash("sha256").update(buf).digest("hex") };
+  } catch (e) {
+    return { ok: false, error: "读取截图失败: " + String(e && e.message || e), path: r.path };
+  }
+}
+
+/** launch 渲染：把「命令成功」和「画面真的变了」分开说，避免假成功。 */
+function renderLaunch(_args, value) {
+  value = renderValue(value, _args);
+  if (!value.ok) return [{ type: "text", text: "启动失败：" + (value.error || "未知错误") }];
+  const lines = ["启动已下发：" + (value.package || "?")];
+  if (value.component) lines.push("组件：" + value.component);
+  if (typeof value.displayId === "number" && value.displayId >= 0) lines.push("虚拟屏 displayId=" + value.displayId);
+  if (value.compared === true) {
+    lines.push(value.screenChanged
+      ? "画面变化：是（虚拟屏画面已刷新）"
+      : "画面变化：否（等待 " + value.waitedMs + "ms 后仍与启动前相同）");
+  } else {
+    lines.push("画面变化：未知（启动前后有一边截不到图）");
+  }
+  if (value.hint) lines.push("提示：" + value.hint);
+  return [{ type: "text", text: lines.join("\n") }];
+}
+
 function apply(ctx) {
   const available = privilegedAvailable();
   if (!available) {
@@ -228,9 +305,11 @@ function apply(ctx) {
       "切换横竖屏需先 android_vscreen_close 再 create。",
     parameters: {
       orientation: {
-        type: "string",
-        enum: ["portrait", "landscape"],
-        description: "朝向：portrait=9:16 竖屏（默认）、landscape=16:9 横屏；不传则按 width/height 判断"
+        oneOf: [
+          { type: "string" },
+          { type: "number" }
+        ],
+        description: "朝向：portrait（9:16 竖屏，默认）/ landscape（16:9 横屏），也接受 0=竖屏、1=横屏；不传则按 width/height 判断"
       },
       width: { type: "number", description: "可选。虚拟屏宽度（px），仅用于表示方向（宽>高=横屏）；实际尺寸归一化为 9:16/16:9" },
       height: { type: "number", description: "可选。虚拟屏高度（px），仅用于表示方向（高>宽=竖屏）；实际尺寸归一化为 9:16/16:9" },
@@ -246,21 +325,29 @@ function apply(ctx) {
           displayId: { type: "number" },
           width: { type: "number" },
           height: { type: "number" },
+          dpi: { type: "number" },
+          orientation: { type: "string" },
+          reused: { type: "boolean" },
           hint: { type: "string" }
         }
       },
-      render: renderOp
+      render: renderCreate
     },
     async execute(args) {
       const started = await ensureServer();
       if (!started.ok) return { ok: false, error: started.error };
+      const oriRaw = args.orientation;
+      const oriGiven = oriRaw !== void 0 && oriRaw !== null && String(oriRaw).trim() !== "";
+      const ori = oriGiven ? normalizeOrientation(oriRaw) : "";
+      if (oriGiven && ori === "") {
+        return { ok: false, error: "orientation 取值无法识别：" + JSON.stringify(oriRaw) + "（可用：portrait / landscape / 0 / 1）" };
+      }
       let w = Number(args.width) || 0;
       let h = Number(args.height) || 0;
       const d = Number(args.dpi) || 0;
       if (!w && !h) {
         // 不传 orientation 时按文档承诺走默认竖屏。这里必须显式给出尺寸，不能"什么都不发"：
         // 否则尺寸完全由服务端默认值决定（旧 core 的默认是 720×1520，并非 9:16）。
-        const ori = String(args.orientation || "").trim().toLowerCase();
         if (ori === "landscape") { w = 1792; h = 1008; } // 16:9
         else { w = 1008; h = 1792; }                     // 9:16（默认竖屏）
       }
@@ -270,8 +357,18 @@ function apply(ctx) {
       if (d) qs.push("dpi=" + d);
       const r = await vsReq("/vscreen/create" + (qs.length ? "?" + qs.join("&") : ""), 15000);
       if (!r.ok) return { ok: false, error: r.error || "创建失败" };
-      cachedDisplayId = typeof r.displayId === "number" ? r.displayId : -1;
-      return { ok: true, displayId: r.displayId, width: r.width, height: r.height, hint: "虚拟屏已创建，可用 android_vscreen_launch 或 android_vscreen_see" };
+      const displayId = typeof r.displayId === "number" ? r.displayId : -1;
+      cachedDisplayId = displayId;
+      return {
+        ok: true,
+        displayId,
+        width: typeof r.width === "number" ? r.width : w,
+        height: typeof r.height === "number" ? r.height : h,
+        dpi: typeof r.dpi === "number" ? r.dpi : (d || 420),
+        orientation: ori || (w > h ? "landscape" : "portrait"),
+        reused: r.reused === true,
+        hint: "虚拟屏已创建，可用 android_vscreen_launch 或 android_vscreen_see"
+      };
     }
   }));
 
@@ -290,23 +387,34 @@ function apply(ctx) {
           displayId: { type: "number" },
           width: { type: "number" },
           height: { type: "number" },
-          running: { type: "boolean" }
+          running: { type: "boolean" },
+          hasFrame: { type: "boolean" }
         }
       },
       render: (a, v) => {
         v = renderValue(v, a);
+        if (!v.ok) return [{ type: "text", text: "查询失败：" + (v.error || "未知错误") }];
+        if (!(v.displayId >= 0)) {
+          return [{ type: "text", text: "虚拟屏未创建（displayId=-1）。可用 android_vscreen_create 创建。" }];
+        }
         return [{
-        type: "text",
-        text: v.ok
-          ? (v.displayId >= 0 ? "虚拟屏运行中，displayId=" + v.displayId + "，" + v.width + "x" + v.height : "虚拟屏未创建（displayId=-1）")
-          : "查询失败：" + (v.error || "未知错误")
+          type: "text",
+          text: "虚拟屏运行中，displayId=" + v.displayId + "，" + v.width + "x" + v.height +
+            "；画面：" + (v.hasFrame ? "已有首帧" : "暂无首帧（app 还没画到这块屏）")
         }];
       }
     },
     async execute() {
       const r = await vsReq("/vscreen/status", 6000);
       if (!r.ok) return { ok: false, error: r.error };
-      return { ok: true, displayId: r.displayId, width: r.width, height: r.height, running: r.running };
+      return {
+        ok: true,
+        displayId: typeof r.displayId === "number" ? r.displayId : -1,
+        width: typeof r.width === "number" ? r.width : 0,
+        height: typeof r.height === "number" ? r.height : 0,
+        running: r.running === true,
+        hasFrame: r.hasFrame === true
+      };
     }
   }));
 
@@ -315,7 +423,9 @@ function apply(ctx) {
     name: "android_vscreen_launch",
     description:
       "把应用启动到指定虚拟屏。app 参数填应用包名（如 com.tencent.mm），或应用显示名会尝试解析包名。" +
-      "启动成功后该应用只显示在虚拟屏上，主屏不变，且用户可在悬浮窗看到。",
+      "启动成功后该应用只显示在虚拟屏上，主屏不变，且用户可在悬浮窗看到。" +
+      "返回 package/component/displayId，并用启动前后的虚拟屏截图对比给出 compared/screenChanged：" +
+      "screenChanged=false 表示命令成功但画面没变（目标 app 可能不支持副屏，如起来即退出的 SplashActivity）。",
     parameters: {
       app: { type: "string", description: "应用包名或应用名", required: true }
     },
@@ -327,21 +437,63 @@ function apply(ctx) {
           ok: { type: "boolean", required: true },
           error: { type: "string" },
           package: { type: "string" },
-          displayId: { type: "number" }
+          component: { type: "string" },
+          launchedActivity: { type: "string" },
+          displayId: { type: "number" },
+          compared: { type: "boolean" },
+          screenChanged: { type: "boolean" },
+          waitedMs: { type: "number" },
+          hint: { type: "string" }
         }
       },
-      render: renderOp
+      render: renderLaunch
     },
     async execute(args) {
       if (!args.app || String(args.app).trim() === "") return { ok: false, error: "app 不能为空" };
       const app = String(args.app).trim();
       // 不在这里查包名：服务端会用已安装应用列表做模糊匹配（插件没有可靠的特权 shell 通道）
-      const pkg = app;
       const id = await getDisplayId();
       if (id < 0) return { ok: false, error: "虚拟屏未创建，请先调用 android_vscreen_create" };
-      // 启动交给特权服务端（它按包名解析组件再 am start --display；插件不再自己起 rish）
-      const r = await vsReq(`/vscreen/launch?pkg=${encodeURIComponent(pkg)}`, 15000);
-      return r.ok ? { ok: true, package: pkg, displayId: id } : { ok: false, error: r.error || "启动失败" };
+
+      // v1.11：启动前后各拍一张比 sha256 —— 服务端的 ok 只代表 am start 成功，不代表 app 真的画到了副屏。
+      const before = await captureHash();
+      const t0 = Date.now();
+      const r = await vsReq("/vscreen/launch?pkg=" + encodeURIComponent(app), 15000);
+      if (!r.ok) return { ok: false, error: r.error || "启动失败" };
+      let after = await captureHash();
+      // 画面没变 / 还没出帧时再等 800ms 补拍一次（冷启动常见 1~2s）
+      if (!after.ok || (before.ok && before.hash === after.hash)) {
+        await sleep(800);
+        const again = await captureHash();
+        if (again.ok) after = again;
+      }
+      let compared;
+      let screenChanged;
+      if (!before.ok && after.ok) {
+        compared = true;
+        screenChanged = true;            // 启动前根本没画面 → 现在有了
+      } else if (before.ok && after.ok) {
+        compared = true;
+        screenChanged = before.hash !== after.hash;
+      } else {
+        compared = false;                // 有一边拍不到图，不硬判
+        screenChanged = false;
+      }
+      const out = {
+        ok: true,
+        package: typeof r.package === "string" ? r.package : app,
+        component: typeof r.component === "string" ? r.component : "",
+        launchedActivity: typeof r.component === "string" ? r.component : "",
+        displayId: typeof r.displayId === "number" ? r.displayId : id,
+        compared,
+        screenChanged,
+        waitedMs: Date.now() - t0
+      };
+      if (compared && !screenChanged) {
+        out.hint = "启动命令已成功，但虚拟屏画面与启动前完全相同 —— 目标 app 可能不支持在虚拟屏显示" +
+          "（SplashActivity 起来即退出）。可换一个 app，或先用 android_vscreen_see 确认当前画面。";
+      }
+      return out;
     }
   }));
 
@@ -352,9 +504,12 @@ function apply(ctx) {
       description:
         "截取虚拟屏当前画面并把截图作为图片发送给模型查看（server ImageReader 抓帧，无需 MediaProjection 弹窗）。" +
         "返回 screenW/H（虚拟屏逻辑尺寸）与 scaleX/Y；截图上量到的像素 (px,py) → 虚拟屏坐标 = (px×scaleX, py×scaleY)。" +
-        "适合 Unity/游戏等无控件界面。建议 grid:true 叠加 4×4 网格按行列定位。",
+        "适合 Unity/游戏等无控件界面。建议 grid:true 叠加 4×4 网格按行列定位。" +
+        "截图失败时返回 errorCode（no_display=没建屏 / not_rendered=还没首帧 / no_frame=曾经有帧但现在抓不到）" +
+        "并提供 hasFrame、displayId、hint；可传 waitMs 让它等首帧（避免自己 sleep 后反复重试）。",
       parameters: {
-        grid: { type: "boolean", description: "true 时叠加 4×4 网格线" }
+        grid: { type: "boolean", description: "true 时叠加 4×4 网格线" },
+        waitMs: { type: "number", description: "可选：等首帧的最长时间（0~5000ms，默认 0 只试一次）；内部每 300ms 重试，出帧即返回" }
       },
       output: {
         schema: {
@@ -372,6 +527,12 @@ function apply(ctx) {
             scaleX: { type: "number" },
             scaleY: { type: "number" },
             grid: { type: "number" },
+            // v1.11：失败可判别 + 等帧统计
+            errorCode: { type: "string" },
+            hasFrame: { type: "boolean" },
+            waitedMs: { type: "number" },
+            attempts: { type: "number" },
+            hint: { type: "string" },
             image: {
               type: "object",
               additionalProperties: false,
@@ -388,7 +549,17 @@ function apply(ctx) {
         },
         render: (_args, value) => {
           value = renderValue(value, _args);
-          if (!value.ok) return renderOp(value);
+          if (!value.ok) {
+            const lines = ["截图失败（" + (value.errorCode || "unknown") + "）：" + (value.error || "未知错误")];
+            if (typeof value.displayId === "number") {
+              lines.push("虚拟屏 displayId=" + value.displayId + "，hasFrame=" + (value.hasFrame === true ? "true" : "false"));
+            }
+            if (typeof value.waitedMs === "number") {
+              lines.push("已等待 " + value.waitedMs + "ms（" + (value.attempts || 0) + " 次尝试）");
+            }
+            if (value.hint) lines.push("提示：" + value.hint);
+            return [{ type: "text", text: lines.join("\n") }];
+          }
           const meta = [
             `虚拟屏截图, ${value.image.mediaType}, ${value.image.width}x${value.image.height} px, ${value.image.bytes} bytes`,
             `虚拟屏尺寸 ${value.screenW}x${value.screenH}, 截图尺寸 ${value.imageW}x${value.imageH}, scaleX=${value.scaleX} scaleY=${value.scaleY}${value.grid ? `, 已叠加 ${value.grid}x${value.grid} 网格` : ""}`,
@@ -415,40 +586,83 @@ function apply(ctx) {
         if (attachments === void 0) {
           return { ok: false, error: "cannot screenshot: no attachment service is mounted" };
         }
-        const r = await vsReq("/vscreen/see", 12000);
-        if (!r.ok) return { ok: false, error: r.error || "截图失败" };
-        if (!r.path) return { ok: false, error: "虚拟屏未创建或截图失败" };
-        let data;
-        try {
-          data = await readFile(r.path);
-        } catch (e) {
-          return { ok: false, error: "读取截图失败: " + String(e && e.message || e) };
-        }
-        try {
-          const ref = await attachments.saveImage({ data, mediaType: "image/png", name: "vscreen.png" });
-          return {
-            ok: true,
-            path: r.path,
-            displayId: typeof r.displayId === "number" ? r.displayId : 0,
-            screenW: typeof r.screenW === "number" ? r.screenW : 0,
-            screenH: typeof r.screenH === "number" ? r.screenH : 0,
-            imageW: typeof r.imageW === "number" ? r.imageW : 0,
-            imageH: typeof r.imageH === "number" ? r.imageH : 0,
-            scaleX: typeof r.scaleX === "number" ? r.scaleX : 1,
-            scaleY: typeof r.scaleY === "number" ? r.scaleY : 1,
-            grid: 0,
-            image: {
-              attachmentId: ref.attachmentId,
-              mediaType: "image/png",
-              bytes: data.length,
-              width: typeof r.imageW === "number" ? r.imageW : 0,
-              height: typeof r.imageH === "number" ? r.imageH : 0,
-              name: "vscreen.png"
+        const waitMs = Math.max(0, Math.min(5000, Math.round(Number(args.waitMs) || 0)));
+        const t0 = Date.now();
+        let last = null;
+        let attempts = 0;
+        for (;;) {
+          attempts++;
+          const r = await vsReq("/vscreen/see", 12000);
+          if (r.ok && r.path) {
+            let data;
+            try {
+              data = await readFile(r.path);
+            } catch (e) {
+              return { ok: false, error: "读取截图失败: " + String(e && e.message || e), errorCode: "read_failed", attempts };
             }
-          };
-        } catch (e) {
-          return { ok: false, error: "保存截图失败: " + String(e && e.message || e) };
+            try {
+              const ref = await attachments.saveImage({ data, mediaType: "image/png", name: "vscreen.png" });
+              return {
+                ok: true,
+                path: r.path,
+                displayId: typeof r.displayId === "number" ? r.displayId : 0,
+                screenW: typeof r.screenW === "number" ? r.screenW : 0,
+                screenH: typeof r.screenH === "number" ? r.screenH : 0,
+                imageW: typeof r.imageW === "number" ? r.imageW : 0,
+                imageH: typeof r.imageH === "number" ? r.imageH : 0,
+                scaleX: typeof r.scaleX === "number" ? r.scaleX : 1,
+                scaleY: typeof r.scaleY === "number" ? r.scaleY : 1,
+                grid: 0,
+                hasFrame: true,
+                waitedMs: Date.now() - t0,
+                attempts,
+                image: {
+                  attachmentId: ref.attachmentId,
+                  mediaType: "image/png",
+                  bytes: data.length,
+                  width: typeof r.imageW === "number" ? r.imageW : 0,
+                  height: typeof r.imageH === "number" ? r.imageH : 0,
+                  name: "vscreen.png"
+                }
+              };
+            } catch (e) {
+              return { ok: false, error: "保存截图失败: " + String(e && e.message || e), errorCode: "save_failed", attempts };
+            }
+          }
+          last = r;
+          if (attempts >= 10 || Date.now() + 300 > t0 + waitMs) break;
+          await sleep(300);
         }
+        // v1.11：失败定性 —— 用 /vscreen/status 的真实状态区分「没建屏」「还没首帧」「有帧但抓不到」。
+        const st = await vsReq("/vscreen/status", 4000);
+        const statusOk = st && st.ok === true;
+        const displayId = statusOk && typeof st.displayId === "number" ? st.displayId : -1;
+        const hasFrame = statusOk && st.hasFrame === true;
+        let errorCode = "unavailable";
+        let hint = "";
+        if (!statusOk) {
+          errorCode = "status_unavailable";
+          hint = "连虚拟屏服务状态都拿不到：确认 App 已打开、Shizuku/root 已授权。";
+        } else if (displayId < 0) {
+          errorCode = "no_display";
+          hint = "虚拟屏未创建：先调用 android_vscreen_create。";
+        } else if (!hasFrame) {
+          errorCode = "not_rendered";
+          hint = "这块屏还没有任何首帧（刚建屏或 app 正在冷启动）；可带 waitMs 重试，或确认已 launch 目标 app。";
+        } else {
+          errorCode = "no_frame";
+          hint = "这块屏曾经有帧但现在抓不到：目标 app 可能已退出/该屏无窗口；先 android_vscreen_status 或重新 launch 复查。";
+        }
+        return {
+          ok: false,
+          error: (last && last.error) || "截图失败",
+          errorCode,
+          displayId,
+          hasFrame,
+          waitedMs: Date.now() - t0,
+          attempts,
+          hint
+        };
       }
     }));
   });
@@ -514,30 +728,50 @@ function apply(ctx) {
   // 7) 按键
   ctx.tools.register(defineTool({
     name: "android_vscreen_key",
-    description: "向虚拟屏发送按键。key 取值：back / home / enter / menu / volume_up / volume_down。",
+    description: "向虚拟屏发送按键。key 取值：back / home / enter / menu / volume_up / volume_down / app_switch；" +
+      "也接受 KEYCODE_BACK、BACK、4 等别名写法。",
     parameters: {
-      key: { type: "string", description: "back/home/enter/menu/volume_up/volume_down", required: true }
+      key: {
+        oneOf: [
+          { type: "string" },
+          { type: "number" }
+        ],
+        description: "back/home/enter/menu/volume_up/volume_down/app_switch（也接受 KEYCODE_BACK 这类写法或键码 4）",
+        required: true
+      }
     },
     output: {
       schema: {
         type: "object",
         additionalProperties: false,
-        properties: { ok: { type: "boolean", required: true }, error: { type: "string" }, key: { type: "string" } }
+        properties: {
+          ok: { type: "boolean", required: true },
+          error: { type: "string" },
+          key: { type: "string" },
+          keycode: { type: "number" },
+          accepted: { type: "array", items: { type: "string" } }
+        }
       },
-      render: renderOp
+      render: (_a, v) => {
+        v = renderValue(v, _a);
+        if (!v.ok) return [{ type: "text", text: "按键失败：" + (v.error || "未知错误") }];
+        return [{ type: "text", text: "按键已发送：" + v.key + "（keycode " + v.keycode + "）" }];
+      }
     },
     async execute(args) {
-      const keyMap = {
-        back: 4, home: 3, enter: 66, menu: 82,
-        volume_up: 24, volume_down: 25, app_switch: 187
-      };
-      const k = String(args.key || "").trim().toLowerCase();
-      const kc = keyMap[k];
-      if (!kc) return { ok: false, error: "未知按键: " + args.key };
+      const k = normalizeKey(args.key);
+      if (!k || !(k in KEYCODES)) {
+        return {
+          ok: false,
+          error: "未知按键: " + JSON.stringify(args.key) + "（可用：back/home/enter/menu/volume_up/volume_down/app_switch，" +
+            "也接受 KEYCODE_BACK 这类写法或键码 4/3/66/82/24/25/187）",
+          accepted: Object.keys(KEYCODES)
+        };
+      }
       const id = await getDisplayId();
       if (id < 0) return { ok: false, error: "虚拟屏未创建，请先调用 android_vscreen_create" };
-      const r = await vsReq(`/vscreen/key?keycode=${kc}`, 8000);
-      return r.ok ? { ok: true, key: k } : { ok: false, error: r.error || "按键失败" };
+      const r = await vsReq(`/vscreen/key?keycode=${KEYCODES[k]}`, 8000);
+      return r.ok ? { ok: true, key: k, keycode: KEYCODES[k] } : { ok: false, error: r.error || "按键失败" };
     }
   }));
 

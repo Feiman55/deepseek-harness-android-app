@@ -13,7 +13,10 @@ node_modules/node-pty/
 # plugins/ 下的 DSH 工具插件（官方 npm 包里没有这些包名）
 # ⚠ 归属：源码是**上游同步**来的副本，不是本项目自研 —— 随 3819e7d「v1.19.0：同步源码」
 #   进来（dsh-tool-browser 是那次新增的第 5 个），见 android-app/build.sh 的「插件同步」段说明。
-node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-tool-
+node_modules/@deepseek-ai/dsh-tool-
 
 # 给既有包新增的文件（不是替换）：sharp 替身
-node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-attachment-local/lib/sharp-shim.js
+node_modules/@deepseek-ai/dsh-attachment-local/lib/sharp-shim.js
+# 内核 0.2.1-rc.2 起依赖改为 npm 扁平安装（hoisted）：
+# 上面这些「新增」路径随之从 node_modules/@deepseek-ai/dsh/node_modules/… 提到 node_modules/…。
+# 若以后升级内核又换回嵌套布局，这里要跟着改（构建的 stale 检测会直接报出来）。

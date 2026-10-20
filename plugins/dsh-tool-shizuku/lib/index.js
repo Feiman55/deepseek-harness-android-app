@@ -5,7 +5,7 @@
  *   - ROOT_AVAILABLE=1  ：设备有 root（su 可用），走 su -c 通道
  *   - SHIZUKU_AVAILABLE=1：Shizuku 已授权，走 app_process rish 通道
  * 两者都未授予时（ROOT_AVAILABLE != 1 且 SHIZUKU_AVAILABLE != 1），
- * 不注册特权工具 —— AI 的工具列表里没有 shizuku_shell，自然不会反复尝试调用；
+ * **不注册特权工具** —— AI 的工具列表里没有 shizuku_shell，自然不会反复尝试调用；
  * 此时文件读写走 DSH 自带的 fs/bash 工具（只需"所有文件访问权限"，无需特权）。
  *
  * 默认在已授权的通道下自动执行（无需逐次审批）。
@@ -76,7 +76,7 @@ function shizukuCmd(command, dex, appId, timeoutMs) {
         SHIZUKU_LOADER,
         "-c", command
       ], {
-        env: { ...sanitizeEnv(process.env), RISH_APPLICATION_ID: appId || process.env.DSH_APP_ID || "com.deepseek.harness" },
+        env: { ...sanitizeEnv(process.env), RISH_APPLICATION_ID: appId || "com.deepseek.harness" },
         stdio: ["ignore", "pipe", "pipe"]
       });
     } catch (e) {
@@ -168,7 +168,7 @@ function suCmd(command, timeoutMs) {
 }
 
 /**
- * 经 App 进程（Shizuku API 通道）执行特权命令：POST 127.0.0.1:<notifyPort>/shell。
+ * 经 **App 进程**（Shizuku API 通道）执行特权命令：POST 127.0.0.1:<notifyPort>/shell。
  *
  * 为什么不再直接用引擎内 rish：Shizuku 服务端校验「某包是否被授权」时要回头问 Shizuku 应用本体，
  * 而 ColorOS 会冻结/查杀 Shizuku 应用（真机日志：OplusHansManager “F exit()”、NativeFreezeManager、
@@ -228,12 +228,19 @@ function privCmd(command, timeoutMs) {
   });
 }
 
+/** shell 单引号字面量（中文/空格/标点安全；v1.20.1 通知校验用）。 */
+function shq(s) {
+  return "'" + String(s == null ? "" : s).replace(/'/g, "'\\''") + "'";
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 function apply(ctx) {
   const approval = () => ctx.get("approval");
   const available = privilegedAvailable();
 
   // 1) 特权 shell（默认自动执行，SHIZUKU_APPROVE=ask 时逐次审批）
-  // 未授予 root 且未授予 Shizuku 时不注册本工具：AI 工具列表里没有它，
+  // 未授予 root 且未授予 Shizuku 时**不注册**本工具：AI 工具列表里没有它，
   // 就不会反复尝试特权命令；此时文件读写应使用 DSH 自带的 fs/bash 工具。
   if (available) {
     ctx.tools.register(defineTool({
@@ -300,7 +307,7 @@ function apply(ctx) {
   //    得到"未授权"后就不会反复尝试特权命令；此时文件操作用 fs/bash 工具。
   ctx.tools.register(defineTool({
     name: "shizuku_status",
-    description: "检查特权通道（root/Shizuku）是否可用且已授权，返回可用性与失败原因。未授权时文件读写用 fs/bash 工具（只需所有文件访问权限）。",
+    description: "检查特权通道（root/Shizuku）是否可用且已授权。返回是否可用，以及失败时的原因。未授权时文件读写请使用 fs/bash 工具（只需所有文件访问权限），无需特权。",
     parameters: {},
     output: {
       schema: {
@@ -322,9 +329,9 @@ function apply(ctx) {
     async execute() {
       const appId = process.env.SHIZUKU_APP_ID || "";
       const dex = process.env.SHIZUKU_DEX;
-      // v1.13：声称的通道必须实跑一次验证。
+      // v1.13：**声称的通道必须实跑一次验证**。
       // 旧实现只要 SHIZUKU_AVAILABLE==="1" 就直接回 available:true —— 但那个环境变量是 App 侧按
-      // uid 判的（Shizuku.checkSelfPermission），而 rish 侧是按 RISH_APPLICATION_ID（包名）取权限。
+      // **uid** 判的（Shizuku.checkSelfPermission），而 rish 侧是按 RISH_APPLICATION_ID（**包名**）取权限。
       // 两者不一致时（例如包名写错）会表现为“状态说已授权、实际每次调用都 5 秒超时”，把真正的病因藏起来。
       // 现在：实跑探针，失败就如实报错并把 appId 带出来（这是排查门卫问题的关键信息）。
       if (process.env.ROOT_AVAILABLE === "1") {
@@ -399,11 +406,11 @@ function apply(ctx) {
     }
   }));
 
-  // 3) AI 发通知（不依赖特权：只需 App 通知权限，走本地 127.0.0.1:3081）
+  // 3) AI 发通知（**不依赖特权**：只需 App 通知权限，走本地 127.0.0.1:3081）
   // 始终注册：即使没有 root/Shizuku，只要用户在系统设置里给了通知权限就能发。
   ctx.tools.register(defineTool({
     name: "android_notify",
-    description: "向手机发送一条系统通知（标题 + 正文）。只需要通知权限（POST_NOTIFICATIONS），不需要 Shizuku/root。返回 ok:false 且提示通知权限未授予时，请让用户在系统设置里为本应用开启通知权限后重试。",
+    description: "向用户手机发送一条系统通知（标题 + 正文）。**只需要通知权限（POST_NOTIFICATIONS），不需要 Shizuku/root**。用于：后台任务完成、需要用户关注、长时间任务的进度提醒等。如果返回 ok:false 且提示通知权限未授予，请让用户在系统设置里为本应用开启通知权限后重试。",
     parameters: {
       title: {
         type: "string",
@@ -422,12 +429,18 @@ function apply(ctx) {
         additionalProperties: false,
         properties: {
           ok: { type: "boolean", required: true },
-          error: { type: "string" }
+          error: { type: "string" },
+          posted: { type: "boolean" },
+          visible: { type: "boolean" },
+          evidence: { type: "string" }
         }
       },
       render: (_args, value) => [{
         type: "text",
-        text: value.ok ? "通知已发送 ✅" : "通知发送失败：" + (value.error || "未知错误")
+        text: value.ok
+          ? "通知已发送 ✅" + (typeof value.visible === "boolean"
+              ? "（通知栏可见：" + (value.visible ? "是" : "**否**") + "）" : "")
+          : "通知发送失败：" + (value.error || "未知错误")
       }]
     },
     async execute(args) {
@@ -460,30 +473,50 @@ function apply(ctx) {
           req.write(body);
           req.end();
         });
-        return result;
+        if (!result || result.ok !== true) return { ...result, posted: false };
+        // v1.20.1（AI 建议③）：发完立刻用特权 shell 校验标题/正文是否真的在通知栏里，
+        // 别让"App 说发送成功、系统其实静默拦截"变成假成功（标题/正文在 dumpsys 里是两行）。
+        await sleep(700);
+        const title = String(args.title || "");
+        const text = String(args.text || "");
+        const vt = await privCmd("dumpsys notification --noredact 2>/dev/null | grep -F " + shq(title) + " | head -2", 15000);
+        const vx = await privCmd("dumpsys notification --noredact 2>/dev/null | grep -F " + shq(text) + " | head -2", 15000);
+        const lines = [vt.stdout, vx.stdout].map((s) => String(s || "").trim()).filter(Boolean);
+        const visible = lines.length >= 2;
+        return {
+          ok: true,
+          posted: true,
+          visible,
+          evidence: lines.join(" | ").slice(0, 500)
+        };
       } catch (e) {
-        return { ok: false, error: String(e && e.message || e) };
+        return { ok: false, posted: false, error: String(e && e.message || e) };
       }
     }
   }));
 
-  // 4) 本地设置（不依赖特权：只需 App 的「修改系统设置」WRITE_SETTINGS 权限，改 Settings.System 各项）
+  // 4) 本地设置（**不依赖特权写入**：走 App 的 WRITE_SETTINGS；读值走特权 shell）
   ctx.tools.register(defineTool({
     name: "android_setting_app",
     description:
-      "修改系统设置（Settings.System 命名空间），用 App 自身的 WRITE_SETTINGS 权限，不需要 Shizuku/root；需用户授予「修改系统设置」权限。\n" +
-      "常用 key：screen_brightness（0-255）、screen_brightness_mode（0 手动 / 1 自动）、screen_off_timeout（毫秒，如 60000）、accelerometer_rotation（0/1）、" +
-      "font_scale（如 1.0/1.3）、volume_music / volume_ring / volume_alarm / volume_notification（0-15）、sound_effects_enabled（0/1）、" +
-      "haptic_feedback_enabled（0/1）、notification_light_pulse（0/1）、ringtone（Uri）。\n" +
-      "Global/Secure 命名空间用 shizuku_shell 的 settings 命令（需要特权）。",
+      "读写 App 自身的 Settings.System 设置。**写入不需要 Shizuku/root**（只需「修改系统设置」WRITE_SETTINGS 权限）；" +
+      "读取走特权 shell 的 settings get（需要 Shizuku/root 任一）。" +
+      "常用 key：screen_brightness（亮度 0-255）、screen_brightness_mode（0=手动 1=自动）、screen_off_timeout（屏幕超时毫秒，如 60000）、" +
+      "accelerometer_rotation（自动旋转 0/1）、font_scale（字体大小，如 1.0/1.3）、volume_music/volume_ring/volume_alarm/volume_notification（音量 0-15）、" +
+      "sound_effects_enabled（触摸音 0/1）、haptic_feedback_enabled（震动反馈 0/1）、notification_light_pulse（通知灯 0/1）、ringtone（铃声 Uri）。" +
+      "put 会带回 oldValue/newValue（一次调用就能确认翻转与还原）；改 Global/Secure 命名空间请用 shizuku_shell 的 settings 命令。",
     parameters: {
+      action: {
+        type: "string", enum: ["get", "put"],
+        description: "get=读当前值（走特权 shell）；put=写入（缺省，走 App WRITE_SETTINGS）"
+      },
       key: {
         type: "string", required: true,
         description: "Settings.System 的 key（见工具描述常用清单）"
       },
       value: {
-        type: "string", required: true,
-        description: "要写入的值（数字或字符串）"
+        type: "string",
+        description: "put 时要写入的值（数字或字符串）；action=get 时可省略"
       }
     },
     output: {
@@ -493,6 +526,11 @@ function apply(ctx) {
         properties: {
           ok: { type: "boolean", required: true },
           error: { type: "string" },
+          namespace: { type: "string" },
+          key: { type: "string" },
+          value: { type: "string" },
+          oldValue: { type: "string" },
+          newValue: { type: "string" },
           stream: { type: "string" },
           level: { type: "number" },
           max: { type: "number" }
@@ -501,16 +539,41 @@ function apply(ctx) {
       render: (_args, value) => [{
         type: "text",
         text: value.ok
-          ? (value.stream ? "已设置 " + value.stream + " = " + value.level + "（最大 " + value.max + "）✅" : "系统设置已修改 ✅")
-          : "修改失败：" + (value.error || "未知错误")
+          ? (value.action === "get" || (value.value !== undefined && value.newValue === undefined)
+              ? (value.key || "?") + " = " + (value.value === "" ? "(空)" : value.value)
+              : (value.stream
+                  ? "已设置 " + value.stream + " = " + value.level + "（最大 " + value.max + "）✅"
+                  : "已设置 " + (value.key || "?") + "：" + (value.oldValue ?? "?") + " → " + (value.newValue ?? "?") + " ✅"))
+          : "设置失败：" + (value.error || "未知错误")
       }]
     },
     async execute(args) {
+      const action = String(args.action || "put").toLowerCase();
+      const key = String(args.key || "");
+      if (!key) return { ok: false, error: "缺少 key 参数" };
       try {
+        // 读当前值：特权 shell（输出可能落在 stdout 或 stderr，统一取非空的那个）
+        const readKey = async () => {
+          const r = await privCmd("settings get system " + shq(key), 15000);
+          const v = String(r.stdout || "").trim() || String(r.stderr || "").trim();
+          return { ok: r.ok && v !== "" && v !== "null", value: v, raw: r };
+        };
+        if (action === "get") {
+          const cur = await readKey();
+          return {
+            ok: cur.ok,
+            namespace: "system",
+            key,
+            value: cur.value,
+            ...(cur.ok ? {} : { error: cur.raw.error || ("读不到 " + key) })
+          };
+        }
+        const before = await readKey();
+        const val = String(args.value == null ? "" : args.value);
         const http = await import("node:http");
         const port = Number(process.env.APP_NOTIFY_PORT) || 3081;
-        const body = JSON.stringify({ key: String(args.key || ""), value: String(args.value == null ? "" : args.value) });
-        const result = await new Promise((resolve) => {
+        const body = JSON.stringify({ key, value: val });
+        const posted = await new Promise((resolve) => {
           const req = http.request({
             host: "127.0.0.1", port, path: "/setting", method: "POST",
             headers: {
@@ -532,17 +595,31 @@ function apply(ctx) {
           req.write(body);
           req.end();
         });
-        return result;
+        if (!posted || posted.ok !== true) {
+          return { ...posted, ok: false, namespace: "system", key, oldValue: before.value };
+        }
+        await sleep(250);
+        const after = await readKey();
+        // 音量类由 App 返回 stream/level/max；普通 key 由回读得到 newValue
+        return {
+          ...posted,
+          ok: true,
+          namespace: "system",
+          key,
+          oldValue: before.value,
+          newValue: after.value,
+          ...(typeof posted.level === "number" ? { newValue: String(posted.level) } : {})
+        };
       } catch (e) {
         return { ok: false, error: String(e && e.message || e) };
       }
     }
   }));
 
-  // 5) 剪贴板（不依赖特权：读写系统剪贴板，无需任何特殊权限）
+  // 5) 剪贴板（**不依赖特权**：读写系统剪贴板，无需任何特殊权限）
   ctx.tools.register(defineTool({
     name: "android_clipboard",
-    description: "读写手机剪贴板，不需要 Shizuku/root 或任何特殊权限。action=read 读取当前内容；action=write 把 content 写入剪贴板（如生成文本后让用户粘贴）。",
+    description: "读写手机剪贴板。**不需要 Shizuku/root 和任何特殊权限**。action=read 读取当前剪贴板内容；action=write 把 content 写入剪贴板（如 AI 生成代码/文本后让用户粘贴）。",
     parameters: {
       action: {
         type: "string", required: true,

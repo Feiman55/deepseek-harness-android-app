@@ -395,10 +395,19 @@ if [ "$DO_VERIFY" = 1 ]; then
 "
   # 校验对象必须是**真正进包的那棵树**（staging），不是构建用的 devhome 缓存 ——
   # 否则会出现"检查过了、包里没有"（本仓库踩过：overlay 只贴了 devhome，staging 是干净的）。
-  LAYER="$REPO/android-app/staging/dshroot/lib/node_modules/@deepseek-ai/dsh/node_modules"
-  if [ ! -d "$LAYER" ]; then
+  # 依赖布局：0.2.0-rc.2 嵌套在 dsh/node_modules/ 下；0.2.1-rc.2 起 npm 扁平安装（hoisted）。
+  _KN="$REPO/android-app/staging/dshroot/lib/node_modules/@deepseek-ai/dsh"
+  if [ -d "$_KN/node_modules/@deepseek-ai" ]; then
+    LAYER="$REPO/android-app/staging/dshroot/lib/node_modules/@deepseek-ai/dsh/node_modules"
+    LAYOUT="nested"
+  else
+    LAYER="$REPO/android-app/staging/dshroot/lib/node_modules"
+    LAYOUT="hoisted"
+  fi
+  if [ ! -d "$LAYER/@deepseek-ai" ]; then
     warn "找不到 staging 内核树（$LAYER），退回检查 devhome —— 结论不代表产物"
     LAYER="$H/dshroot/lib/node_modules/@deepseek-ai/dsh/node_modules"
+    LAYOUT="devhome"
   fi
   TOTAL=0
   MISSING="$(printf '%s\n' "$PATCHES" | while IFS=: read -r rel sig; do
@@ -414,7 +423,7 @@ if [ "$DO_VERIFY" = 1 ]; then
   TOTAL=$(printf '%s\n' "$PATCHES" | grep -c '[^ 	]' || true)
   TOTAL=$(( TOTAL - $(printf '%s\n' "$PATCHES" | grep -c '^#' || true) ))
   if [ -z "$MISSING" ]; then
-    echo "   ✅ 补丁特征串：$TOTAL/$TOTAL 命中（确认拿到的是已打补丁的内核树）"
+    echo "   ✅ 补丁特征串：$TOTAL/$TOTAL 命中（确认拿到的是已打补丁的内核树，布局 $LAYOUT）"
   else
     echo "$MISSING" | sed 's/^/   !! 补丁特征缺失：/'
     warn "上游补丁集可能已变化，请对照 dsh-patches/ 更新本脚本的 PATCHES 清单"

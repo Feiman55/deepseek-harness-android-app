@@ -86,9 +86,15 @@ function tabFor(ref, explicit) {
 
 const NODE_KEYS = ["ref", "role", "name", "bounds", "inView", "disabled", "dup"];
 const COMMON_ERR = { ok: { type: "boolean" }, reason: { type: "string" }, error: { type: "string" }, hint: { type: "string" } };
+const TEXT_LINES = { type: "array", items: { type: "string" } };
 
 function errText(v) {
   return "❌ " + (v.error || v.reason || "失败") + (v.hint ? "\n提示：" + v.hint : "");
+}
+
+/** 可见文本行渲染（v1.20.1）：`· 一行文字`。 */
+function renderText(lines, limit) {
+  return (lines || []).slice(0, limit || 30).map((s) => "· " + String(s).slice(0, 160)).join("\n");
 }
 
 /** 节点渲染成一行：`r7f3a2 button "登录" [in-view]`。 */
@@ -238,10 +244,13 @@ export function apply(ctx) {
     name: "browser_snapshot",
     description:
       "读取页面结构（**结构化 DOM 快照**，不是截图）：返回语义元素节点表 ref/role/name/bounds/inView/disabled。" +
-      "首次调用返回全量；之后传 since=<上次的 pageGeneration> 只返回变化（added/removed/changed），页面没变时极其省 token。" +
+      "首次调用返回全量；之后传 since=<上次的 pageGeneration> 只返回变化（added/removed/changed + 文字变化 newText），页面没变时极其省 token。" +
+      "需要看**提交后的回显/纯文本**时传 includeText=true（可见文本按行返回）。" +
+      "注意：pageGeneration 现在会随 DOM 变化递增（不只是导航），所以点击后 since 差分能真实反映变化。" +
       "拿到 ref 后用 browser_click / browser_type 操作。",
     parameters: {
       since: { type: "number", description: "上次快照返回的 pageGeneration；省略=全量" },
+      includeText: { type: "boolean", description: "true=附带可见文本行（提交回显、提示文字等非交互内容；默认 false 省 token）" },
       limit: { type: "number", description: "最多渲染多少行（默认 80，仅影响展示）" }
     },
     output: {
@@ -256,6 +265,7 @@ export function apply(ctx) {
           removed: { type: "array", items: { type: "string" } },
           changed: { type: "array", items: { type: "object", additionalProperties: true } },
           unchangedCount: { type: "number" }, truncated: { type: "boolean" },
+          text: TEXT_LINES, newText: TEXT_LINES, textChanged: { type: "boolean" },
           viewport: { type: "object", additionalProperties: true }, refScheme: { type: "string" },
           reason: { type: "string" }, error: { type: "string" }, hint: { type: "string" }
         }
@@ -266,6 +276,12 @@ export function apply(ctx) {
           return [{ type: "text", text: `页面没变化（页签 ${value.tabId || "?"}，generation=${value.pageGeneration}，共 ${value.nodeCount} 个可交互元素）` }];
         }
         const limit = Math.max(10, Math.min(200, Number(args && args.limit) || 80));
+        const textBlock = (value.text && value.text.length)
+          ? "\n可见文本（" + value.text.length + " 行）：\n" + renderText(value.text, 30)
+          : "";
+        const newTextBlock = (value.newText && value.newText.length)
+          ? "\n新增文本：\n" + renderText(value.newText, 8)
+          : "";
         if (value.full) {
           const lines = renderNodes(value.nodes, limit);
           const more = (value.nodes || []).length - lines.length;
@@ -273,7 +289,8 @@ export function apply(ctx) {
             type: "text",
             text: `快照（全量·页签 ${value.tabId || "?"}）${value.title || ""} ${value.url || ""}\n` +
               `generation=${value.pageGeneration} 节点=${value.nodeCount}\n` + lines.join("\n") +
-              (more > 0 ? `\n…（还有 ${more} 个未列出；用 browser_find 缩小范围）` : "")
+              (more > 0 ? `\n…（还有 ${more} 个未列出；用 browser_find 缩小范围）` : "") +
+              textBlock
           }];
         }
         const added = renderNodes(value.added, limit);
@@ -283,16 +300,19 @@ export function apply(ctx) {
           text: `快照（差分·页签 ${value.tabId || "?"}）generation=${value.pageGeneration} 未变=${value.unchangedCount}\n` +
             (added.length ? "新增：\n" + added.join("\n") + "\n" : "") +
             (changed.length ? "变化：\n" + changed.join("\n") + "\n" : "") +
-            ((value.removed || []).length ? "消失：" + value.removed.join(",") : "")
+            ((value.removed || []).length ? "消失：" + value.removed.join(",") : "") +
+            newTextBlock
         }];
       },
     },
     async execute(args) {
       const a = {};
       if (args && args.since !== undefined && args.since !== null && args.since >= 0) a.since = Number(args.since);
+      if (args && args.includeText) a.includeText = true;
       const v = pick(await browserOp("snapshot", a, 20000),
         ["ok", "full", "unchanged", "tabId", "url", "title", "pageGeneration", "nodeCount", "nodes",
-         "added", "removed", "changed", "unchangedCount", "truncated", "viewport", "refScheme", "reason", "error", "hint"]);
+         "added", "removed", "changed", "unchangedCount", "truncated", "text", "newText", "textChanged",
+         "viewport", "refScheme", "reason", "error", "hint"]);
       noteTab(v.tabId);
       rememberRefs(v.nodes, v.tabId);      // 这一批 ref 属于这个页签
       rememberRefs(v.added, v.tabId);
@@ -355,7 +375,9 @@ export function apply(ctx) {
     description:
       "按 ref 点击页面元素（看得见时走真原生触摸；承载窗不可见时**退回 JS 点击兜底** —— 返回值里的 `via` 会说明走的哪条：touch / js / touch+js）。必须先用 browser_snapshot 或 browser_find 拿到 ref；" +
       "ref 属于拿到它的那个页签：如果那个页签不是当前激活页签，会回 **stale-tab**（防点错页面）——" +
-      "先 browser_tabs{op:'switch',tabId} 切过去再点。返回里 changed=true 表示页面确实变了，false 表示没点动（别重复点，先重新快照）。",
+      "先 browser_tabs{op:'switch',tabId} 切过去再点。" +
+      "返回里 changed=true 表示页面确实变了；**newText 直接给出点击后新出现的可见文本**（提交回显不用再 read）；" +
+      "fromGeneration/toGeneration 不等也证明页面变了。changed=false 表示没点动（别重复点，先重新快照）。",
     parameters: {
       ref: { type: "string", required: true, description: "元素的 ref（形如 r7f3a2 或 r7f3a2-2）" },
       tabId: { type: "string", description: "可选：这个 ref 属于哪个页签（省略=插件按快照来源自动带；带了非激活页签会被 stale-tab 拒绝，先 browser_tabs{op:'switch'}）" }
@@ -365,6 +387,8 @@ export function apply(ctx) {
         type: "object", additionalProperties: false,
         properties: {
           ok: { type: "boolean" }, ref: { type: "string" }, changed: { type: "boolean" },
+          via: { type: "string" }, newText: TEXT_LINES,
+          fromGeneration: { type: "number" }, toGeneration: { type: "number" },
           url: { type: "string" }, title: { type: "string" }, pageGeneration: { type: "number" },
           loadState: { type: "string" }, clickedAt: { type: "array", items: { type: "number" } },
           delta: { type: "object", additionalProperties: true },
@@ -375,7 +399,9 @@ export function apply(ctx) {
         type: "text",
         text: value.ok
           ? (value.changed
-              ? `已点击 ${value.ref}，页面有变化 → 现在在：${value.title || ""} ${value.url || ""}`
+              ? `已点击 ${value.ref}（${value.via || "?"}），页面有变化 → 现在在：${value.title || ""} ${value.url || ""}` +
+                `\ngeneration ${value.fromGeneration} → ${value.toGeneration}` +
+                ((value.newText && value.newText.length) ? `\n新增文本：\n${renderText(value.newText, 8)}` : "")
               : `已点击 ${value.ref}，但**页面没有变化**${value.hint ? "\n" + value.hint : ""}`)
           : errText(value)
       }],
@@ -385,7 +411,8 @@ export function apply(ctx) {
       const ct = tabFor(ca.ref, args && args.tabId);
       if (ct) ca.tabId = ct;                       // ← 闸门靠它生效（见文件头说明）
       return pick(await browserOp("click", ca, 20000),
-        ["ok", "ref", "changed", "url", "title", "pageGeneration", "loadState", "clickedAt", "delta", "reason", "error", "hint"]);
+        ["ok", "ref", "changed", "via", "newText", "fromGeneration", "toGeneration", "url", "title",
+         "pageGeneration", "loadState", "clickedAt", "delta", "reason", "error", "hint"]);
     }
   }));
 
@@ -394,7 +421,8 @@ export function apply(ctx) {
     name: "browser_type",
     description:
       "往指定 ref 的输入框写文字（默认先清空再写；replace=false 则追加）。" +
-      "写完后通常配合 browser_press 或 browser_click 提交。",
+      "返回 via（execCommand / setter）与 dispatched（input/change 事件是否已派发）——" +
+      "写完后通常配合 browser_click 提交；提交是否成功看 click 的 newText，或 snapshot{includeText:true}。",
     parameters: {
       ref: { type: "string", required: true, description: "输入框的 ref" },
       text: { type: "string", required: true, description: "要写入的文字（空串=清空）" },
@@ -406,13 +434,17 @@ export function apply(ctx) {
         type: "object", additionalProperties: false,
         properties: {
           ok: { type: "boolean" }, ref: { type: "string" }, value: { type: "string" },
+          via: { type: "string" }, dispatched: { type: "boolean" },
           changed: { type: "boolean" }, pageGeneration: { type: "number" },
+          fromGeneration: { type: "number" }, toGeneration: { type: "number" },
           reason: { type: "string" }, error: { type: "string" }, hint: { type: "string" }
         }
       },
       render: (_args, value) => [{
         type: "text",
-        text: value.ok ? `已写入 ${value.ref}，当前值："${String(value.value || "").slice(0, 60)}"` : errText(value)
+        text: value.ok
+          ? `已写入 ${value.ref}（${value.via || "?"}${value.dispatched ? "，input/change 已派发" : ""}），当前值："${String(value.value || "").slice(0, 60)}"`
+          : errText(value)
       }],
     },
     async execute(args) {
@@ -421,14 +453,17 @@ export function apply(ctx) {
       const tt = tabFor(a.ref, args && args.tabId);
       if (tt) a.tabId = tt;
       return pick(await browserOp("type", a, 20000),
-        ["ok", "ref", "value", "changed", "pageGeneration", "reason", "error", "hint"]);
+        ["ok", "ref", "value", "via", "dispatched", "changed", "pageGeneration",
+         "fromGeneration", "toGeneration", "reason", "error", "hint"]);
     }
   }));
 
   // 7) 取正文
   ctx.tools.register(defineTool({
     name: "browser_read",
-    description: "读取页面正文文本（不是 OCR：直接读 DOM 文本）。给定 ref 则只读该元素的文本。超长会自动截断。",
+    description: "读取页面正文文本（不是 OCR：直接读 DOM 文本）。给定 ref 则只读该元素。" +
+      "如果 ref 是 input/textarea/select，返回结构化字段（tag/type/value/placeholder/disabled）——" +
+      "**输入框的内容在 value 里**，不是 textContent，读出来是空的别误判成被清空。超长会自动截断。",
     parameters: {
       ref: { type: "string", description: "可选：只读这个元素的文本" },
       tabId: { type: "string", description: "可选：这个 ref 属于哪个页签（省略=插件自动带；同 browser_click 的 stale-tab 规则）" }
@@ -439,13 +474,29 @@ export function apply(ctx) {
         properties: {
           ok: { type: "boolean" }, ref: { type: "string" }, text: { type: "string" },
           chars: { type: "number" }, truncated: { type: "boolean" },
+          field: { type: "boolean" }, tag: { type: "string" }, type: { type: "string" },
+          value: { type: "string" }, placeholder: { type: "string" }, disabled: { type: "boolean" },
           reason: { type: "string" }, error: { type: "string" }, hint: { type: "string" }
         }
       },
-      render: (_args, value) => [{
-        type: "text",
-        text: value.ok ? (value.text || "(空)") + (value.truncated ? "\n…（已截断）" : "") : errText(value)
-      }],
+      render: (_args, value) => {
+        if (!value.ok) return [{ type: "text", text: errText(value) }];
+        if (value.field) {
+          return [{
+            type: "text",
+            text: `<${value.tag || "input"}${value.type ? " type=" + value.type : ""}>` +
+              `${value.disabled ? " [disabled]" : ""}\n` +
+              `value="${String(value.value || "").slice(0, 300)}"` +
+              (value.placeholder ? `\nplaceholder="${value.placeholder}"` : "") +
+              `\n(textContent：${value.text ? JSON.stringify(String(value.text).slice(0, 120)) : "空 —— 输入框的值在 value 里"})` +
+              (value.hint ? "\n" + value.hint : "")
+          }];
+        }
+        return [{
+          type: "text",
+          text: (value.text || "(空)") + (value.truncated ? "\n…（已截断）" : "") + (value.hint ? "\n" + value.hint : "")
+        }];
+      },
     },
     async execute(args) {
       const a = {};
@@ -453,7 +504,8 @@ export function apply(ctx) {
       const rt = tabFor(a.ref, args && args.tabId);
       if (rt) a.tabId = rt;
       return pick(await browserOp("read", a, 20000),
-        ["ok", "ref", "text", "chars", "truncated", "reason", "error", "hint"]);
+        ["ok", "ref", "text", "chars", "truncated", "field", "tag", "type", "value", "placeholder",
+         "disabled", "reason", "error", "hint"]);
     }
   }));
 

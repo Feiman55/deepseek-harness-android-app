@@ -527,11 +527,27 @@ rm -f "$OVL_LIST"
 ( cd "$OVERLAY_LIB" && tar cf - . ) | ( cd "$P/staging/dshroot/lib" && tar xf - )
 echo "  补丁层: overlay 已覆盖（$OVL_N 个文件：stale=0，其中新增 $ADDED 个）"
 
-# node-pty：npm 装的那份**没有 Android 预编译**（我们是 Termux 构建的 AArch64 N-API 产物），
-# 而 dsh-subprocess-local 解析 node-pty 时命中的是 @deepseek-ai/dsh/node_modules/node-pty
-# —— 不是 hoisted 的 lib/node_modules/node-pty。所以必须把 overlay 那份复制到**嵌套路径**。
+# ============================================================================
+# 依赖布局探测（内核升级会变）
+#   · 0.2.0-rc.2：依赖嵌套在 @deepseek-ai/dsh/node_modules/ 下
+#   · 0.2.1-rc.2 起：npm 默认扁平安装（hoisted）→ @deepseek-ai/* 与 dsh 同级
+# 下面所有"找某个包"的地方都走 $DEPS_DIR，避免写死某一种布局。
+# ============================================================================
+KROOT_DIR="$P/staging/dshroot/lib/node_modules/@deepseek-ai/dsh"
+if [ -d "$KROOT_DIR/node_modules/@deepseek-ai" ]; then
+  DEPS_DIR="$KROOT_DIR/node_modules"
+  DEPS_LAYOUT="nested"
+else
+  DEPS_DIR="$P/staging/dshroot/lib/node_modules"
+  DEPS_LAYOUT="hoisted"
+fi
+echo "  依赖布局: $DEPS_LAYOUT（$DEPS_DIR）"
+
+# node-pty：npm 装的那份**没有 Android 预编译**（我们是 Termux 构建的 AArch64 N-API 产物）。
+# 复制到 $DEPS_DIR/node-pty —— 也就是 dsh-subprocess-local 实际解析到的位置
+# （0.2.0 是 dsh 内嵌套，0.2.1 起是扁平同级，由上面的 DEPS_DIR 决定）。
 NPTY_SRC="$P/../dsh-patches/overlay/lib/node_modules/node-pty"
-NPTY_DST="$P/staging/dshroot/lib/node_modules/@deepseek-ai/dsh/node_modules/node-pty"
+NPTY_DST="$DEPS_DIR/node-pty"
 if [ -d "$NPTY_SRC" ]; then
   rm -rf "$NPTY_DST"
   mkdir -p "$(dirname "$NPTY_DST")"
@@ -540,7 +556,7 @@ if [ -d "$NPTY_SRC" ]; then
   [ -f "$_pty" ] || { echo "!! node-pty 缺 AArch64 原生产物：$_pty"; exit 1; }
   _m=$(od -An -tx1 -j18 -N2 "$_pty" | tr -d ' \n')
   [ "$_m" = "b700" ] || { echo "!! node-pty 的 pty.node 不是 AArch64（ELF machine=$_m）"; exit 1; }
-  echo "  node-pty: 嵌套路径已覆盖（$(stat -c%s "$_pty") B, ELF=AArch64）"
+  echo "  node-pty: 已覆盖到 $DEPS_LAYOUT 布局（$(stat -c%s "$_pty") B, ELF=AArch64）"
 fi
 
 # ============================================================================
@@ -549,7 +565,7 @@ fi
 #     devhome 里根本没有 dshroot，直接失败；现在只对真正进包的 staging 打补丁；
 #   · 顺序放在内核/补丁层之后，保证我们的 mobile.css/mobile.js 覆盖在官方前端之上。
 # ============================================================================
-FE_DIST="$P/staging/dshroot/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-web-frontend/dist"
+FE_DIST="$DEPS_DIR/@deepseek-ai/dsh-web-frontend/dist"
 if [ -d "$FE_DIST" ]; then
   sh "$P/../mobile-patch/inject.sh" "$FE_DIST" || { echo "!! 前端补丁注入失败：$FE_DIST"; exit 1; }
   grep -q 'href="/mobile.css"' "$FE_DIST/index.html" || { echo "!! 前端补丁自检失败：index.html 未注入 mobile.css"; exit 1; }
@@ -585,21 +601,19 @@ PLUGIN_SYNCED=0
 for _pd in "$P"/../plugins/dsh-tool-*; do
   [ -d "$_pd" ] || continue
   _pn=$(basename "$_pd")
-  for _dst in "$P/staging/dshroot/lib/node_modules/@deepseek-ai/$_pn" \
-              "$P/staging/dshroot/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/$_pn"; do
-    # official 内核模式下这两处都不存在（官方 npm 包里没有这些插件）→ 直接创建
-    mkdir -p "$_dst"
-    rm -rf "$_dst/lib"
-    cp -r "$_pd/lib" "$_dst/lib"
-    [ -f "$_pd/package.json" ] && cp -f "$_pd/package.json" "$_dst/package.json"
-    PLUGIN_SYNCED=$((PLUGIN_SYNCED + 1))
-  done
+  _dst="$DEPS_DIR/@deepseek-ai/$_pn"
+  # 官方 npm 包里没有这些插件 → 直接创建；只写当前布局这一处（另一处不会再被解析到）
+  mkdir -p "$_dst"
+  rm -rf "$_dst/lib"
+  cp -r "$_pd/lib" "$_dst/lib"
+  [ -f "$_pd/package.json" ] && cp -f "$_pd/package.json" "$_dst/package.json"
+  PLUGIN_SYNCED=$((PLUGIN_SYNCED + 1))
 done
-echo "  插件同步: $PLUGIN_SYNCED 处（plugins/dsh-tool-* → staging，两个解析位置）"
+echo "  插件同步: $PLUGIN_SYNCED 个（plugins/dsh-tool-* → staging 的 $DEPS_LAYOUT 布局）"
 # 自检：本轮的 v1.24 气泡补丁必须真的落到 staging（否则控制台「悬浮窗消息」的
 # 工具名/结束态会退化成"按中文文案猜"，用户改了文案就失效）
 _bubble_marker="v1.24 bubble: 结构化 state/tool"
-if ! grep -rqF -- "$_bubble_marker" "$P/staging/dshroot/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-tool-android/lib/index.js" 2>/dev/null; then
+if ! grep -rqF -- "$_bubble_marker" "$DEPS_DIR/@deepseek-ai/dsh-tool-android/lib/index.js" 2>/dev/null; then
   echo "!! staging 里的 dsh-tool-android 缺少气泡补丁（$_bubble_marker）—— 检查 plugins/ 与本段同步逻辑"
   exit 1
 fi
