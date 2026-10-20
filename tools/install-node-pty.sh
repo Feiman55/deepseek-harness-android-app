@@ -1,7 +1,7 @@
 #!/bin/sh
 # 把 Termux 里编译好的原生 node-pty 装进本项目 payload（构建输入 + 仓库 overlay）。
 #
-# 背景：DSH 0.2.0-rc.2 的内置终端走原生 PTY（node-pty），而上游只声明依赖、
+# 背景：DSH 0.2.1-rc.2 的内置终端走原生 PTY（node-pty），而上游只声明依赖、
 #      我们的 payload 不含原生模块。仓库里现在放的是**纯 JS 替身**（管道，无真 TTY）——
 #      本脚本用于换成**真 node-pty**。
 #

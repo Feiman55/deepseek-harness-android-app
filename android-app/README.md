@@ -23,7 +23,7 @@ android-app/
 
 构建输入由 `tools/build-apk.sh` 自动准备（本版 起无需手工搭 devhome）：
 
-- **内核树** —— 官方 npm registry 的 `@deepseek-ai/dsh@0.2.0-rc.2` + 仓库内冻结 lock
+- **内核树** —— 官方 npm registry 的 `@deepseek-ai/dsh@0.2.1-rc.2` + 仓库内冻结 lock
   （`android-app/kernel/`，`tools/fetch-kernel.sh` 安装，带 `.cache/kernel/*.tar` 缓存）；
 - **arm64 运行时** —— 我们自己的 sha256 pin 资产（`tools/fetch-runtime.sh`），解到 `.cache/devhome`：
   `runtime/`（node v26 + `.so`）、`python/`、`npm/`、`pnpm/`、`git/`、`bash/`、`bin/`、`rish/`、`.dsh/`；

@@ -43,7 +43,7 @@ K_VER=$(sed -n '/"node_modules\/@deepseek-ai\/dsh": {/,/"dependencies"/p' "$LOCK
         | sed -n 's/.*"version": "\([^"]*\)".*/\1/p' | head -1)
 N_REGISTRY=$(grep -c '"resolved": "https://registry.npmjs.org' "$LOCK" || true)
 echo "   lock: version 行 $N_ENTRIES · integrity $N_INTEG · registry tarball $N_REGISTRY · 内核 $K_VER"
-[ "$K_VER" = "0.2.0-rc.2" ] || { echo "!! 内核版本不是 0.2.0-rc.2：$K_VER" >&2; exit 1; }
+[ "$K_VER" = "0.2.1-rc.2" ] || { echo "!! 内核版本不是 0.2.1-rc.2：$K_VER" >&2; exit 1; }
 [ "$N_ENTRIES" -ge 600 ] || { echo "!! lock 条目过少（$N_ENTRIES），疑似被截断" >&2; exit 1; }
 [ "$N_INTEG" -ge 600 ] || { echo "!! integrity 覆盖不足（$N_INTEG）" >&2; exit 1; }
 [ "$N_REGISTRY" -ge 600 ] || { echo "!! 有 tarball 不是来自官方 registry（$N_REGISTRY）" >&2; exit 1; }
@@ -132,8 +132,16 @@ fi
 KROOT="$OUT/node_modules/@deepseek-ai/dsh"
 [ -d "$KROOT" ] || { echo "!! 没装出 $KROOT" >&2; exit 1; }
 VER=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$KROOT/package.json" | head -1)
-N_PKG=$(find "$KROOT/node_modules" -name package.json 2>/dev/null | wc -l | tr -d ' ')
+# v1.20.1（内核 0.2.1-rc.2）：依赖改为 npm 扁平安装（hoisted），不再嵌套在
+# @deepseek-ai/dsh/node_modules 下。两个坑：
+#   ① 该目录不存在时 find 返回 1，配合 `set -euo pipefail` 会让脚本**静默退出** →
+#      必须 (find … || true) 把失败吞掉；
+#   ② 嵌套为 0 时要改数扁平根，否则误判成"依赖包 0 个"。
+N_PKG=$( (find "$KROOT/node_modules" -name package.json 2>/dev/null || true) | wc -l | tr -d ' ')
+if [ "$N_PKG" -eq 0 ]; then
+  N_PKG=$( (find "$OUT/node_modules" -name package.json 2>/dev/null || true) | wc -l | tr -d ' ')
+fi
 echo "   内核树: node_modules/@deepseek-ai/dsh（版本 $VER，依赖包 $N_PKG 个）"
-[ "$VER" = "0.2.0-rc.2" ] || { echo "!! 内核版本异常：$VER" >&2; exit 1; }
+[ "$VER" = "0.2.1-rc.2" ] || { echo "!! 内核版本异常：$VER" >&2; exit 1; }
 [ "$N_PKG" -ge 450 ] || { echo "!! 依赖包数量异常：$N_PKG" >&2; exit 1; }
 echo "== fetch-kernel: OK =="

@@ -11,7 +11,7 @@
    `dsh-subprocess-local`（Android 平台门禁）—— 上游 overlay-020 里**根本没有这个包**；
    node-pty 这种塞进 payload 的原生模块上游也没有。
 3. 内核包的**权威来源是上游 Release APK**，公共 npm 上没有
-   （实测 `@deepseek-ai/dsh-*@0.2.0-rc.2` 全部 404），所以拿不到"未改动内核"来做三方 diff。
+   （实测 `@deepseek-ai/dsh-*@0.2.0-rc.2` 全部 404；同步分支起内核为 0.2.1-rc.2），所以拿不到"未改动内核"来做三方 diff。
 4. overlay 停在 0.1.5-rc.2 那代，会带来两类**静默失效**：
    · 路径在树里已不存在 → apply.sh 写了也没人加载（实测 10 个）；
    · 内容是旧版 → 覆盖回去等于把内核降级。

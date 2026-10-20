@@ -9,7 +9,7 @@
 #   bash tools/build-apk.sh --out ~/x.apk        # 指定产物路径
 #
 # 两个输入都由**官方渠道**取得，且都 pin 住版本：
-#   · 内核树：官方 npm registry 的 @deepseek-ai/dsh@0.2.0-rc.2 + 仓库内冻结 lock
+#   · 内核树：官方 npm registry 的 @deepseek-ai/dsh@0.2.1-rc.2 + 仓库内冻结 lock
 #             （tools/fetch-kernel.sh，带 .cache/kernel/*.tar 构建缓存）
 #   · 运行时：我们自己的 arm64 运行时资产（tools/fetch-runtime.sh，sha256 pin）
 # 详见 BUILD.md 与 android-app/kernel/README.md。
