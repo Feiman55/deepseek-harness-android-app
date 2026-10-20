@@ -479,6 +479,21 @@ find "$P/staging/dshroot/lib" \
        -o -name '__pycache__' -o -name '*.pyc' \) -exec rm -rf {} + 2>/dev/null || true
 echo "  内核树: 官方 registry 冻结安装 + 体积裁剪"
 
+# B8（v1.20.1 起）：更细的裁剪 —— 内核升级到 0.2.1 后依赖从 530 涨到 1191 个包，
+# 其中最大一块是 **重复的 zod 副本里的 TypeScript 源码**（src/**/*.ts，运行期永不加载）。
+# 用 Python 精确裁剪：只动包根下的 test/docs/example、*.map/*.d.ts、src/**/*.ts、包根 *.md，
+# 保留 LICENSE/NOTICE/SKILL.md 与 @noble 这类"src 就是运行时代码"的 js/json。
+if [ -f "$P/../tools/trim-payload.py" ] && [ -n "${PY_BIN:-}" ]; then
+  "$PY_BIN" "$P/../tools/trim-payload.py" "$P/staging/dshroot/lib" || echo "  ⚠ 精细裁剪失败（不阻断构建）"
+fi
+
+# B9（v1.20.1 起）：跨目录重复文件去重。0.2.1 内核里 zod 被复制 54 份（v3/v4 冲突），
+# 同版本副本内容完全相同 → 包内只留一份，其余写进 dshroot/lib/LINKS-DEDUP.txt，
+# 设备端解压后按 硬链→软链→复制 重建（与 runtime 的 LINKS.txt 同一套机制）。
+if [ -f "$P/../tools/dedup-payload.py" ] && [ -n "${PY_BIN:-}" ]; then
+  "$PY_BIN" "$P/../tools/dedup-payload.py" "$P/staging" || echo "  ⚠ 去重失败（不阻断构建）"
+fi
+
 # ============================================================================
 # 补丁层：dsh-patches/overlay 覆盖到 staging（**构建期必做**）
 #

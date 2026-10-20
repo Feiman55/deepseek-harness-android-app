@@ -5477,6 +5477,64 @@ public class MainActivity extends Activity {
         // 100 个别名」，包内只留那一个二进制，别名在这里按 LINKS.txt 重建（与 soname 别名同构）。
         // 不处理的话设备上 awk / coreutils 各命令（sort/head/stat/…）全缺，只剩 toybox 那套。
         applyLinksIn(new File(payload, "runtime/bin"));
+        // v1.20.1：dshroot 里的跨目录重复文件（去重表）也在这里重建
+        applyDedupLinks(new File(payload, "dshroot/lib"));
+    }
+
+    /**
+     * 按 lib/LINKS-DEDUP.txt 重建"跨目录去重"的文件。
+     *
+     * <p>为什么需要：内核 0.2.1 起 zod 被复制 54 份（v3/v4 版本冲突，npm 无法提升），
+     * 同版本副本内容完全相同 —— 包里只留一份，其余在解压/同步后按本表重建
+     * （硬链 → 软链 → 复制，与 runtime 的 LINKS.txt 同一套顺序，见 applyLinksIn 的实测注释）。
+     *
+     * <p>表格式：每行 {@code 副本相对路径 	 目标相对路径}，都相对 dshroot/lib。
+     */
+    private void applyDedupLinks(File libDir) throws IOException {
+        File table = new File(libDir, "LINKS-DEDUP.txt");
+        if (!table.exists()) return;
+        BufferedReader r = new BufferedReader(new InputStreamReader(new FileInputStream(table), "UTF-8"));
+        String line;
+        int n = 0;
+        try {
+            while ((line = r.readLine()) != null) {
+                line = line.trim();
+                if (line.isEmpty() || line.startsWith("#")) continue;
+                String[] parts = line.split("\t+");
+                if (parts.length < 2) continue;
+                File link = new File(libDir, parts[0].trim());
+                File src = new File(libDir, parts[1].trim());
+                if (!src.exists()) continue;
+                if (link.exists()) {
+                    boolean same = false;
+                    try {
+                        android.system.StructStat a = Os.stat(link.getAbsolutePath());
+                        android.system.StructStat b2 = Os.stat(src.getAbsolutePath());
+                        same = (a.st_dev == b2.st_dev && a.st_ino == b2.st_ino);
+                    } catch (Throwable ignored) {}
+                    if (same) continue;
+                    if (!link.delete()) continue;
+                }
+                File parent = link.getParentFile();
+                if (parent != null) parent.mkdirs();
+                try {
+                    Os.link(src.getAbsolutePath(), link.getAbsolutePath());
+                    n++;
+                } catch (ErrnoException e1) {
+                    try {
+                        Os.symlink(src.getAbsolutePath(), link.getAbsolutePath());
+                        n++;
+                    } catch (ErrnoException e2) {
+                        try { copyFile(src, link); n++; } catch (IOException e3) {
+                            Log.w(TAG, "dedup link failed " + parts[0], e3);
+                        }
+                    }
+                }
+            }
+        } finally {
+            r.close();
+        }
+        if (n > 0) Log.i(TAG, "dedup links rebuilt: " + n);
     }
 
     /** 按 dir/LINKS.txt 重建别名：硬链 → （x86_64 翻译环境直接复制，否则软链）→ 复制兜底。 */
