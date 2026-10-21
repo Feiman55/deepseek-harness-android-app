@@ -13480,7 +13480,12 @@ function resolveConfig(input2 = {}, env = process.env) {
       enabled: parsed.reconnect !== false,
       initialDelayMs,
       maxDelayMs,
-      jitter: reconnect.jitter ?? 0.2
+      jitter: reconnect.jitter ?? 0.2,
+      // A displaced connection is a standby: another instance holds this device identity, so it waits five
+      // minutes - well outside the Server's 40-65 s reap window - and then tries again, taking over as soon
+      // as that instance leaves. Giving up for good is how the device stayed offline after the winner left.
+      // The fixture matrix needs a short interval to watch a standby take over, so an operator can override it.
+      replacedRetryMs: reconnect.replacedRetryMs ?? (Number.isFinite(Number(env.DSH_REMOTE_RECONNECT_REPLACED_RETRY_MS)) ? Number(env.DSH_REMOTE_RECONNECT_REPLACED_RETRY_MS) : 3e5)
     },
     codex: {
       // Off by default (2026-10-14). Carrying another agent's workspaces is a capability the user opts into, not
@@ -13516,7 +13521,7 @@ function normalizeServerUrl(value) {
 }
 
 // src/version.ts
-var PLUGIN_VERSION = "0.5.3";
+var PLUGIN_VERSION = "0.5.4";
 
 // src/server-api.ts
 var ENABLED_QR_PROVIDERS = ["github"];
@@ -14080,15 +14085,21 @@ var HostServerConnection = class {
   }
   async run() {
     let delayMs = this.config.reconnect.initialDelayMs;
+    let replacedRetryMs;
+    let replacedAttempts = 0;
     this.authRecoveryAttempted = false;
     while (!this.stopped) {
       try {
         await this.connectOnce();
         delayMs = this.config.reconnect.initialDelayMs;
+        replacedRetryMs = void 0;
+        replacedAttempts = 0;
       } catch (error) {
         const code = errorCode2(error);
         if (code === "CREDENTIALS_REFRESHED") continue;
         this.terminalError = code;
+        replacedRetryMs = code === "CONNECTION_REPLACED" ? replacedAttempts === 0 ? Math.min(this.config.reconnect.replacedRetryMs, REPLACED_FIRST_RETRY_MS) : this.config.reconnect.replacedRetryMs : void 0;
+        replacedAttempts = code === "CONNECTION_REPLACED" ? replacedAttempts + 1 : 0;
         this.logger.warn("server control connection failed", {
           code,
           retryable: isRetryable(error),
@@ -14096,7 +14107,7 @@ var HostServerConnection = class {
           ...connectionFailureDetail(error)
         });
         if (TERMINAL_AUTH_ERRORS.has(code)) {
-          this.logger.warn(code === "CONNECTION_REPLACED" ? "Another instance is using this Host identity. Stop it or use a separate DSH_HOME; automatic reconnect is paused." : code === "SERVER_CREDENTIALS_BUSY" ? "Credential refresh is locked. Stop other instances; after a crash, stop all instances before removing server-credentials.json.refresh-lock and authorizing again." : "Host authorization failed. Run /remote login or authorize this Host again in Remote settings.");
+          this.logger.warn(code === "CONNECTION_REPLACED" ? "Another instance is using this Host identity. Standing by: retrying in five minutes, and taking over as soon as it leaves." : code === "SERVER_CREDENTIALS_BUSY" ? "Credential refresh is locked. Stop other instances; after a crash, stop all instances before removing server-credentials.json.refresh-lock and authorizing again." : "Host authorization failed. Run /remote login or authorize this Host again in Remote settings.");
         }
         if (code === "DEVICE_REVOKED") {
           try {
@@ -14114,7 +14125,7 @@ var HostServerConnection = class {
         continue;
       }
       if (!this.config.reconnect.enabled) return;
-      await this.waitBeforeRetry(delayMs);
+      await (replacedRetryMs === void 0 ? this.waitBeforeRetry(delayMs) : this.waitBeforeRetry(replacedRetryMs, true));
       if (this.reconnectRequested) {
         this.reconnectRequested = false;
         delayMs = this.config.reconnect.initialDelayMs;
@@ -14678,8 +14689,8 @@ var HostServerConnection = class {
       tunnel.noise.destroy();
     }
   }
-  waitBeforeRetry(baseDelay) {
-    const spread = baseDelay * this.config.reconnect.jitter;
+  waitBeforeRetry(baseDelay, exact = false) {
+    const spread = exact ? 0 : baseDelay * this.config.reconnect.jitter;
     const delay = Math.max(0, Math.round(baseDelay - spread + Math.random() * spread * 2));
     return new Promise((resolve4) => {
       const timer = setTimeout(() => {
@@ -14693,8 +14704,8 @@ var HostServerConnection = class {
     });
   }
 };
+var REPLACED_FIRST_RETRY_MS = 65e3;
 var TERMINAL_AUTH_ERRORS = /* @__PURE__ */ new Set([
-  "CONNECTION_REPLACED",
   "SERVER_CREDENTIALS_BUSY",
   "ACCOUNT_AUTH_REQUIRED",
   "AUTH_INVALID",
@@ -22077,9 +22088,26 @@ var ClientModeRuntime = class {
   }
   async setHostAuthorization(enabled) {
     if (this.host === void 0) throw new ClientModeError("METHOD_NOT_ALLOWED", "This plugin is not running as a Host.");
-    await this.host.setHostControl?.(enabled);
-    if (enabled) await this.host.resumeHostConnection?.();
-    else await this.host.pauseHostConnection?.();
+    if (!enabled) {
+      await this.host.setHostControl?.(false);
+      await this.host.pauseHostConnection?.();
+      return this.status();
+    }
+    let flagError;
+    try {
+      await this.host.setHostControl?.(true);
+    } catch (error) {
+      flagError = error;
+    }
+    await this.host.resumeHostConnection?.();
+    try {
+      await this.host.setHostControl?.(true);
+    } catch (error) {
+      this.logger.warn("could not tell the Server that this Host accepts control; retrying when it reconnects", {
+        code: safeErrorCode(error),
+        ...flagError === void 0 ? {} : { firstCode: safeErrorCode(flagError) }
+      });
+    }
     return this.status();
   }
   async setMode(mode, targetDeviceId, signal) {
@@ -22515,6 +22543,22 @@ var ClientModeRuntime = class {
       return;
     }
     const transportLost = reason !== "codex-closed";
+    if (String(reason) === "CONNECTION_REPLACED" && this.reconnecting === void 0) {
+      const run = this.remoteReconnectRun;
+      this.reconnecting = { targetDeviceId, ...targetName === void 0 ? {} : { targetName }, phase: "fast" };
+      this.logger.info("the link was closed by this client's own connection replacement; retrying in place", {
+        targetDeviceId: shortId2(targetDeviceId),
+        kind
+      });
+      const rescued = await this.quickReconnectSession(targetDeviceId, target2, transportLost, run);
+      if (run !== this.remoteReconnectRun) return;
+      if (rescued) {
+        this.finishRecovery(targetDeviceId, "replacement", kind);
+        return;
+      }
+      void this.reconnectRemoteSession(targetDeviceId, target2);
+      return;
+    }
     if (this.reconnecting === void 0) {
       const run = this.remoteReconnectRun;
       this.reconnecting = { targetDeviceId, ...targetName === void 0 ? {} : { targetName }, phase: "fast" };
@@ -23227,7 +23271,26 @@ var ClientModeRuntime = class {
       throw error;
     }
   }
+  /**
+   * One attempt at a time per target: the panel's refresh and the automatic reconnect can ask at the same moment, and
+   * two control connections in flight make the Server close the older one with 4003 (`CONNECTION_REPLACED`), which
+   * also kills the link that was being built on it - what the user saw as being kicked out of the card.
+   */
+  inFlightConnect;
   async connect(targetDeviceId, signal, forceRelay = false) {
+    const key = `${targetDeviceId}|${forceRelay ? "relay" : "auto"}`;
+    const inFlight = this.inFlightConnect;
+    if (inFlight?.key === key) {
+      signal?.throwIfAborted();
+      return await inFlight.promise;
+    }
+    const promise = this.connectNow(targetDeviceId, signal, forceRelay).finally(() => {
+      if (this.inFlightConnect?.promise === promise) this.inFlightConnect = void 0;
+    });
+    this.inFlightConnect = { key, promise };
+    return await promise;
+  }
+  async connectNow(targetDeviceId, signal, forceRelay = false) {
     signal?.throwIfAborted();
     const progressRunId = this.connectionProgressRun + 1;
     this.connectionProgressRun = progressRunId;
@@ -29994,7 +30057,7 @@ function remoteStatusLines(target2) {
     `Authorization: ${status2.authorized ? status2.account === void 0 ? "logged in" : `logged in (${status2.account})` : "logged out"}`,
     `Server connection: ${connection}`,
     ...status2.error === void 0 ? [] : [`Connection error: ${status2.error}`],
-    ...status2.error === "CONNECTION_REPLACED" ? ["Another instance is using this Host identity. Stop it or use a separate DSH_HOME before reconnecting."] : status2.error === "SERVER_CREDENTIALS_BUSY" ? ["Credential refresh is locked. Stop all instances before removing an orphaned server-credentials.json.refresh-lock and authorizing again."] : status2.accountRequired ? ["Authorize again with /remote login [github|zhihu]."] : [],
+    ...status2.error === "CONNECTION_REPLACED" ? ["Another instance is using this Host identity. Standing by: retrying every five minutes, and taking over as soon as it leaves."] : status2.error === "SERVER_CREDENTIALS_BUSY" ? ["Credential refresh is locked. Stop all instances before removing an orphaned server-credentials.json.refresh-lock and authorizing again."] : status2.accountRequired ? ["Authorize again with /remote login [github|zhihu]."] : [],
     `Harness Remote API: ${capabilities.has("harness.api.v1") ? "available (ApiProxy)" : capabilities.has("harness.remote.v3") ? "available (Typert Remote Session V3)" : capabilities.has("harness.remote.v1") ? "available (Typert Remote)" : "unavailable"}`,
     `Remote clients: ${diagnostics.activeConnections}`,
     `Codex Remote: ${codex.enabled ? codex.state : "disabled"}`,

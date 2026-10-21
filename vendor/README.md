@@ -43,7 +43,7 @@ DSH 只有看到它在 bundles 里才会组合进插件树。
 
 | 插件 | 版本 | 来源 | 说明 |
 |---|---|---|---|
-| `ds-harness-remote` | **0.5.3** | npm `@blue-soda/dsh-remote`（同源仓库 `github:blue-soda/ds-harness-remote` 的 `packages/plugin`）| 端到端加密的远程访问（桌面/网页/安卓互连）。自带 `dist/index.js` + `dist/client.github.js`；运行时依赖 `qrcode`/`werift`/`ws`/`zod` 一并内置，`@deepseek-ai/schemastery` 由内核树嵌套路径提供、不内置。 |
+| `ds-harness-remote` | **0.5.4** | npm `@blue-soda/dsh-remote`（同源仓库 `github:blue-soda/ds-harness-remote` 的 `packages/plugin`）| 端到端加密的远程访问（桌面/网页/安卓互连）。自带 `dist/index.js` + `dist/client.github.js`；运行时依赖 `qrcode`/`werift`/`ws`/`zod` 一并内置，`@deepseek-ai/schemastery` 由内核树嵌套路径提供、不内置。 |
 
 ## 更新步骤（人工）
 

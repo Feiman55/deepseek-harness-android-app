@@ -265,7 +265,7 @@
     reconnectingAction: "Reconnecting\u2026",
     reconnectStarted: "Reconnect requested.",
     connectionAuthorizationExpired: "Authorization expired. Sign in again to authorize this device.",
-    connectionReplaced: "Another instance is using this Host identity. Stop it or use a separate DSH_HOME before reconnecting.",
+    connectionReplaced: "Another instance is using this Host identity. Standing by: retrying every five minutes, and taking over as soon as it leaves.",
     connectionCredentialsBusy: "Credential refresh is locked. Stop other instances. After a crash, stop all instances before removing server-credentials.json.refresh-lock and authorizing again.",
     connectionDeviceRevoked: "This device was removed on the Server. Sign in again to add it back.",
     connectionOwnershipRequired: "The Server no longer recognizes this Host as an owned device.",
@@ -328,12 +328,12 @@
     exitRemote: "Exit",
     stopReconnecting: "Stop reconnecting",
     addRemoteWorkspace: "Add remote workspace",
-    addCodexWorkspace: "Add CodeX workspace",
-    noCodexWorkspaces: "No CodeX workspaces yet.",
+    addCodexWorkspace: "Add Codex workspace",
+    noCodexWorkspaces: "No Codex workspaces yet.",
     cancelAddWorkspace: "Cancel",
     confirmAddWorkspace: "Add and open",
     showAllWorkspaces: "Show all DSH workspaces",
-    showAllCodexWorkspaces: "Show all CodeX workspaces",
+    showAllCodexWorkspaces: "Show all Codex workspaces",
     remoteModeDsh: "Remote DSH \xB7 ",
     remoteModeCodex: "Remote Codex \xB7 ",
     remoteNetworkP2p: "P2P",
@@ -430,7 +430,7 @@
     accountPasswordLogin: "Password",
     qrLoginExpired: "This QR code expired. Refresh it to continue.",
     refreshQrCode: "Refresh QR code",
-    codexVirtualWorkspace: "CodeX virtual workspace",
+    codexVirtualWorkspace: "Codex virtual workspace",
     codexVirtualSessions: "Sessions"
   }, zh = {
     terminalRemote: "\u8FDC\u7A0B\u7EC8\u7AEF",
@@ -539,7 +539,7 @@
     reconnectingAction: "\u6B63\u5728\u91CD\u8FDE\u2026",
     reconnectStarted: "\u5DF2\u53D1\u8D77\u91CD\u8FDE\u3002",
     connectionAuthorizationExpired: "\u6388\u6743\u5DF2\u5931\u6548\uFF0C\u8BF7\u91CD\u65B0\u767B\u5F55\u4EE5\u91CD\u65B0\u6388\u6743\u6B64\u8BBE\u5907\u3002",
-    connectionReplaced: "\u53E6\u4E00\u5B9E\u4F8B\u6B63\u5728\u4F7F\u7528\u6B64 Host \u8EAB\u4EFD\u3002\u8BF7\u505C\u6B62\u8BE5\u5B9E\u4F8B\uFF0C\u6216\u4F7F\u7528\u72EC\u7ACB\u7684 DSH_HOME \u540E\u91CD\u65B0\u8FDE\u63A5\u3002",
+    connectionReplaced: "\u53E6\u4E00\u5B9E\u4F8B\u6B63\u5728\u4F7F\u7528\u6B64 Host \u8EAB\u4EFD\u3002\u672C\u673A\u5DF2\u8FDB\u5165\u5F85\u547D\uFF1A\u6BCF 5 \u5206\u949F\u91CD\u8BD5\u4E00\u6B21\uFF0C\u5BF9\u65B9\u9000\u51FA\u540E\u4F1A\u81EA\u52A8\u63A5\u7BA1\u3002",
     connectionCredentialsBusy: "\u51ED\u636E\u5237\u65B0\u88AB\u9501\u5B9A\uFF0C\u8BF7\u505C\u6B62\u5176\u4ED6\u5B9E\u4F8B\u3002\u82E5\u6B64\u524D\u5F02\u5E38\u9000\u51FA\uFF0C\u8BF7\u505C\u6B62\u6240\u6709\u5B9E\u4F8B\u540E\u79FB\u9664 server-credentials.json.refresh-lock \u5E76\u91CD\u65B0\u6388\u6743\u3002",
     connectionDeviceRevoked: "\u6B64\u8BBE\u5907\u5DF2\u5728 Server \u4E0A\u88AB\u79FB\u9664\uFF0C\u8BF7\u91CD\u65B0\u767B\u5F55\u4EE5\u91CD\u65B0\u6DFB\u52A0\u3002",
     connectionOwnershipRequired: "Server \u5DF2\u4E0D\u518D\u5C06\u6B64 Host \u8BC6\u522B\u4E3A\u5F53\u524D\u8D26\u53F7\u7684\u8BBE\u5907\u3002",
@@ -602,12 +602,12 @@
     exitRemote: "\u9000\u51FA",
     stopReconnecting: "\u505C\u6B62\u91CD\u8FDE",
     addRemoteWorkspace: "\u6DFB\u52A0\u8FDC\u7A0B\u5DE5\u4F5C\u533A",
-    addCodexWorkspace: "\u6DFB\u52A0 CodeX \u5DE5\u4F5C\u533A",
-    noCodexWorkspaces: "\u8FD8\u6CA1\u6709 CodeX \u5DE5\u4F5C\u533A\u3002",
+    addCodexWorkspace: "\u6DFB\u52A0 Codex \u5DE5\u4F5C\u533A",
+    noCodexWorkspaces: "\u8FD8\u6CA1\u6709 Codex \u5DE5\u4F5C\u533A\u3002",
     cancelAddWorkspace: "\u53D6\u6D88",
     confirmAddWorkspace: "\u786E\u8BA4\u5E76\u6253\u5F00",
     showAllWorkspaces: "\u663E\u793A\u5168\u90E8 DSH \u5DE5\u4F5C\u533A",
-    showAllCodexWorkspaces: "\u663E\u793A\u5168\u90E8 CodeX \u5DE5\u4F5C\u533A",
+    showAllCodexWorkspaces: "\u663E\u793A\u5168\u90E8 Codex \u5DE5\u4F5C\u533A",
     remoteModeDsh: "\u8FDC\u7A0BDSH \xB7 ",
     remoteModeCodex: "\u8FDC\u7A0BCodex \xB7 ",
     remoteNetworkP2p: "P2P",
@@ -704,7 +704,7 @@
     accountPasswordLogin: "\u8D26\u53F7\u5BC6\u7801",
     qrLoginExpired: "\u4E8C\u7EF4\u7801\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u5237\u65B0\u540E\u91CD\u8BD5\u3002",
     refreshQrCode: "\u5237\u65B0\u4E8C\u7EF4\u7801",
-    codexVirtualWorkspace: "CodeX \u5DE5\u4F5C\u533A",
+    codexVirtualWorkspace: "Codex \u5DE5\u4F5C\u533A",
     codexVirtualSessions: "Sessions"
   };
   function codexUnavailableKey(code) {
@@ -1514,7 +1514,12 @@
                   targetDeviceId: host.deviceId
                 }), codexReason, nextCodexWorkspaces = await props.control("codex.workspaces.list", {
                   targetDeviceId: host.deviceId
-                }).catch((reason) => (codexReason = remoteErrorMessage(reason, t), [])), nextStatus = await props.control("status").catch(() => {
+                }).catch(async (reason) => {
+                  let code = typeof reason?.code == "string" ? String(reason.code) : "";
+                  return ["TRANSPORT_CLOSED", "NOT_CONNECTED", "CONNECTION_FAILED", "RPC_TIMEOUT"].includes(code) ? await props.control("codex.workspaces.list", {
+                    targetDeviceId: host.deviceId
+                  }).catch((again) => (codexReason = remoteErrorMessage(again, t), [])) : (codexReason = remoteErrorMessage(reason, t), []);
+                }), nextStatus = await props.control("status").catch(() => {
                 });
                 return nextStatus !== void 0 && setStatus(nextStatus), setCodexNotice(codexReason), { workspaces: nextWorkspaces, codexWorkspaces: nextCodexWorkspaces, status: nextStatus };
               },
@@ -2219,7 +2224,7 @@
                 )
               ),
               notice === void 0 ? null : React.createElement("p", { className: "dshRemoteNotice", role: "status" }, notice),
-              error === void 0 ? null : React.createElement("p", { className: "dshRemoteError", role: "alert" }, error)
+              error === void 0 || error === codexNotice ? null : React.createElement("p", { className: "dshRemoteError", role: "alert" }, error)
             )
           )) : null
         );
