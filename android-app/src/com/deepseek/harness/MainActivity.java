@@ -10390,6 +10390,20 @@ public class MainActivity extends Activity {
             ui.post(new Runnable() { @Override public void run() { refreshConsole(); } });
             return;
         }
+        // v1.20.6（实测）：端口没在听、但上一次的引擎进程还活着 —— 脱离 App 的孤儿
+        // （force-stop 只杀 App 的子进程，脱离的 node 会活下来），它占着资源却不服务，
+        // 新引擎起来还会撞 EADDRINUSE，界面就一直"等待引擎启动"（实测 150 秒没起来）。
+        // 同 uid 有权限直接 kill（不需要 root）。
+        try {
+            int stalePid = findEnginePid(enginePort);
+            if (stalePid > 0) {
+                Log.w(TAG, "killing stale engine pid=" + stalePid + " (port " + enginePort + " not listening)");
+                try {
+                    Runtime.getRuntime().exec(new String[]{"kill", "-9", String.valueOf(stalePid)}).waitFor();
+                } catch (Throwable ignored) {}
+                Thread.sleep(400);
+            }
+        } catch (Throwable ignored) {}
         try {
             spawnNode(payload);
         } catch (Throwable t) {
