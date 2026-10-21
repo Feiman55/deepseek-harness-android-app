@@ -16,6 +16,23 @@
 #   bash tools/emu-start.sh                 # 用第一个 AVD
 #   bash tools/emu-start.sh Pixel_10_Pro    # 指定 AVD
 #   bash tools/emu-start.sh Pixel_10_Pro --no-libs    # 只启动，不补库
+#   bash tools/emu-start.sh Pixel_10_Pro --size 720x1600 --dpi 320
+#                                        # 启动后把逻辑分辨率调小（模拟器窗口一屏放得下）
+#   bash tools/emu-start.sh Pixel_10_Pro --scale 0.4   # 窗口缩放（默认 0.4；--scale none 关掉）
+#
+# 关于窗口大小（实测）：
+#   · `wm size` 只改**设备逻辑分辨率**，不会缩小宿主窗口；
+#   · 窗口大小由 AVD 的 hw.lcd.*（+ skill/skin）决定；
+#   · `-scale` 在**本机模拟器版本上实测被忽略**（0.45 / 0.4 / 0.34 三个值窗口都是同一尺寸），
+#     所以 `--scale` 只作兼容保留；真正决定窗口大小的是 AVD config.ini 的 hw.lcd.*；
+#   · 本机最终采用 hw.lcd = 360x640 @160dpi（约 373x675 的窗口，1229x768 的屏放得下）；
+#   · 注意 `wm size` / `wm density` 是**运行时覆盖**，会一直留着 —— 换分辨率后要用
+#     `wm size reset` + `wm density reset` 清掉，否则 physical 与 override 不一致会让人困惑。
+#
+# 为什么需要 --size：AVD 默认分辨率（如 Pixel_10_Pro 的 1280x2856）在笔记本屏幕上
+# 窗口高到放不下；`wm size` 改的是**设备逻辑分辨率**，窗口会随之缩小，且不影响
+# 打包/运行（App 内部按 dp 布局）。想让改动永久生效，改 AVD 的
+# ~/.android/avd/<AVD>.avd/config.ini 里的 hw.lcd.width/height/density。
 #
 # 真机（arm64 原生）不需要本脚本。
 set -uo pipefail
@@ -29,8 +46,21 @@ case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) EMU="$EMU.exe"; ADB="$ADB.exe" ;; es
 [ -x "$ADB" ] || { echo "!! 找不到 adb：$ADB"; exit 1; }
 
 AVD="${1:-}"
+shift || true
 NO_LIBS=0
-[ "${2:-}" = "--no-libs" ] && NO_LIBS=1
+WM_SIZE=""
+WM_DPI=""
+SCALE="0.4"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --no-libs) NO_LIBS=1 ;;
+    --size) shift; WM_SIZE="${1:-}" ;;
+    --dpi)  shift; WM_DPI="${1:-}" ;;
+    --scale) shift; SCALE="${1:-}" ;;
+    *) echo "  （忽略未知参数：$1）" ;;
+  esac
+  shift || true
+done
 if [ -z "$AVD" ]; then
   AVD="$("$EMU" -list-avds 2>/dev/null | head -1)"
   [ -n "$AVD" ] || { echo "!! 没有可用 AVD（先建一个 userdebug 的 google_apis 镜像）"; exit 1; }
@@ -41,7 +71,9 @@ mkdir -p "$REPO/.cache"
 LOG="$REPO/.cache/emu-start.log"
 echo "▶ 启动模拟器（-writable-system -gpu swiftshader_indirect），日志：$LOG"
 # 关键：重定向到文件而不是管道，且放后台（管道截断会连带杀掉模拟器）
-nohup "$EMU" -avd "$AVD" -writable-system -no-boot-anim -gpu swiftshader_indirect -no-snapshot-load \
+if [ "$SCALE" = "none" ] || [ -z "$SCALE" ]; then SCALE_ARG=""; else SCALE_ARG="-scale $SCALE"; fi
+# shellcheck disable=SC2086
+nohup "$EMU" -avd "$AVD" -writable-system -no-boot-anim -gpu swiftshader_indirect -no-snapshot-load $SCALE_ARG \
   >"$LOG" 2>&1 &
 EMU_PID=$!
 echo "   emulator pid=$EMU_PID"
@@ -86,6 +118,16 @@ else
     "$PY" "$REPO/tools/emu-arm64libs.py" --adb "$ADB" 2>&1 | sed 's/^/   /' || \
       echo "   !! 补库失败（见上）；可重复执行本脚本，或手动 python tools/emu-arm64libs.py"
   fi
+fi
+
+# 可选：把逻辑分辨率/密度调小（模拟器窗口一屏放得下；不影响打包与 App 的 dp 布局）
+if [ -n "$WM_SIZE" ] || [ -n "$WM_DPI" ]; then
+  echo "▶ 调整模拟器显示尺寸"
+  [ -n "$WM_SIZE" ] && { "$ADB" shell wm size "$WM_SIZE" 2>&1 | sed 's/^/   /'; }
+  [ -n "$WM_DPI" ] && { "$ADB" shell wm density "$WM_DPI" 2>&1 | sed 's/^/   /'; }
+  sleep 1
+  echo "   现在：$("$ADB" shell wm size 2>/dev/null | tr -d '\r') / $("$ADB" shell wm density 2>/dev/null | tr -d '\r')"
+  echo "   （永久生效请改 AVD 的 config.ini：hw.lcd.width/height/density）"
 fi
 
 echo

@@ -375,6 +375,16 @@ public class MainActivity extends Activity {
         // v1.13.12 起主题可在控制台选「跟随系统/浅色/深色」，不再只能跟系统。
         setTheme(themePrefersDark() ? R.style.AppTheme : R.style.AppTheme_Light);
         super.onCreate(savedInstanceState);
+        // v1.20.2（用户反馈）：DSH 在思考/长任务时屏幕会超时息屏 —— 前台常亮。
+        //
+        // 用**窗口标记**而不是 WakeLock：
+        //   · FLAG_KEEP_SCREEN_ON 只在**本窗口可见**时生效，切后台/切到别的 App 自动失效，
+        //     不需要 WAKE_LOCK 权限，也不存在"忘了 release 就永久耗电"的风险；
+        //   · WakeLock 要自己配对释放，泄漏一次就是全天候耗电。
+        // 效果：只有 DSH 在前台时常亮，切走立刻恢复系统息屏策略（最省电）。
+        try {
+            getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        } catch (Throwable ignored) {}
         // v1.21：正在「完全退出」——若被系统/通知重新拉起，直接关掉，别再起界面和引擎。
         // 只有**用户主动点图标**（ACTION_MAIN）才算重新使用：清掉标记正常启动。
         if (shutdownPending(this)) {
