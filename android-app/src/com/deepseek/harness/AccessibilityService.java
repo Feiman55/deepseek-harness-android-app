@@ -297,6 +297,59 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
         }, "a11y-conn").start();
     }
 
+    /** 当前活动窗口的"结构指纹"（文本 + 长度）。用于判断一次操作是否真的改变了界面。 */
+    private String treeFingerprint() {
+        try {
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            if (root == null) return "";
+            final StringBuilder sb = new StringBuilder(4096);
+            walk(root, new NodeVisitor() {
+                @Override
+                public void visit(AccessibilityNodeInfo n, int depth) {
+                    if (n == null) return;
+                    try {
+                        CharSequence t = n.getText();
+                        CharSequence d = n.getContentDescription();
+                        if (t != null) sb.append(t).append('|');
+                        if (d != null) sb.append(d).append('|');
+                    } catch (Throwable ignored) {}
+                }
+            }, 0);
+            return Integer.toHexString(sb.toString().hashCode()) + ":" + sb.length();
+        } catch (Throwable t) {
+            return "";
+        }
+    }
+
+    /** 从节点向上找第一个可点击祖先（设置类界面点"行标题文案"是常态）。 */
+    private AccessibilityNodeInfo clickableAncestor(AccessibilityNodeInfo node) {
+        AccessibilityNodeInfo cur = node;
+        for (int i = 0; i < 6 && cur != null; i++) {
+            try {
+                if (cur.isClickable()) return cur;
+                cur = cur.getParent();
+            } catch (Throwable t) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /** 轮询控件树，等某段文字出现（expect_text 校验用）。 */
+    private boolean pollForText(String needle, long timeoutMs) {
+        long end = System.currentTimeMillis() + Math.max(200L, timeoutMs);
+        while (System.currentTimeMillis() < end) {
+            try {
+                if (findNodeByText(needle) != null) return true;
+            } catch (Throwable ignored) {}
+            try {
+                Thread.sleep(150L);
+            } catch (InterruptedException ignored) {
+            }
+        }
+        return false;
+    }
+
     private String jsonError(String msg) {
         try {
             JSONObject o = new JSONObject();
@@ -1379,20 +1432,72 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                 return jsonError("tap 需要 text/desc 或 x/y（或 fx/fy）参数");
             }
 
-            if (target != null && target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            // v1.20.2（用户实测）：ACTION_CLICK 在 WebView 里**返回 true 但界面没反应**（假成功）。
+            // 所以：命中不可点击的"文案节点"要向上找可点击父行；点完要用界面指纹校验；
+            // 校验不通过就自动回退到手势注入；最后按 expect_text 轮询给 verified。
+            final String expect = queryParam(path, "expect_text");
+            final long expectMs = (long) parseDoubleSafe(queryParam(path, "expect_timeout_ms"), 4000);
+            AccessibilityNodeInfo clickable = clickableAncestor(target);
+            boolean clicked = false;
+            int nodeCx = -1, nodeCy = -1;
+            if (clickable != null) {
+                android.graphics.Rect bnd = new android.graphics.Rect();
+                clickable.getBoundsInScreen(bnd);
+                nodeCx = bnd.centerX();
+                nodeCy = bnd.centerY();
+                String before = treeFingerprint();
+                clicked = clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                String after = treeFingerprint();
+                boolean changed = clicked && before != null && !before.isEmpty() && !before.equals(after);
+                o.put("nodeClickAccepted", clicked);
+                o.put("nodeClickChangedUi", changed);
+                if (clicked && !changed) {
+                    // 节点点击被忽略（典型：WebView）→ 用节点中心做手势注入
+                    int gx = nodeCx;
+                    int gy = nodeCy;
+                    if (gx < 0 || gy < 0) { gx = tapX; gy = tapY; }
+                    if (gx >= 0 && gy >= 0 && gestureTap(gx, gy)) {
+                        clicked = true;
+                        method = "gesture-fallback";
+                        o.put("method", method);
+                    }
+                } else if (changed) {
+                    o.put("method", method);
+                }
+            }
+            if (clickable == null && target != null) {
+                o.put("nodeClickableAncestor", false);
+            }
+            if (target != null) target.recycle();
+            if (!clicked) {
+                if (tapX >= 0 && tapY >= 0) {
+                    boolean gestureOk = gestureTap(tapX, tapY);
+                    o.put("found", gestureOk);
+                    o.put("method", gestureOk ? "gesture" : "none");
+                    o.put("verified", false);
+                    if (expect.isEmpty()) return o.toString();
+                } else {
+                    o.put("found", false);
+                    o.put("method", "none");
+                    o.put("verified", false);
+                    if (expect.isEmpty()) return o.toString();
+                }
+            } else {
                 o.put("found", true);
-                o.put("method", method);
-                target.recycle();
-                return o.toString();
+                if (clickable != null) o.put("method", method.isEmpty() ? "node" : method);
+                if (expect.isEmpty()) o.put("verified", true);
             }
-            if (tapX >= 0 && tapY >= 0) {
-                boolean gestureOk = gestureTap(tapX, tapY);
-                o.put("found", gestureOk);
-                o.put("method", gestureOk ? "gesture" : "none");
-                return o.toString();
+            if (!expect.isEmpty()) {
+                boolean hit = pollForText(expect, expectMs);
+                o.put("verified", hit);
+                o.put("verifiedBy", "expect_text");
+                if (!hit) {
+                    o.put("ok", false);
+                    o.put("error", "点击后 " + expectMs + "ms 内没等到文字「" + expect + "」——这次点击可能没生效");
+                    o.put("hint", "WebView/自绘界面建议改用 android_gesture（tap 笔）或核对 fx/fy；"
+                            + "也可以先 android_see 截图确认当前画面。");
+                }
             }
-            o.put("found", false);
-            o.put("error", "未找到可点击的目标元素（text/desc 未匹配，或元素不可点击）");
             return o.toString();
         } catch (Throwable t) {
             return jsonError("tap error: " + t.getMessage());
@@ -1455,6 +1560,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                         + "中文/WebView 输入框建议改用 android_paste_text（剪贴板粘贴路径）。");
                 return o.toString();
             }
+            final String fpBefore = treeFingerprint();
             boolean wasFocused = target.isFocused();
             boolean focusIssued = false;
             if (!wasFocused) {
@@ -1474,6 +1580,26 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                 args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text);
                 ok = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args);
                 o.put("method", "set");
+            }
+            // v1.20.2（用户实测）：SET_TEXT / PASTE 在 WebView 里**返回 true 但框里没字**（假成功）。
+            // 读回节点文本 + 比对界面指纹，二者都没变化就如实报失败（不再报"已写入"）。
+            String readback = "";
+            try {
+                CharSequence t2 = target.getText();
+                if (t2 != null) readback = t2.toString();
+            } catch (Throwable ignored) {}
+            String fpAfter = treeFingerprint();
+            boolean textLanded = ok && ((!readback.isEmpty() && readback.contains(
+                    text.length() > 40 ? text.substring(0, 40) : text))
+                    || (!fpBefore.isEmpty() && !fpBefore.equals(fpAfter)));
+            o.put("readback", readback.length() > 120 ? readback.substring(0, 120) + "…" : readback);
+            o.put("landed", textLanded);
+            if (ok && !textLanded) {
+                o.put("ok", false);
+                o.put("error", "输入动作返回成功，但界面没有变化（读回文本为空）——多半是 WebView 忽略了 a11y 注入");
+                o.put("hint", "WebView/自绘输入框：先用 android_tap 点中输入框并确认软键盘弹出再试；"
+                        + "仍失败说明该系统屏蔽了 a11y 注入，需要 Shizuku/root 的 android_input（本机是否可用见 android_shizuku_status）。");
+                return o.toString();
             }
             o.put("focused", focusedNow);
             o.put("previouslyFocused", wasFocused);
