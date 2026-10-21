@@ -469,11 +469,27 @@ function apply(ctx) {
             });
           });
           req.setTimeout(5000, () => { req.destroy(); resolve({ ok: false, error: "通知服务超时" }); });
-          req.on("error", (e) => resolve({ ok: false, error: String(e && e.message || e) }));
+          req.on("error", (e) => resolve({
+            ok: false,
+            error: "通知服务不可用（" + String((e && e.message) || e) + "）："
+                 + "App 或它的通知服务没在运行（端口无监听）——先在 App 里启动引擎再重试"
+          }));
           req.write(body);
           req.end();
         });
         if (!result || result.ok !== true) return { ...result, posted: false };
+        // v1.20.5（用户反馈）：没有 Shizuku/root 时 privCmd 根本执行不了 dumpsys，
+        // 以前把"查不到"当成"不可见"（visible:false）——这是最误导人的一点。
+        // 无特权通道时**不返回 visible**（schema 是 boolean，不能给 null），只说明无法校验。
+        if (!privilegedAvailable()) {
+          return {
+            ok: true,
+            posted: true,
+            evidence: "已发送（App 侧返回成功），但无法校验通知栏：读写 dumpsys 需要 Shizuku/root。"
+                    + "请用户自己下拉通知栏确认；若确实没出现，多半是该应用通知被系统关了"
+                    + "（设置 → 通知 → DeepSeek Harness）。"
+          };
+        }
         // v1.20.1（AI 建议③）：发完立刻用特权 shell 校验标题/正文是否真的在通知栏里，
         // 别让"App 说发送成功、系统其实静默拦截"变成假成功（标题/正文在 dumpsys 里是两行）。
         await sleep(700);
