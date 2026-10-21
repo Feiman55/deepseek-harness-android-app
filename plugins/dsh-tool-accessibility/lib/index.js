@@ -737,6 +737,14 @@ function apply(ctx) {
       if (Object.keys(params).length === 0) {
         return { ok: false, error: "android_tap 需要至少一个参数：text / desc / x / y / fx / fy（或区域截图的 ix/iy）" };
       }
+      // v1.20.3（第二轮反馈）：校验交给服务端做「点击前后差异 + 排除 tool-call 回显」。
+      // 本地扫整棵树会被聊天记录里的 TOOL/参数回显骗到 —— 任意 expect_text 都会"通过"。
+      if (args.expect_text !== undefined && String(args.expect_text).length > 0) {
+        params.expect_text = String(args.expect_text);
+        if (args.expect_timeout_ms !== undefined) {
+          params.expect_timeout_ms = String(Math.max(200, Math.min(15000, Number(args.expect_timeout_ms) || 4000)));
+        }
+      }
       // A5：底部/边缘点击也可能落在系统手势区或导航栏上
       const warning = edgeGestureWarning(args.fx, args.fy);
       noteInputEvent();
@@ -749,21 +757,13 @@ function apply(ctx) {
       let verifyHint = "";
       const expect = args.expect_text === undefined ? "" : String(args.expect_text);
       if (expect) {
-        const timeout = Math.max(200, Math.min(15000, Number(args.expect_timeout_ms) || 4000));
-        const t0 = Date.now();
-        verified = false;
-        for (;;) {
-          const d = await dumpNodes();
-          if (d && (d.nodes || []).some((n) =>
-            (typeof n.text === "string" && n.text.indexOf(expect) >= 0)
-            || (typeof n.desc === "string" && n.desc.indexOf(expect) >= 0))) { verified = true; break; }
-          if (Date.now() - t0 >= timeout) break;
-          await new Promise((r) => setTimeout(r, 350));
-        }
+        // v1.20.3：只认服务端的判定（点击前后文本差异 + 排除 tool-call 回显），
+        // 本地不再扫整棵树 —— 否则会被聊天记录里的回显骗成"永远通过"。
+        verified = v.verified === true;
         if (!verified) {
-          verifyHint = "点击后等了 " + Math.round((Date.now() - t0)) + "ms 仍没看到「" + expect + "」："
-            + "这一下很可能没生效（WebView/网页按钮常忽略无障碍 ACTION_CLICK）。"
-            + "可试：改用坐标点击（fx/fy）或 android_gesture 的 tap 笔；或先 android_screen_diff 看界面到底变没变。";
+          verifyHint = "点击后没等到「" + expect + "」出现（服务端已按「点击前后新增文字」判定，并排除了工具回显）："
+            + "这一下很可能没生效。可试：改用坐标点击（fx/fy）或 android_gesture 的 tap 笔；"
+            + "或先 android_screen_diff 看界面到底变没变。";
         }
       }
       return {
@@ -1579,8 +1579,8 @@ function apply(ctx) {
           { token: process.env.APP_LOCAL_TOKEN || "", action: "write", text }, 8000);
         if (clip && clip.ok !== false) {
           const pasted = parseResult(await a11yRequest("/input", { mode: "paste" }, 10000));
-          if (pasted.ok !== false) {
-            wrote = true; path = "clipboard-paste"; steps.push("写入=剪贴板粘贴");
+          if (pasted.ok !== false && pasted.landed !== false) {
+            wrote = true; path = "clipboard-paste"; steps.push("写入=剪贴板粘贴（读回确认）");
           } else {
             steps.push("写入=剪贴板粘贴失败（" + (pasted.error || "?") + "）");
           }
@@ -1589,14 +1589,14 @@ function apply(ctx) {
         }
       }
       await new Promise((r) => setTimeout(r, 300));
-      // 3) 读回自证（WebView 自绘输入框读不到内容，如实标注）
+      // 3) 读回自证（v1.20.3：以服务端"输入节点自身读回"为准 —— 以前扫整棵树，
+      //    结果聊天里那行 `Tool call android_focus_type · <文本>` 被当成证据 → 假阳性）
       const after = await dumpNodes();
-      let verified = false;
-      try {
-        const ns = (after && after.nodes) || [];
-        verified = ns.some((n) => typeof n.text === "string" && n.text.indexOf(text) >= 0);
-      } catch (e) { verified = false; }
-      steps.push("读回=" + (verified ? "已看到文本" : "没看到文本"));
+      let verified = direct.landed === true;
+      if (!verified && typeof direct.readback === "string" && direct.readback.length > 0) {
+        verified = direct.readback.indexOf(text) >= 0;
+      }
+      steps.push("读回=" + (verified ? "输入框已确认" : "输入框里没读到本次文本"));
       // 3b) v1.22：直写报"成功"但没落地（WebView/自绘输入框很常见）→ 自动再走一次剪贴板粘贴并复验。
       //   实测（系统设置搜索框）：a11y 直写返回 ok，但控件树里仍是原提示文字 —— 不读回就完全看不出来。
       if (!verified) {
@@ -1608,10 +1608,8 @@ function apply(ctx) {
             path = path ? path + "+clipboard-paste" : "clipboard-paste";
             steps.push("回退=剪贴板粘贴");
             await new Promise((r) => setTimeout(r, 300));
-            const again = await dumpNodes();
-            verified = !!(again && (again.nodes || []).some((n) =>
-              typeof n.text === "string" && n.text.indexOf(text) >= 0));
-            steps.push("复验=" + (verified ? "已看到文本" : "仍未看到文本"));
+            verified = pasted2.landed === true;
+            steps.push("复验=" + (verified ? "输入框已确认" : "输入框里仍没读到文本"));
           } else {
             steps.push("回退=剪贴板粘贴失败（" + (pasted2.error || "?") + "）");
           }
@@ -1643,12 +1641,20 @@ function apply(ctx) {
         hints.push("已发出提交但没观察到界面变化：可能提交未生效，或页面变化很慢。"
           + "建议再用 android_screen / android_see 确认一次当前页面；若是地址栏场景，改用 android_open_url。");
       }
+      // v1.20.3：写入成功但读回失败时，必须给出明确原因（以前这里 ok=false 却没 error
+      // → 界面显示"执行失败：未知错误"，完全没法排查）。
+      const verifyError = (wrote && !verified)
+        ? ("写入动作被系统接受了，但输入框读回不到本次文本（多半是 WebView 忽略了 a11y 注入）。"
+          + "可先 android_tap 点中输入框并确认软键盘弹出再重试；仍失败说明该系统屏蔽了 a11y 注入，"
+          + "需要 Shizuku/root 的 android_input。")
+        : "";
       return {
-        ok: wrote && (args.submit !== true || submitted),
+        ok: wrote && verified && (args.submit !== true || submitted),
         wrote,
         path,
         verified,
         submitted,
+        ...(verifyError ? { error: verifyError } : {}),
         changed,
         steps: steps.join(" → "),
         ...(before === null ? { hint: "（注意：读不到控件树，本工具的自证能力受限）" } : {}),

@@ -297,6 +297,77 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
         }, "a11y-conn").start();
     }
 
+    /**
+     * 这段文字像不像"工具调用回显"？
+     *
+     * <p>为什么需要：在 DSH 自己的界面里，一次 tool call 会把参数原样渲染进聊天记录
+     * （例如 `TOOL, android_tap {"expect_text": "xxx"}`），于是"扫整棵树找 expect_text"
+     * 永远能扫到 —— 校验必然自证成功（用户第二轮实测抓到的假阳性）。
+     */
+    private boolean looksLikeToolEcho(String s) {
+        if (s == null || s.isEmpty()) return false;
+        return s.contains("expect_text") || s.contains("expect_timeout")
+                || s.contains("android_tap") || s.contains("android_focus_type")
+                || s.contains("android_gesture") || s.contains("android_paste_text")
+                || s.contains("Tool call") || s.startsWith("TOOL");
+    }
+
+    /** 活动窗口里"不像回显"的文本集合（点击前后差异比对用）。 */
+    private java.util.HashSet<String> textSet() {
+        final java.util.HashSet<String> set = new java.util.HashSet<String>();
+        try {
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            if (root == null) return set;
+            walk(root, new NodeVisitor() {
+                @Override
+                public void visit(AccessibilityNodeInfo n, int depth) {
+                    if (n == null) return;
+                    try {
+                        CharSequence t = n.getText();
+                        CharSequence d = n.getContentDescription();
+                        if (t != null && !looksLikeToolEcho(t.toString())) set.add(t.toString());
+                        if (d != null && !looksLikeToolEcho(d.toString())) set.add(d.toString());
+                    } catch (Throwable ignored) {}
+                }
+            }, 0);
+        } catch (Throwable ignored) {}
+        return set;
+    }
+
+    /** 等某段文字**新出现**：点击前不存在、且不像工具回显。 */
+    private boolean pollForNewText(final java.util.HashSet<String> before, final String needle, long timeoutMs) {
+        long end = System.currentTimeMillis() + Math.max(200L, timeoutMs);
+        while (System.currentTimeMillis() < end) {
+            final boolean[] hit = {false};
+            try {
+                AccessibilityNodeInfo root = getRootInActiveWindow();
+                if (root != null) {
+                    walk(root, new NodeVisitor() {
+                        @Override
+                        public void visit(AccessibilityNodeInfo n, int depth) {
+                            if (hit[0] || n == null) return;
+                            try {
+                                CharSequence t = n.getText();
+                                CharSequence d = n.getContentDescription();
+                                String s1 = t == null ? "" : t.toString();
+                                String s2 = d == null ? "" : d.toString();
+                                boolean m1 = s1.contains(needle) && !looksLikeToolEcho(s1) && !before.contains(s1);
+                                boolean m2 = s2.contains(needle) && !looksLikeToolEcho(s2) && !before.contains(s2);
+                                if (m1 || m2) hit[0] = true;
+                            } catch (Throwable ignored) {}
+                        }
+                    }, 0);
+                }
+            } catch (Throwable ignored) {}
+            if (hit[0]) return true;
+            try {
+                Thread.sleep(150L);
+            } catch (InterruptedException ignored) {
+            }
+        }
+        return false;
+    }
+
     /** 当前活动窗口的"结构指纹"（文本 + 长度）。用于判断一次操作是否真的改变了界面。 */
     private String treeFingerprint() {
         try {
@@ -1437,6 +1508,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
             // 校验不通过就自动回退到手势注入；最后按 expect_text 轮询给 verified。
             final String expect = queryParam(path, "expect_text");
             final long expectMs = (long) parseDoubleSafe(queryParam(path, "expect_timeout_ms"), 4000);
+            java.util.HashSet<String> textsBefore = textSet();
             AccessibilityNodeInfo clickable = clickableAncestor(target);
             boolean clicked = false;
             int nodeCx = -1, nodeCy = -1;
@@ -1475,7 +1547,15 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                     o.put("found", gestureOk);
                     o.put("method", gestureOk ? "gesture" : "none");
                     o.put("verified", false);
-                    if (expect.isEmpty()) return o.toString();
+                    if (!gestureOk) {
+                        // v1.20.4：注入没执行完就如实失败，别再说"操作成功"
+                        o.put("ok", false);
+                        o.put("error", "触摸注入没有完成（dispatchGesture 被取消/超时/拒绝）——"
+                                + "前台应用在繁忙时可能吞掉注入的触摸");
+                        o.put("hint", "等几秒重试；或先 android_screen 确认界面还响应；"
+                                + "内存紧张（<400MB）时更容易失败，可先关掉其它 App。");
+                    }
+                    if (expect.isEmpty() || !gestureOk) return o.toString();
                 } else {
                     o.put("found", false);
                     o.put("method", "none");
@@ -1488,7 +1568,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                 if (expect.isEmpty()) o.put("verified", true);
             }
             if (!expect.isEmpty()) {
-                boolean hit = pollForText(expect, expectMs);
+                boolean hit = pollForNewText(textsBefore, expect, expectMs);
                 o.put("verified", hit);
                 o.put("verifiedBy", "expect_text");
                 if (!hit) {
@@ -1514,7 +1594,38 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
             GestureDescription gesture = new GestureDescription.Builder()
                     .addStroke(stroke)
                     .build();
-            return dispatchGesture(gesture, null, null);
+            // v1.20.4（用户实测）：以前是 `return dispatchGesture(gesture, null, null)` ——
+            // 那只是"注入被系统接受"，**不是执行完成**；回调都没接，所以永远报成功。
+            // 实测：App 繁忙（内存紧张、节点很多）时 WebView 会静默吞掉触摸，界面一动不动。
+            // 现在等回调：onCompleted 才算成功；onCancelled / 超时 / 被拒绝都算失败。
+            final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+            final boolean[] completed = {false};
+            boolean accepted = dispatchGesture(gesture, new GestureResultCallback() {
+                @Override
+                public void onCompleted(GestureDescription g) {
+                    completed[0] = true;
+                    latch.countDown();
+                }
+
+                @Override
+                public void onCancelled(GestureDescription g) {
+                    latch.countDown();
+                }
+            }, null);
+            if (!accepted) {
+                Log.w(TAG, "gestureTap: 注入被系统拒绝（dispatchGesture=false）");
+                return false;
+            }
+            boolean finished = latch.await(2500, TimeUnit.MILLISECONDS);
+            if (!finished) {
+                Log.w(TAG, "gestureTap: 等待回调超时（触摸可能被前台应用吞掉）");
+                return false;
+            }
+            if (!completed[0]) {
+                Log.w(TAG, "gestureTap: 手势被系统取消（onCancelled）");
+                return false;
+            }
+            return true;
         } catch (Throwable t) {
             Log.w(TAG, "gesture tap failed", t);
             return false;
@@ -1588,15 +1699,21 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                 CharSequence t2 = target.getText();
                 if (t2 != null) readback = t2.toString();
             } catch (Throwable ignored) {}
-            String fpAfter = treeFingerprint();
-            boolean textLanded = ok && ((!readback.isEmpty() && readback.contains(
-                    text.length() > 40 ? text.substring(0, 40) : text))
-                    || (!fpBefore.isEmpty() && !fpBefore.equals(fpAfter)));
+            // v1.20.3（第二轮反馈）：以前还有"整树指纹变化"兜底，结果聊天里那行
+            // `Tool call android_focus_type · CESHI-ABC-2` 被当成证据 → 假阳性。
+            // 现在只认**输入节点自身**的读回文本（WebView 里那就是空 → 如实失败）。
+            boolean textLanded = ok && !readback.isEmpty() && readback.contains(
+                    text.length() > 40 ? text.substring(0, 40) : text);
+            o.put("readbackOnly", true);
             o.put("readback", readback.length() > 120 ? readback.substring(0, 120) + "…" : readback);
             o.put("landed", textLanded);
             if (ok && !textLanded) {
                 o.put("ok", false);
-                o.put("error", "输入动作返回成功，但界面没有变化（读回文本为空）——多半是 WebView 忽略了 a11y 注入");
+                o.put("error", readback.isEmpty()
+                        ? "输入动作返回成功，但输入框读回文本为空 —— 多半是 WebView 忽略了 a11y 注入"
+                        : "输入动作返回成功，但输入框里读回的是「"
+                          + (readback.length() > 60 ? readback.substring(0, 60) + "…" : readback)
+                          + "」，不含本次写入的文本");
                 o.put("hint", "WebView/自绘输入框：先用 android_tap 点中输入框并确认软键盘弹出再试；"
                         + "仍失败说明该系统屏蔽了 a11y 注入，需要 Shizuku/root 的 android_input（本机是否可用见 android_shizuku_status）。");
                 return o.toString();
