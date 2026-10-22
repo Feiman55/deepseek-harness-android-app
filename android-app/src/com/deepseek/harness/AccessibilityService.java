@@ -957,7 +957,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                     boolean[] ch = new boolean[1];
                     int[] chg = new int[1];
                     long t0g = System.currentTimeMillis();
-                    waitForUiSettle(fpBeforeGesture, 1200L, ch, chg);
+                    waitForUiSettle(fpBeforeGesture, 800L, ch, chg);
                     long settleMs = System.currentTimeMillis() - t0g;
                     ro.put("uiChanged", ch[0]);
                     ro.put("settleMs", settleMs);
@@ -1032,7 +1032,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                 boolean[] ch2 = new boolean[1];
                 int[] chg2 = new int[1];
                 long t0g2 = System.currentTimeMillis();
-                waitForUiSettle(fpBeforeGesture, 1200L, ch2, chg2);
+                waitForUiSettle(fpBeforeGesture, 800L, ch2, chg2);
                 long settleMs = System.currentTimeMillis() - t0g2;
                 boolean uiChanged = ch2[0];
                 o.put("durationMs", totalT);
@@ -1515,9 +1515,24 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
     private long waitForUiSettle(String beforeFp, long maxMs, boolean[] changedOut, int[] changesOut) {
         long start = System.currentTimeMillis();
         String prev = treeFingerprint();
+        // v1.21.3（agent 实测）：流式/动画页面上永远等不到「稳定」，还会把空白点击判成「已确认」。
+        // 先花约 120ms 判断页面本身是否一直在变：在变就直接标记 changing，跳过稳定等待。
+        try {
+            Thread.sleep(120L);
+        } catch (InterruptedException ignored) {
+        }
+        String probe2 = treeFingerprint();
+        if (!prev.equals(probe2)) {
+            if (changedOut != null && changedOut.length > 0) changedOut[0] = !beforeFp.equals(prev);
+            if (changesOut != null && changesOut.length > 0) changesOut[0] = 3;
+            Log.i(TAG, "ui settle: page keeps changing, skip settle wait");
+            return System.currentTimeMillis() - start;
+        }
+        prev = probe2;
         boolean changed = !beforeFp.equals(prev);
         int same = 0;
         int changes = 0;
+        boolean settled = false;
         while (System.currentTimeMillis() - start < maxMs) {
             try {
                 Thread.sleep(150L);
@@ -1528,7 +1543,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
             if (System.currentTimeMillis() - start >= maxMs) break;
             if (!cur.equals(beforeFp)) changed = true;
             if (cur.equals(prev)) {
-                if (++same >= 2) break;
+                if (++same >= 2) { settled = true; break; }
             } else {
                 changes++;
                 same = 0;
@@ -1536,6 +1551,9 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
             }
         }
         if (changedOut != null && changedOut.length > 0) changedOut[0] = changed;
+        // 没等到稳定（预算耗尽仍未出现「连续两次相同」）→ 说明页面一直在变，按「持续变化」处理，
+        // 不再依赖变更次数（繁忙页面 800ms 内可能只采样到 2 次，阈值 3 永远达不到）。
+        if (!settled) changes = Math.max(changes, 3);
         if (changesOut != null && changesOut.length > 0) changesOut[0] = changes;
         return System.currentTimeMillis() - start;
     }
@@ -1777,7 +1795,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
             boolean[] ch = new boolean[1];
             int[] chg = new int[1];
             long t0 = System.currentTimeMillis();
-            waitForUiSettle(fpStart, 1200L, ch, chg);
+            waitForUiSettle(fpStart, 800L, ch, chg);
             // v1.21.2：以前 settleMs 从方法入口算起，把点击与 expect 轮询都算进去 → 出现 2444/4538ms
             long confirmMs = System.currentTimeMillis() - t0;
             o.put("uiChanged", ch[0]);
