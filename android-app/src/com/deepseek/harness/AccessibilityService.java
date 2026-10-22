@@ -953,10 +953,11 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                     ro.put("durationMs", ends[0]);
                     ro.put("held", new JSONArray());
                     ro.put("singleTapVia", "gestureTap");
-                    // v1.20.6：onCompleted 只代表"系统收下了手势"，界面刷新有延迟 ——
-                    // 立刻取指纹会把"已经生效"误判成 false（实测变化率 0.87 却报 false）。
-                    try { Thread.sleep(250L); } catch (InterruptedException ignored) {}
-                    ro.put("uiChanged", !fpBeforeGesture.equals(treeFingerprint()));
+                    // v1.20.9：注入生效有 1~3 秒延迟 → 等界面稳定再判（不再固定 250ms）
+                    boolean[] ch = new boolean[1];
+                    long settleMs = waitForUiSettle(fpBeforeGesture, 2000L, ch);
+                    ro.put("uiChanged", ch[0]);
+                    ro.put("settleMs", settleMs);
                     if (!tapOk) ro.put("error", "触摸注入没有完成（被系统取消/超时/拒绝）");
                     return ro.toString();
                 }
@@ -1023,12 +1024,14 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                 }
                 JSONObject o = new JSONObject();
                 o.put("ok", true);
-                // v1.20.6：同上，等界面刷新后再判，避免把"已生效"误判成 false
-                try { Thread.sleep(250L); } catch (InterruptedException ignored) {}
-                boolean uiChanged = !fpBeforeGesture.equals(treeFingerprint());
+                // v1.20.9：等界面稳定再判（注入生效有 1~3 秒延迟）
+                boolean[] ch2 = new boolean[1];
+                long settleMs = waitForUiSettle(fpBeforeGesture, 2000L, ch2);
+                boolean uiChanged = ch2[0];
                 o.put("durationMs", totalT);
                 o.put("held", held);
                 o.put("uiChanged", uiChanged);
+                o.put("settleMs", settleMs);
                 o.put("strokeCount", gesture.getStrokeCount());
                 o.put("strokes", strokeDiag);
                 if (!uiChanged) {
@@ -1487,6 +1490,35 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
         return null;
     }
 
+    /**
+     * 等界面稳定（v1.20.9，agent 实测）：注入类手势"生效"有 1~3 秒延迟，
+     * 刚注入就取指纹/截图会看到旧画面，表现得像"报了成功但没生效"。
+     * 这里轮询控件树指纹：观察到变化后连续两次相同即认为稳定；返回实际等待毫秒数。
+     */
+    private long waitForUiSettle(String beforeFp, long maxMs, boolean[] changedOut) {
+        long start = System.currentTimeMillis();
+        String prev = treeFingerprint();
+        boolean changed = !beforeFp.equals(prev);
+        int same = 0;
+        while (System.currentTimeMillis() - start < maxMs) {
+            try {
+                Thread.sleep(150L);
+            } catch (InterruptedException ignored) {
+                break;
+            }
+            String cur = treeFingerprint();
+            if (!cur.equals(beforeFp)) changed = true;
+            if (cur.equals(prev)) {
+                if (++same >= 2) break;
+            } else {
+                same = 0;
+                prev = cur;
+            }
+        }
+        if (changedOut != null && changedOut.length > 0) changedOut[0] = changed;
+        return System.currentTimeMillis() - start;
+    }
+
     private AccessibilityNodeInfo findNodeByText(String needle) {
         if (needle == null || needle.isEmpty()) return null;
         final String target = needle.trim().toLowerCase();
@@ -1502,6 +1534,12 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                 CharSequence descCs = node.getContentDescription();
                 String text = textCs == null ? "" : textCs.toString().trim().toLowerCase();
                 String desc = descCs == null ? "" : descCs.toString().trim().toLowerCase();
+                // v1.20.9（实测）：这里是"整棵树包含匹配"，会命中我们自己会话记录里的
+                // tool-call 回显（例如历史上把 expect_text 的原样字符串留在聊天里）——
+                // 于是"点到了那条回显"而不是真实控件。回显类文字一律不当点击目标。
+                String rawText = textCs == null ? "" : textCs.toString();
+                String rawDesc = descCs == null ? "" : descCs.toString();
+                if (looksLikeToolEcho(rawText) || looksLikeToolEcho(rawDesc)) return;
                 boolean exact = text.equals(target) || desc.equals(target);
                 boolean partial = !exact && ((!text.isEmpty() && text.contains(target))
                         || (!desc.isEmpty() && desc.contains(target)));

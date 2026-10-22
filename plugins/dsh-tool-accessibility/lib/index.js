@@ -452,6 +452,20 @@ function renderResult(value) {
   }
   let text = "操作成功。";
   if (value.warning) text += "\n⚠ " + value.warning;
+  // v1.20.9（agent 实测）：这些诊断一直在 execute 返回里、模型却看不到 —— 渲染出来。
+  if (typeof value.strokeCount === "number") {
+    const st = Array.isArray(value.strokes) ? value.strokes : [];
+    const desc = st
+      .map((s) => "start=" + s.start + "ms dur=" + s.dur + "ms (" + s.x0 + "," + s.y0 + ")→(" + s.x1 + "," + s.y1 + ")")
+      .join("；");
+    text += "\n手势: " + value.strokeCount + " 笔" + (desc ? " · " + desc : "");
+  }
+  if (value.singleTapVia) text += "\n单笔 tap 派发方式: " + value.singleTapVia;
+  if (typeof value.uiChanged === "boolean") {
+    text += "\n界面变化: " + (value.uiChanged
+      ? "已确认 ✅（轮询控件树 " + (value.settleMs || 0) + "ms）"
+      : "未能确认 ⚠ 控件树不敏感，或界面还没刷新 —— 稍等 1~2 秒再用 android_see / android_screen 复核，不要据此判断操作失败");
+  }
   if (value.hint) text += "\n提示：" + value.hint;
   return [{ type: "text", text }];
 }
@@ -1226,7 +1240,8 @@ function apply(ctx) {
         strokeCount: { type: "number" },
         strokes: { type: "array", items: { type: "object", additionalProperties: true } },
         singleTapVia: { type: "string" },
-        uiChanged: { type: "boolean" }
+        uiChanged: { type: "boolean" },
+        settleMs: { type: "number" }
       }
     },
     render: (_a, v) => renderResult(v)
@@ -1467,7 +1482,8 @@ function apply(ctx) {
         ...(typeof v.strokeCount === "number" ? { strokeCount: v.strokeCount } : {}),
         ...(Array.isArray(v.strokes) ? { strokes: v.strokes } : {}),
         ...(typeof v.singleTapVia === "string" ? { singleTapVia: v.singleTapVia } : {}),
-        ...(typeof v.uiChanged === "boolean" ? { uiChanged: v.uiChanged } : {})
+        ...(typeof v.uiChanged === "boolean" ? { uiChanged: v.uiChanged } : {}),
+        ...(typeof v.settleMs === "number" ? { settleMs: v.settleMs } : {})
       };
     }
   }));
