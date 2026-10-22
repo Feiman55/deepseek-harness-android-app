@@ -3592,6 +3592,7 @@ public class MainActivity extends Activity {
      *        启动路径直接跳过整段文件准备（首次解压 1.5 万条目的等待被挪到用户读向导的时间里）。
      */
     private void startEngine(final boolean prepareOnly) {
+        checkA11yAliveOnce();
         engineStartAborted = false;    // v1.13：重新启动 → 清掉「停止」留下的中止/抑制标记
         if (!prepareOnly) {
             // v1.21：只有"真的要启动引擎"才清掉「用户主动停止」的意图。
@@ -10729,6 +10730,31 @@ public class MainActivity extends Activity {
             }
         } catch (Throwable t) { return false; }
         return false;
+    }
+
+    /** v1.20.7：每个进程只自检一次（用户实测：应用更新后系统会悄悄关停无障碍服务，
+     *  设置里仍显示"已开启"，但本地端口无应答，读屏/点击全挂，用户以为 AI 瞎了）。 */
+    private static boolean a11yCheckedThisProcess = false;
+
+    private void checkA11yAliveOnce() {
+        if (a11yCheckedThisProcess) return;
+        a11yCheckedThisProcess = true;
+        try {
+            ui.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        if (!conA11yEnabled()) return;      // 设置里本来就没开 → 走权限页引导即可
+                        final int port = notifyPort() + 100;   // 与引擎侧 APP_A11Y_PORT 同源
+                        if (portListening(port)) return;       // 服务活着，不打扰
+                        Log.w(TAG, "无障碍在设置里是开启的，但端口 " + port
+                                + " 没有监听（应用更新后系统常会关停服务）");
+                        conToast("无障碍服务没有响应（应用更新后系统常会关停它）——"
+                                + "请到 设置 → 无障碍 里重新打开「DeepSeek Harness 屏幕助手」");
+                    } catch (Throwable ignored) {}
+                }
+            }, 12000L);
+        } catch (Throwable ignored) {}
     }
 
     private boolean conA11yEnabled() {
