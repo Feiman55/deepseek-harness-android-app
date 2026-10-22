@@ -316,7 +316,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
     private java.util.HashSet<String> textSet() {
         final java.util.HashSet<String> set = new java.util.HashSet<String>();
         try {
-            AccessibilityNodeInfo root = getRootInActiveWindow();
+            AccessibilityNodeInfo root = activeRoot();
             if (root == null) return set;
             walk(root, new NodeVisitor() {
                 @Override
@@ -340,7 +340,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
         while (System.currentTimeMillis() < end) {
             final boolean[] hit = {false};
             try {
-                AccessibilityNodeInfo root = getRootInActiveWindow();
+                AccessibilityNodeInfo root = activeRoot();
                 if (root != null) {
                     walk(root, new NodeVisitor() {
                         @Override
@@ -371,7 +371,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
     /** 当前活动窗口的"结构指纹"（文本 + 长度）。用于判断一次操作是否真的改变了界面。 */
     private String treeFingerprint() {
         try {
-            AccessibilityNodeInfo root = getRootInActiveWindow();
+            AccessibilityNodeInfo root = activeRoot();
             if (root == null) return "";
             final StringBuilder sb = new StringBuilder(4096);
             walk(root, new NodeVisitor() {
@@ -957,7 +957,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                     boolean[] ch = new boolean[1];
                     int[] chg = new int[1];
                     long t0g = System.currentTimeMillis();
-                    waitForUiSettle(fpBeforeGesture, 800L, ch, chg);
+                    waitForUiSettle(fpBeforeGesture, 1000L, ch, chg);
                     long settleMs = System.currentTimeMillis() - t0g;
                     ro.put("uiChanged", ch[0]);
                     ro.put("settleMs", settleMs);
@@ -1032,7 +1032,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                 boolean[] ch2 = new boolean[1];
                 int[] chg2 = new int[1];
                 long t0g2 = System.currentTimeMillis();
-                waitForUiSettle(fpBeforeGesture, 800L, ch2, chg2);
+                waitForUiSettle(fpBeforeGesture, 1000L, ch2, chg2);
                 long settleMs = System.currentTimeMillis() - t0g2;
                 boolean uiChanged = ch2[0];
                 o.put("durationMs", totalT);
@@ -1246,7 +1246,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
             o.put("ok", true);
             o.put("running", isRunning);
             o.put("package", activePackage);
-            AccessibilityNodeInfo root = getRootInActiveWindow();
+            AccessibilityNodeInfo root = activeRoot();
             o.put("nodeCount", root == null ? 0 : countNodes(root));
             o.put("apiLevel", Build.VERSION.SDK_INT);
             o.put("canScreenshot", Build.VERSION.SDK_INT >= 30);
@@ -1281,7 +1281,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                         + "）；可退化为点击页面上的提交按钮，或改用 android_input(keyevent) 发回车（需特权）");
             }
             AccessibilityNodeInfo target = null;
-            AccessibilityNodeInfo root = getRootInActiveWindow();
+            AccessibilityNodeInfo root = activeRoot();
             if (root != null) {
                 target = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
                 if (target == null) {
@@ -1347,7 +1347,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
     /** 兜底：在活动窗口里找「前往 / 搜索 / 发送 / Go」这类 IME 动作按钮。 */
     private AccessibilityNodeInfo findImeActionButton() {
         final String[] labels = {"前往", "搜索", "发送", "完成", "转到", "Go", "Search", "Send", "Done", "Enter"};
-        AccessibilityNodeInfo root = getRootInActiveWindow();
+        AccessibilityNodeInfo root = activeRoot();
         if (root == null) return null;
         final AccessibilityNodeInfo[] hit = {null};
         walk(root, new NodeVisitor() {
@@ -1399,7 +1399,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
     /** 读取屏幕节点树，转 JSON（过滤：只保留有文本/描述/可点击/可输入/可滚动节点）。 */
     private String handleDump() {
         try {
-            final AccessibilityNodeInfo root = getRootInActiveWindow();
+            final AccessibilityNodeInfo root = activeRoot();
             JSONObject o = new JSONObject();
             o.put("ok", true);
             if (root == null) {
@@ -1515,20 +1515,6 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
     private long waitForUiSettle(String beforeFp, long maxMs, boolean[] changedOut, int[] changesOut) {
         long start = System.currentTimeMillis();
         String prev = treeFingerprint();
-        // v1.21.3（agent 实测）：流式/动画页面上永远等不到「稳定」，还会把空白点击判成「已确认」。
-        // 先花约 120ms 判断页面本身是否一直在变：在变就直接标记 changing，跳过稳定等待。
-        try {
-            Thread.sleep(120L);
-        } catch (InterruptedException ignored) {
-        }
-        String probe2 = treeFingerprint();
-        if (!prev.equals(probe2)) {
-            if (changedOut != null && changedOut.length > 0) changedOut[0] = !beforeFp.equals(prev);
-            if (changesOut != null && changesOut.length > 0) changesOut[0] = 3;
-            Log.i(TAG, "ui settle: page keeps changing, skip settle wait");
-            return System.currentTimeMillis() - start;
-        }
-        prev = probe2;
         boolean changed = !beforeFp.equals(prev);
         int same = 0;
         int changes = 0;
@@ -1558,10 +1544,53 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
         return System.currentTimeMillis() - start;
     }
 
+    /**
+     * 取"工具应该操作的那棵无障碍树"（v1.21.4）。
+     *
+     * <p>背景（agent 实测）：本应用的黑鲸鱼悬浮窗在屏幕上时，
+     * {@code getRootInActiveWindow()} 会返回**我们自己的窗口**（nodeCount=0），
+     * 而前台明明是 Settings 之类的应用 —— 于是 android_screen 读到空树、
+     * tap 的文字匹配失败、连"界面是否变化"的确认也一起失效。
+     *
+     * <p>策略：优先焦点窗口；跳过「本包且没有子节点」的窗口（就是那个悬浮窗/气泡）；
+     * 否则取子节点最多的窗口；最后兜底回原 API。
+     */
+    private AccessibilityNodeInfo activeRoot() {
+        AccessibilityNodeInfo fallback = getRootInActiveWindow();
+        try {
+            java.util.List<android.view.accessibility.AccessibilityWindowInfo> ws = getWindows();
+            if (ws != null && !ws.isEmpty()) {
+                android.view.accessibility.AccessibilityWindowInfo focused = null;
+                AccessibilityNodeInfo best = null;
+                int bestCount = -1;
+                for (android.view.accessibility.AccessibilityWindowInfo w : ws) {
+                    if (w == null) continue;
+                    AccessibilityNodeInfo r = w.getRoot();
+                    if (r == null) continue;
+                    boolean mine = String.valueOf(getPackageName()).equals(String.valueOf(r.getPackageName()));
+                    int kids = r.getChildCount();
+                    if (mine && kids == 0) continue;      // 悬浮窗/气泡：空窗口，不能当操作目标
+                    if (w.isFocused() && kids > 0) focused = w;
+                    if (kids > bestCount) {
+                        bestCount = kids;
+                        best = r;
+                    }
+                }
+                if (focused != null) {
+                    AccessibilityNodeInfo fr = focused.getRoot();
+                    if (fr != null && fr.getChildCount() > 0) return fr;
+                }
+                if (best != null && bestCount > 0) return best;
+            }
+        } catch (Throwable ignored) {
+        }
+        return fallback;
+    }
+
     private AccessibilityNodeInfo findNodeByText(String needle) {
         if (needle == null || needle.isEmpty()) return null;
         final String target = needle.trim().toLowerCase();
-        final AccessibilityNodeInfo root = getRootInActiveWindow();
+        final AccessibilityNodeInfo root = activeRoot();
         if (root == null) return null;
         final AccessibilityNodeInfo[] best = {null};
         final int[] bestRank = {-1};   // 4=精确且可点击 3=包含且可点击 2=精确 1=包含
@@ -1612,7 +1641,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
     private SelectMatch selectNodeForShot(String needle, int index) {
         if (needle == null || needle.isEmpty()) return null;
         final String target = needle.trim().toLowerCase();
-        final AccessibilityNodeInfo root = getRootInActiveWindow();
+        final AccessibilityNodeInfo root = activeRoot();
         if (root == null) return null;
         final java.util.ArrayList<Object[]> hits = new java.util.ArrayList<Object[]>();
         walk(root, new NodeVisitor() {
@@ -1648,7 +1677,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
 
     /** 包含该坐标的**最深可点击节点**（无则退回最深节点）。 */
     private AccessibilityNodeInfo findNodeByPoint(final int x, final int y) {
-        final AccessibilityNodeInfo root = getRootInActiveWindow();
+        final AccessibilityNodeInfo root = activeRoot();
         if (root == null) return null;
         final AccessibilityNodeInfo[] best = {null};
         final int[] bestDepth = {-1};
@@ -1795,7 +1824,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
             boolean[] ch = new boolean[1];
             int[] chg = new int[1];
             long t0 = System.currentTimeMillis();
-            waitForUiSettle(fpStart, 800L, ch, chg);
+            waitForUiSettle(fpStart, 1000L, ch, chg);
             // v1.21.2：以前 settleMs 从方法入口算起，把点击与 expect 轮询都算进去 → 出现 2444/4538ms
             long confirmMs = System.currentTimeMillis() - t0;
             o.put("uiChanged", ch[0]);
@@ -1864,7 +1893,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
             JSONObject o = new JSONObject();
             o.put("ok", true);
             AccessibilityNodeInfo target = null;
-            AccessibilityNodeInfo root = getRootInActiveWindow();
+            AccessibilityNodeInfo root = activeRoot();
             // v1.18（A3）：失败时把"是什么情况"与"下一步做什么"分开报（error + hint），
             // 不再只丢一句"未找到可输入的文本框"让模型（和用户）自己猜。
             if (root == null) {
@@ -1980,7 +2009,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
             JSONObject o = new JSONObject();
             o.put("ok", true);
             o.put("direction", direction);
-            AccessibilityNodeInfo root = getRootInActiveWindow();
+            AccessibilityNodeInfo root = activeRoot();
             if (root == null) return jsonError("当前没有活动窗口");
             final int[] action = {AccessibilityNodeInfo.ACTION_SCROLL_FORWARD};
             if ("up".equals(direction)) action[0] = AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD;
