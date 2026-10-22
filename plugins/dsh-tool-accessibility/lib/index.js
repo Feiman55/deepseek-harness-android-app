@@ -750,17 +750,16 @@ function apply(ctx) {
       noteInputEvent();
       const raw = await a11yRequest("/tap", params, 8000);
       const v = parseResult(raw);
-      if (!v.ok) {
-        // v1.20.3：没找到控件时要说明"没找到"，别让上层渲染成"未知错误"
-        if (v.found === false) {
-          return {
-            ok: false,
-            error: "没找到匹配的控件（text/desc=" + JSON.stringify(args.text || args.desc || "") + "）—— "
-              + "可用 android_screen 看当前界面有哪些文字，或改用 x/y、fx/fy 坐标"
-          };
-        }
-        return { ok: false, error: v.error || GUIDE_TEXT };
+      // v1.20.8（实测回归）：服务端"没找到控件"是 ok:true + found:false，
+      // 这个判断必须在 !v.ok 之外 —— 否则会掉到渲染层的"未知错误"。
+      if (v.ok !== false && v.found === false) {
+        return {
+          ok: false,
+          error: "没找到匹配的控件（text/desc=" + JSON.stringify(args.text || args.desc || "") + "）—— "
+            + "可用 android_screen 看当前界面有哪些文字，或改用 x/y、fx/fy 坐标"
+        };
       }
+      if (!v.ok) return { ok: false, error: v.error || GUIDE_TEXT };
       // v1.22（复盘 P1）：可选「期望校验」—— 点完轮询控件树，确认 expect_text 真的出现了。
       //   复盘里"操作成功但什么都没发生"是最高频的坑（尤其 WebView），这里把它变成可判定的返回值。
       let verified;
@@ -1223,7 +1222,11 @@ function apply(ctx) {
         held: { type: "array", items: heldSchema },
         // A5：边缘手势防呆提示（起点落在系统手势区时给出）
         warning: { type: "string" },
-        hint: { type: "string" }
+        hint: { type: "string" },
+        strokeCount: { type: "number" },
+        strokes: { type: "array", items: { type: "object", additionalProperties: true } },
+        singleTapVia: { type: "string" },
+        uiChanged: { type: "boolean" }
       }
     },
     render: (_a, v) => renderResult(v)
@@ -1332,7 +1335,7 @@ function apply(ctx) {
       "典型用法：按住摇杆 = down(0) 在摇杆位置，再 move(0) 控制方向，松开 = up(0)。down 后手指一直按住，直到 up、android_touch_status 确认、或超时 30s 自动抬起；down(0) 之后直接调 android_tap/android_gesture 也不会松开，会并入后续手势。\n" +
       "坐标支持 x/y 或 fx/fy（0~1，推荐）。需要已开启无障碍服务。",
     parameters: {
-      action: { type: "string", required: true, enum: ["down", "move", "up"], description: "down=按下保持 / move=按住移动 / up=抬起" },
+      action: { type: "string", required: true, enum: ["down", "move", "up", "reset"], description: "down=按下保持 / move=按住移动 / up=抬起" },
       finger: { type: "number", required: true, description: "手指编号 0~7（多指的关键：每根手指一个编号）" },
       x: { type: "number", description: "目标 x（像素）" },
       y: { type: "number", description: "目标 y（像素）" },
@@ -1343,8 +1346,10 @@ function apply(ctx) {
     },
     output: touchOutput,
     async execute(args, exec) {
-      if (!args.action) return { ok: false, error: "android_touch 需要 action=down|move|up" };
-      if (args.finger === undefined) return { ok: false, error: "android_touch 需要 finger=0~7" };
+      if (!args.action) return { ok: false, error: "android_touch 需要 action=down|move|up|reset" };
+      if (String(args.action) !== "reset" && args.finger === undefined) {
+        return { ok: false, error: "android_touch 需要 finger=0~7（action=reset 时可不给）" };
+      }
       const params = { action: String(args.action), finger: String(Number(args.finger)) };
       for (const k of ["x", "y", "fx", "fy"]) {
         if (args[k] !== undefined) params[k] = String(Number(args[k]));
@@ -1457,6 +1462,12 @@ function apply(ctx) {
         ...(warning ? { warning } : {}),
         ...(typeof v.durationMs === "number" ? { durationMs: v.durationMs } : {}),
         ...(Array.isArray(v.held) ? { held: v.held } : {})
+        ,
+        // v1.20.8：透传服务端诊断（以前只有直连 /gesture 看得到，工具侧一律"操作成功"）
+        ...(typeof v.strokeCount === "number" ? { strokeCount: v.strokeCount } : {}),
+        ...(Array.isArray(v.strokes) ? { strokes: v.strokes } : {}),
+        ...(typeof v.singleTapVia === "string" ? { singleTapVia: v.singleTapVia } : {}),
+        ...(typeof v.uiChanged === "boolean" ? { uiChanged: v.uiChanged } : {})
       };
     }
   }));

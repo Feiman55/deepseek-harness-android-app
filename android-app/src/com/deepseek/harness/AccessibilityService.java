@@ -1121,6 +1121,21 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
 
     /** /touch-status：查询当前按住的手指。 */
     private String handleTouchStatus() {
+        // v1.20.8（实测）：超时释放以前只在"下一个手势请求"里发生，status 会一直显示
+        // "已按住 37794ms"。这里也做一次，并真的给前台应用补一个 UP。
+        try {
+            synchronized (gestureLock) {
+                long nowMs = System.currentTimeMillis();
+                boolean stale = false;
+                for (int f = 0; f < MAX_FINGERS; f++) {
+                    if (fingerDown[f] && nowMs - fingerDownAt[f] > HOLD_TIMEOUT_MS) stale = true;
+                }
+                if (stale) {
+                    Log.w(TAG, "touch-status: 清理超时手指（补 UP）");
+                    releaseAllFingersUnlocked();
+                }
+            }
+        } catch (Throwable ignored) {}
         try {
             int[] size = screenSize();
             JSONObject o = new JSONObject();
