@@ -19,6 +19,8 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- v1.20.1：麦克风（控制台权限页可授权；引导页不新增页面） -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <!-- 读取已安装应用列表（android_apps / 「打开微信」这类工具依赖）。
          说明：本应用 targetSdk=28，而 Android 11+ 的**应用可见性过滤只作用于 targetSdk≥30**，

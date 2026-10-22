@@ -582,8 +582,24 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                 System.arraycopy(fingerDown, 0, virtualDown, 0, MAX_FINGERS);
                 long now = System.currentTimeMillis();
                 boolean[] expired = new boolean[MAX_FINGERS];
+                boolean anyExpired = false;
                 for (int f = 0; f < MAX_FINGERS; f++) {
-                    if (fingerDown[f] && now - fingerDownAt[f] > HOLD_TIMEOUT_MS) expired[f] = true;
+                    if (fingerDown[f] && now - fingerDownAt[f] > HOLD_TIMEOUT_MS) {
+                        expired[f] = true;
+                        anyExpired = true;
+                    }
+                }
+                // v1.20.1（用户实测）：以前只标 expired、**从不释放** →
+                //   · touch-status 永远显示"已按住 42 万毫秒"；
+                //   · 8 个编号用完后 down 永远报「已超时自动抬起」，彻底没法再按；
+                //   · 前台应用收不到 UP，游戏一直以为手指还按着（卡片一直选中、落子失败）。
+                // 现在：超时即真正释放（releaseAllFingersUnlocked 会补 UP 手势），
+                // 并让本请求按"没有按住的手指"继续处理。
+                if (anyExpired) {
+                    Log.w(TAG, "按住超时：真正释放残留手指（补 UP）");
+                    releaseAllFingersUnlocked();
+                    System.arraycopy(fingerDown, 0, virtualDown, 0, MAX_FINGERS);
+                    for (int f = 0; f < MAX_FINGERS; f++) expired[f] = false;
                 }
                 String[] kinds = new String[n];
                 int[] fings = new int[n];
@@ -628,8 +644,12 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                     } else if ("up".equals(kind)) {
                         seg = dur >= 0 ? dur : 100;
                         if (finger < 0 || finger >= MAX_FINGERS) return jsonError("up 的 finger 越界（0~7）");
-                        if (!held) return jsonError("up 的手指 " + finger + " 未按住（先 down）");
-                        if (expired[finger]) return jsonError("up 的手指 " + finger + " 已超时自动抬起，请重新 down");
+                        // v1.20.1：up 是**幂等**操作 —— 本来就没按住就直接成功，
+                        // 不要报错（一次失败的 up 会让调用方以为状态乱了）
+                        if (!held) {
+                            virtualDown[finger] = false;
+                            continue;
+                        }
                         if (firstOpStart[finger] < 0) firstOpStart[finger] = t;
                         virtualDown[finger] = false;
                     } else if ("tap".equals(kind)) {
@@ -675,7 +695,16 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                     t += seg;
                 }
                 long totalT = t;
-                if (totalT <= 0) return jsonError("手势时间轴为空");
+                if (totalT <= 0) {
+                    // v1.20.2（实测）：幂等的 up（手指本来就没按住）不会产生任何笔 →
+                    // 时间轴为空是**正常**结果，应返回成功，而不是报"手势时间轴为空"。
+                    JSONObject noop = new JSONObject();
+                    noop.put("ok", true);
+                    noop.put("durationMs", 0);
+                    noop.put("held", new JSONArray());
+                    noop.put("noop", true);
+                    return noop.toString();
+                }
                 if (totalT > MAX_GESTURE_TOTAL_MS) {
                     return jsonError("手势总时长超限（>" + (MAX_GESTURE_TOTAL_MS / 1000) + "s）；长按请用 down 保持，不要用长 wait");
                 }
@@ -761,15 +790,19 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                         curX[finger] = x;
                         curY[finger] = y;
                     } else if ("up".equals(kind)) {
-                        Path path = new Path();
-                        path.moveTo(curX[finger], curY[finger]);
-                        if (x >= 0 && y >= 0) {
-                            path.lineTo(x, y); // 先滑到目标位置再抬起
-                            fingerX[finger] = x;
-                            fingerY[finger] = y;
+                        if (!held) {
+                            // 幂等：本来就没按住 → 不产生任何笔（也不要发孤立的 UP）
+                        } else {
+                            Path path = new Path();
+                            path.moveTo(curX[finger], curY[finger]);
+                            if (x >= 0 && y >= 0) {
+                                path.lineTo(x, y); // 先滑到目标位置再抬起
+                                fingerX[finger] = x;
+                                fingerY[finger] = y;
+                            }
+                            strokes.add(new StrokeDesc(path, start, seg, false));
+                            fingerDown[finger] = false;
                         }
-                        strokes.add(new StrokeDesc(path, start, seg, false));
-                        fingerDown[finger] = false;
                     } else if ("tap".equals(kind)) {
                         if (held) {
                             // 已按住的手指 tap → 滑到目标并抬起
@@ -978,7 +1011,19 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
         try {
             String action = queryParam(path, "action");
             String fStr = queryParam(path, "finger");
-            if (action.isEmpty()) return jsonError("touch 需要 action=down|move|up|release");
+            if (action.isEmpty()) return jsonError("touch 需要 action=down|move|up|reset");
+            if ("reset".equals(action)) {
+                // v1.20.1（用户实测）：一次清空**所有**手指（含超时残留），并给前台应用补发 UP。
+                // 手指标号用完/卡住时的唯一自救入口。
+                synchronized (gestureLock) {
+                    releaseAllFingersUnlocked();
+                }
+                JSONObject o = new JSONObject();
+                o.put("ok", true);
+                o.put("reset", true);
+                o.put("held", new JSONArray());
+                return o.toString();
+            }
             if (fStr.isEmpty()) return jsonError("touch 需要 finger=0~7");
             int finger = (int) parseDoubleSafe(fStr, -1);
             if (finger < 0 || finger >= MAX_FINGERS) return jsonError("finger 越界（0~7）");

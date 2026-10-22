@@ -235,6 +235,8 @@ public class MainActivity extends Activity {
      */
     public static final String EXTRA_OPEN_CONSOLE = "open_console";
     private static final int REQ_STORAGE = 200;
+    /** v1.20.1：麦克风权限请求码（只在控制台权限页用，不新增引导页）。 */
+    private static final int REQ_MIC = 201;
     private static final int REQ_NOTIFICATION = 201;
     private static final int REQ_SHIZUKU = 300;
     /** v1.13：已发出 Shizuku 授权请求、等待结果（用于超时傅底判断）。 */
@@ -2257,7 +2259,9 @@ public class MainActivity extends Activity {
         p4.action = new View.OnClickListener() { @Override public void onClick(View v) {
             openSystemSetting(Settings.ACTION_MANAGE_WRITE_SETTINGS);
         }};
-        guidePages.add(p4);
+        // v1.20.1（维护者要求）：引导流程里**不再出现**「修改系统设置」页；
+        // 该项仍保留在 控制台 →「授予权限」页里，需要时去那里授权。
+        // guidePages.add(p4);
 
         GuidePage p5 = new GuidePage();
         p5.title = "使用情况访问"; p5.actionLabel = "去授权";
@@ -2270,7 +2274,9 @@ public class MainActivity extends Activity {
         p5.action = new View.OnClickListener() { @Override public void onClick(View v) {
             openSystemSetting(Settings.ACTION_USAGE_ACCESS_SETTINGS);
         }};
-        guidePages.add(p5);
+        // v1.20.1（维护者要求）：引导流程里**不再出现**「使用情况访问（应用时长）」页；
+        // 该项仍保留在 控制台 →「授予权限」页里。
+        // guidePages.add(p5);
 
         GuidePage p6 = new GuidePage();
         p6.title = "安装未知来源应用"; p6.actionLabel = "去授权";
@@ -10678,6 +10684,10 @@ public class MainActivity extends Activity {
     }
 
     private boolean conPermOk(String id) {
+        // v1.20.1（用户反馈）：麦克风 —— 运行时权限，直接查 RECORD_AUDIO
+        if ("mic".equals(id)) {
+            return checkSelfPermission("android.permission.RECORD_AUDIO") == PackageManager.PERMISSION_GRANTED;
+        }
         try {
             if ("storage".equals(id)) {
                 if (Build.VERSION.SDK_INT >= 30) return Environment.isExternalStorageManager();
@@ -10824,6 +10834,8 @@ public class MainActivity extends Activity {
         addPermRow(c1, "存储权限", "读写手机文件（Android 10 及以下需要；11+ 由上面「所有文件访问」覆盖）", "legacy");
         addPermRow(c1, "所有文件访问", "读写 /sdcard，AI 才能碰你的文件", "storage");
         addPermRow(c1, "通知", "AI 发通知 / 提醒", "notify");
+        // v1.20.1（用户反馈）：增加麦克风权限（只在控制台权限页，不新增引导页）
+        addPermRow(c1, "麦克风", "语音输入 / 录音类功能需要；不给只是这类能力不可用", "mic");
         addPermRow(c1, "悬浮窗", "黑鲸鱼悬浮窗 / 虚拟屏预览", "overlay");
         addPermRow(c1, "修改系统设置", "AI 调音量 / 亮度 / 铃声这类系统开关", "settings");
         addPermRow(c1, "使用情况访问", "AI 查「今天用了多久某个 App」", "usage");
@@ -10912,6 +10924,11 @@ public class MainActivity extends Activity {
     }
 
     private void conPermAction(String id) {
+        // v1.20.1：麦克风 —— 直接弹系统运行时授权框（不需要额外引导页）
+        if ("mic".equals(id)) {
+            requestPermissions(new String[]{"android.permission.RECORD_AUDIO"}, REQ_MIC);
+            return;
+        }
         try {
             if ("storage".equals(id)) {
                 if (Build.VERSION.SDK_INT >= 30) {
