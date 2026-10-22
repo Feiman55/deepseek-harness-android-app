@@ -963,7 +963,8 @@ function apply(ctx) {
       name: "android_see",
       description:
         "截取当前屏幕（无障碍截图，无 MediaProjection 弹窗）并把图片发给模型查看。控件树（android_screen）看不出布局或图片内容时用它，Unity/游戏等无控件界面尤其需要。\n" +
-        "截图会被模型查看器缩放，绝对像素会点偏：操作时优先用分数坐标 fx/fy（0~1）；换算 = 图上像素 × (screenW/imageW, screenH/imageH)。游戏/无控件界面可传 grid:true 叠加 4×4 网格，按行列定位。\n" +
+        "**坐标怎么读**：返回里直接给了换算所需的全部字段 —— screenW/screenH（屏幕真实分辨率）、imageW/imageH（图片分辨率）、scaleX/scaleY（每张图 1 像素 = 多少屏幕像素）、以及区域截图时的 cropX/cropY/cropW/cropH。换算公式（ix/iy 是**图内**像素）：screenX = cropX + ix × scaleX，screenY = cropY + iy × scaleY。**不要靠肉眼估像素**：图会被查看器缩放，估 10px 到屏幕上可能差 20~30px。\n" +
+        "**三种更省更快的方式**（优先于整屏截图）：① ticks:true —— 图上直接标出屏幕坐标数字，读数字即可；② grid:true —— 4×4 网格按行列定位；③ 只关心颜色/是否高亮时用 android_pixel 采样 3~5 个点（毫秒级、零体积、不烧 token）。区域截图（select/region）比整屏小得多，也更快。\n" +
         "需要当前模型支持图片输入（不支持时用 android_screen 读文字）、已开启无障碍服务、且设备为 Android 11+（低版本用 android_screen）。",
       parameters: {
         grid: { type: "boolean", description: "true 时在截图上叠加 4×4 网格线，方便按行列定位（游戏/无控件界面推荐）" },
