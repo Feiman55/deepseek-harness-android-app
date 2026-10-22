@@ -665,7 +665,12 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                         seg = dur >= 0 ? dur : 300;
                         // v1.19.3 P0：拖拽要先"按住"再动，否则第一个 MOVE 就带着整段距离的速度，
                         // 会被应用当成 fling/滚动（游戏里选朝向、画板画线全部失效）。默认 150ms。
-                        holds[i] = Math.max(0, Math.min(2000, op.optLong("holdBeforeMoveMs", 150)));
+                        // v1.20.5（实测定位）：以前默认 150ms，导致**每条 swipe 都被拆成两段**
+                // （第一段是"原位按住 150ms"的笔、第二段才移动），而第二段没有真正生效 →
+                // 现象就是"注入了、屏幕不动"。诊断日志实锤：500ms 的 swipe 只剩
+                // {"start":0,"dur":150,"x0":360,"y0":1200,"x1":362,"y1":1200}。
+                // 现在默认 0 = 单笔走完整条路径；需要"长按再拖"时显式传 holdBeforeMoveMs>0。
+                holds[i] = Math.max(0, Math.min(2000, op.optLong("holdBeforeMoveMs", 0)));
                         if (x < 0 || y < 0 || x2 < 0 || y2 < 0) {
                             return jsonError("swipe 需要起点(x/y 或 fx/fy)和终点(x2/y2 或 fx2/fy2)");
                         }
@@ -913,9 +918,48 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                     }
                 }
                 final GestureDescription gesture = gb.build();
+                // v1.20.4 诊断：把每笔的起止时间、时长、路径包围盒一起回给调用方，
+                // 用来判定"注入了但无效"到底是坐标没进 path、还是时间轴/其它问题。
+                final JSONArray strokeDiag = new JSONArray();
+                try {
+                    for (int si = 0; si < gesture.getStrokeCount(); si++) {
+                        GestureDescription.StrokeDescription sdd = gesture.getStroke(si);
+                        android.graphics.RectF rf = new android.graphics.RectF();
+                        sdd.getPath().computeBounds(rf, true);
+                        JSONObject dj = new JSONObject();
+                        dj.put("start", sdd.getStartTime());
+                        dj.put("dur", sdd.getDuration());
+                        dj.put("x0", (int) rf.left);
+                        dj.put("y0", (int) rf.top);
+                        dj.put("x1", (int) rf.right);
+                        dj.put("y1", (int) rf.bottom);
+                        strokeDiag.put(dj);
+                    }
+                } catch (Throwable ignored) {}
+                Log.i(TAG, "gesture diag: strokes=" + strokeDiag);
                 // v1.20.3（实测）：本机出现过"onCompleted 正常回调但界面毫无变化"。
                 // 注入被接受 ≠ 生效 —— 派发前后各取一次界面指纹，把结论回给调用方。
                 final String fpBeforeGesture = treeFingerprint();
+
+                // v1.20.4（实测）：单笔 tap 的手势描述与 gestureTap 完全一致（诊断已证实
+                // start=0/dur=60/x0=x1/y0=y1），但只有 gestureTap 那条真正生效。
+                // 单笔 tap 直接交给 gestureTap 派发 —— 既是验证，也是修复。
+                boolean anyHeld = false;
+                for (int f = 0; f < MAX_FINGERS; f++) if (fingerDown[f]) anyHeld = true;
+                if (ops.length() == 1 && "tap".equals(kinds[0]) && !anyHeld) {
+                    boolean tapOk = gestureTap(xs[0], ys[0]);
+                    JSONObject ro = new JSONObject();
+                    ro.put("ok", tapOk);
+                    ro.put("durationMs", ends[0]);
+                    ro.put("held", new JSONArray());
+                    ro.put("singleTapVia", "gestureTap");
+                    // v1.20.6：onCompleted 只代表"系统收下了手势"，界面刷新有延迟 ——
+                    // 立刻取指纹会把"已经生效"误判成 false（实测变化率 0.87 却报 false）。
+                    try { Thread.sleep(250L); } catch (InterruptedException ignored) {}
+                    ro.put("uiChanged", !fpBeforeGesture.equals(treeFingerprint()));
+                    if (!tapOk) ro.put("error", "触摸注入没有完成（被系统取消/超时/拒绝）");
+                    return ro.toString();
+                }
 
                 final CountDownLatch latch = new CountDownLatch(1);
                 final boolean[] success = {false};
@@ -979,15 +1023,18 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                 }
                 JSONObject o = new JSONObject();
                 o.put("ok", true);
+                // v1.20.6：同上，等界面刷新后再判，避免把"已生效"误判成 false
+                try { Thread.sleep(250L); } catch (InterruptedException ignored) {}
                 boolean uiChanged = !fpBeforeGesture.equals(treeFingerprint());
                 o.put("durationMs", totalT);
                 o.put("held", held);
                 o.put("uiChanged", uiChanged);
+                o.put("strokeCount", gesture.getStrokeCount());
+                o.put("strokes", strokeDiag);
                 if (!uiChanged) {
-                    o.put("hint", "注入已被系统接受（onCompleted 正常回调），但界面指纹没有变化 —— "
-                            + "可能是前台应用忽略了这次触摸（本机实测出现过），"
-                            + "建议改用 android_tap(text=…) / android_tap(x,y)（会先试节点点击，"
-                            + "失败再回退手势），或先截图确认画面是否已变。");
+                    o.put("hint", "手势已注入完成（onCompleted 正常回调）。uiChanged=false 表示"
+                            + "「没能从控件树确认界面变化」—— 控件树对游戏/自绘界面不敏感，"
+                            + "不代表没生效。需要确认请用 android_see（截图对比）或 android_pixel 采样。");
                 }
                 return o.toString();
             } catch (Throwable t) {
