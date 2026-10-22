@@ -455,6 +455,7 @@ function renderResult(value) {
   // v1.20.9（agent 实测）：这些诊断一直在 execute 返回里、模型却看不到 —— 渲染出来。
   if (typeof value.strokeCount === "number") {
     const st = Array.isArray(value.strokes) ? value.strokes : [];
+    // 说明：这里打的是路径**包围盒**（左上/右下），不是"方向"，滑动方向请看 dur 与坐标大小关系
     const desc = st
       .map((s) => "start=" + s.start + "ms dur=" + s.dur + "ms (" + s.x0 + "," + s.y0 + ")→(" + s.x1 + "," + s.y1 + ")")
       .join("；");
@@ -463,7 +464,7 @@ function renderResult(value) {
   if (value.singleTapVia) text += "\n单笔 tap 派发方式: " + value.singleTapVia;
   if (typeof value.uiChanged === "boolean") {
     text += "\n界面变化: " + (value.uiChanged
-      ? "已确认 ✅（轮询控件树 " + (value.settleMs || 0) + "ms）"
+      ? "已确认 ✅（轮询控件树 " + (value.settleMs || value.confirmMs || 0) + "ms）"
       : "未能确认 ⚠ 控件树不敏感，或界面还没刷新 —— 稍等 1~2 秒再用 android_see / android_screen 复核，不要据此判断操作失败");
   }
   if (value.hint) text += "\n提示：" + value.hint;
@@ -731,6 +732,9 @@ function apply(ctx) {
           method: { type: "string" },
           verified: { type: "boolean" },
           expected: { type: "string" },
+          uiChanged: { type: "boolean" },
+          settleMs: { type: "number" },
+          confirmMs: { type: "number" },
           warning: { type: "string" },
           hint: { type: "string" }
         }
@@ -802,6 +806,9 @@ function apply(ctx) {
           ? { hint: "若界面没有变化：WebView/网页按钮经常忽略无障碍 ACTION_CLICK。改用坐标点击（fx/fy）或 android_gesture 的 tap 笔通常有效。" }
           : {}),
         ...(verifyHint ? { hint: verifyHint } : {}),
+        ...(typeof v.uiChanged === "boolean" ? { uiChanged: v.uiChanged } : {}),
+        ...(typeof v.settleMs === "number" ? { settleMs: v.settleMs } : {}),
+        ...(typeof v.confirmMs === "number" ? { confirmMs: v.confirmMs } : {}),
         ...(v.found === false && v.error ? { error: v.error } : {})
       };
     }

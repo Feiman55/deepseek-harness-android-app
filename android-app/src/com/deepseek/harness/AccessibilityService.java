@@ -1634,6 +1634,8 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
     /** /tap：text/desc 按文本查找点击；x/y 或 fx/fy 按坐标点击（优先节点 ACTION_CLICK，失败手势）。 */
     private String handleTap(String path) {
         try {
+            // v1.21.0：点之前先留一个界面指纹基线，点完后拿它判断"界面是否真的变了"
+            String fpStart = treeFingerprint();
             String text = queryParam(path, "text");
             String desc = queryParam(path, "desc");
             String xStr = queryParam(path, "x");
@@ -1735,6 +1737,16 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                             + "也可以先 android_see 截图确认当前画面。");
                 }
             }
+            // v1.21.0（agent 实测）：注入/点击"生效"有 1~3 秒延迟，而且以前只有 /gesture
+            // 会回"界面是否变化" —— /tap 这条路漏了，工具输出只剩"操作成功。"。
+            // 这里同样轮询控件树等稳定，把结论回给调用方。
+            try {
+                boolean[] chTap = new boolean[1];
+                long confirmMs = waitForUiSettle(fpStart, 2000L, chTap);
+                o.put("uiChanged", chTap[0]);
+                o.put("settleMs", confirmMs);
+                o.put("confirmMs", confirmMs);
+            } catch (Throwable ignored) {}
             return o.toString();
         } catch (Throwable t) {
             return jsonError("tap error: " + t.getMessage());
