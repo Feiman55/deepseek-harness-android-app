@@ -445,6 +445,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
         if (base.equals("/home")) return handleGlobalAction(GLOBAL_ACTION_HOME);
         if (base.equals("/scroll")) return handleScroll(path);
         if (base.equals("/screenshot")) return handleScreenshot(path);
+        if (base.equals("/pixel")) return handlePixel(path);   // v1.20.2：像素采样（毫秒级）
         if (base.equals("/swipe")) return handleSwipe(path);
         if (base.equals("/hold")) return handleHold(path);
         if (base.equals("/touch")) return handleTouch(path);
@@ -1863,11 +1864,101 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
 
     /** /screenshot：Android 11+ 无障碍截图，存 PNG 到外部共享目录 <sdcard>/<pkgRoot>/screenshots/，返回路径。
      *  grid=4/8 叠加网格线（帮模型按行列定位）；返回屏幕/图片尺寸与换算系数。 */
+    /**
+     * /pixel：按**屏幕坐标**采样像素颜色（v1.20.2）。
+     *
+     * <p>为什么需要：模型看一张图要 1~3s，而"判断某个格子是不是绿色"只需采几个点 ——
+     * 毫秒级、零体积。参数 {@code pts=x1,y1;x2,y2}（屏幕坐标），返回 {@code [{x,y,r,g,b,hex}]}。
+     */
+    private String handlePixel(String path) {
+        try {
+            final String pts = queryParam(path, "pts");
+            if (pts.isEmpty()) return jsonError("pixel 需要 pts=x,y;x,y…（屏幕坐标，分号分隔）");
+            final String[] parts = pts.split("[;|]");
+            final int n = Math.min(parts.length, 64);
+            final int[] px = new int[n];
+            final int[] py = new int[n];
+            int ok = 0;
+            for (int i = 0; i < n; i++) {
+                String s = parts[i].trim();
+                if (s.isEmpty()) continue;
+                String[] xy = s.split("[,\\s]+");
+                if (xy.length < 2) continue;
+                int vx = (int) parseDoubleSafe(xy[0], -1);
+                int vy = (int) parseDoubleSafe(xy[1], -1);
+                if (vx < 0 || vy < 0) continue;
+                px[ok] = vx;
+                py[ok] = vy;
+                ok++;
+            }
+            if (ok == 0) return jsonError("pts 里没有可解析的坐标对");
+            final int count = ok;
+            final int[] size = screenSize();
+            screenW = size[0];
+            screenH = size[1];
+            final String[] out = new String[1];
+            final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+            takeScreenshot(0, new java.util.concurrent.Executor() {
+                @Override public void execute(Runnable r) { new Thread(r).start(); }
+            }, new TakeScreenshotCallback() {
+                @Override public void onSuccess(ScreenshotResult sr) {
+                    try {
+                        Bitmap bmp = Bitmap.wrapHardwareBuffer(sr.getHardwareBuffer(), sr.getColorSpace());
+                        Bitmap soft = bmp == null ? null : bmp.copy(Bitmap.Config.ARGB_8888, false);
+                        if (soft == null) { out[0] = jsonError("截图转换失败"); latch.countDown(); return; }
+                        double sx = (double) soft.getWidth() / screenW;
+                        double sy = (double) soft.getHeight() / screenH;
+                        JSONArray arr = new JSONArray();
+                        for (int i = 0; i < count; i++) {
+                            int ix = (int) Math.round(px[i] * sx);
+                            int iy = (int) Math.round(py[i] * sy);
+                            JSONObject o = new JSONObject();
+                            o.put("x", px[i]);
+                            o.put("y", py[i]);
+                            if (ix < 0 || iy < 0 || ix >= soft.getWidth() || iy >= soft.getHeight()) {
+                                o.put("error", "out-of-screen");
+                            } else {
+                                int c = soft.getPixel(ix, iy);
+                                int r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, bc = c & 0xFF;
+                                o.put("r", r);
+                                o.put("g", g);
+                                o.put("b", bc);
+                                o.put("hex", String.format("#%02X%02X%02X", r, g, bc));
+                            }
+                            arr.put(o);
+                        }
+                        JSONObject res = new JSONObject();
+                        res.put("ok", true);
+                        res.put("screenW", screenW);
+                        res.put("screenH", screenH);
+                        res.put("pixels", arr);
+                        out[0] = res.toString();
+                    } catch (Throwable t) {
+                        out[0] = jsonError("pixel error: " + t.getMessage());
+                    }
+                    latch.countDown();
+                }
+
+                @Override public void onFailure(int errorCode) {
+                    out[0] = jsonError("截图失败（code=" + errorCode + "）");
+                    latch.countDown();
+                }
+            });
+            latch.await(3000, TimeUnit.MILLISECONDS);
+            return out[0] == null ? jsonError("像素采样超时") : out[0];
+        } catch (Throwable t) {
+            return jsonError("pixel error: " + t.getMessage());
+        }
+    }
+
     private String handleScreenshot(String path) {
         if (Build.VERSION.SDK_INT < 30) {
             return jsonError("截图需要 Android 11+（当前 API " + Build.VERSION.SDK_INT + "）；低版本请用 /dump 读屏幕文本");
         }
-        final String gridStr = queryParam(path, "grid");
+        final boolean ticks = "true".equals(queryParam(path, "ticks")) || "1".equals(queryParam(path, "ticks"));
+            final boolean wantPng = "true".equals(queryParam(path, "png")) || "1".equals(queryParam(path, "png"))
+                    || "png".equals(queryParam(path, "fmt"));
+            final String gridStr = queryParam(path, "grid");
         final int grid = "8".equals(gridStr) ? 8 : ("4".equals(gridStr) || "true".equals(gridStr) ? 4 : 0);
         // v1.19（A6）：区域截图参数（屏幕坐标）
         final String selectText = queryParam(path, "select");
@@ -2007,7 +2098,28 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                                 soft = sub;
                             }
                             // 网格叠加（半透明细线，帮模型按行列定位）
-                            if (grid > 0 && soft.getWidth() > 0) {
+                            if (ticks && soft.getWidth() > 0) {
+                Canvas tcv = new Canvas(soft);
+                Paint tp = new Paint();
+                tp.setAntiAlias(true);
+                tp.setColor(0x99FFD400);
+                tp.setStrokeWidth(1f);
+                tp.setTextSize(Math.max(18f, soft.getWidth() / 40f));
+                int step = 100;   // 每 100 **屏幕**像素；标签写屏幕坐标
+                for (int sx = step; sx < scw; sx += step) {
+                    float ix2 = (float) (sx * imgScaleX);
+                    if (ix2 <= 0 || ix2 >= soft.getWidth()) continue;
+                    tcv.drawLine(ix2, 0, ix2, soft.getHeight(), tp);
+                    tcv.drawText(String.valueOf(sx), ix2 + 2, tp.getTextSize() + 2, tp);
+                }
+                for (int sy = step; sy < sch; sy += step) {
+                    float iy2 = (float) (sy * imgScaleY);
+                    if (iy2 <= 0 || iy2 >= soft.getHeight()) continue;
+                    tcv.drawLine(0, iy2, soft.getWidth(), iy2, tp);
+                    tcv.drawText(String.valueOf(sy), 2, iy2 - 3, tp);
+                }
+            }
+            if (grid > 0 && soft.getWidth() > 0) {
                                 Canvas cv = new Canvas(soft);
                                 Paint paint = new Paint();
                                 paint.setColor(0x66FFFFFF);
@@ -2020,9 +2132,13 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                                 }
                             }
                             File dir = screenshotDir();
-                            File out = new File(dir, "screen-" + System.currentTimeMillis() + ".png");
+                            File out = new File(dir, "screen-" + System.currentTimeMillis() + (wantPng ? ".png" : ".jpg"));
                             FileOutputStream fos = new FileOutputStream(out);
-                            soft.compress(Bitmap.CompressFormat.PNG, 100, fos);
+                            if (wantPng) {
+                    soft.compress(Bitmap.CompressFormat.PNG, 100, fos);
+                } else {
+                    soft.compress(Bitmap.CompressFormat.JPEG, 70, fos);
+                }
                             fos.flush();
                             fos.close();
                             int[] size = screenSize();
@@ -2062,6 +2178,8 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                                 o.put("selectIndex", selectIndex);
                             }
                             o.put("grid", grid);
+                o.put("ticks", ticks);
+                o.put("format", wantPng ? "png" : "jpeg");
                             o.put("bytes", out.length());
                             result[0] = o.toString();
                         }

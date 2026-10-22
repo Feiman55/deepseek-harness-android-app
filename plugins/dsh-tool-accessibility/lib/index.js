@@ -967,6 +967,8 @@ function apply(ctx) {
         "需要当前模型支持图片输入（不支持时用 android_screen 读文字）、已开启无障碍服务、且设备为 Android 11+（低版本用 android_screen）。",
       parameters: {
         grid: { type: "boolean", description: "true 时在截图上叠加 4×4 网格线，方便按行列定位（游戏/无控件界面推荐）" },
+        ticks: { type: "boolean", description: "true 时叠加**屏幕坐标刻度**（每 100 屏幕像素一条细线 + 坐标数字）。比 grid 更准：数字就是屏幕坐标，可直接给 android_tap/android_pixel，不用自己乘 scale" },
+        png: { type: "boolean", description: "true 时输出 PNG（无损，体积大）；默认 JPEG q70，体积小 5~8 倍、传模型更快" },
         select: { type: "string", description: "区域截图：按无障碍节点文字取景（完全相等优先，其次更短的包含匹配），只截该节点（可配 pad 外扩）。适合看清小字/一条数据，比整屏清晰得多" },
         selectIndex: { type: "number", description: "select 命中多个候选时取第几个（0 起，默认 0）。返回里的 selectCount/selectLabel 会告诉你命中是谁、还有几个候选" },
         region: { type: "string", description: "区域截图：显式矩形 \"x,y,w,h\"（屏幕像素，左上角为原点）。与 select 二选一" },
@@ -1061,6 +1063,9 @@ function apply(ctx) {
         }
         const params = {};
         if (args.grid === true) params.grid = "4";
+        // v1.20.2：屏幕坐标刻度 / 无损 PNG 回退
+        if (args.ticks === true) params.ticks = "true";
+        if (args.png === true) params.png = "true";
         if (args.select !== undefined && String(args.select).length > 0) params.select = String(args.select);
         else if (args.region !== undefined && String(args.region).length > 0) params.region = String(args.region);
         if (args.selectIndex !== undefined) params.selectIndex = String(Number(args.selectIndex));
@@ -1664,6 +1669,56 @@ function apply(ctx) {
   }));
 
   // v1.22（P1）：等某段文字出现 —— 替代「sleep + 反复截图」
+  ctx.tools.register(defineTool({
+    name: "android_pixel",
+    description: "按**屏幕坐标**采样像素颜色（毫秒级，不用看图）。判断「这个格子是不是绿色可部署格」「按钮是不是高亮」「血条还剩多少」这类问题，采 3~5 个点比截一张图快一个数量级，也不烧 token。坐标与 android_tap 的 x/y 同一口径（屏幕像素）；配合 android_see(ticks=true) 可以读出精确坐标。",
+    parameters: {
+      pts: {
+        type: "string",
+        required: true,
+        description: "采样点，屏幕坐标，形如 \"360,720;420,760;500,800\"（分号分隔，最多 64 个）"
+      }
+    },
+    output: {
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          ok: { type: "boolean", required: true },
+          error: { type: "string" },
+          screenW: { type: "number" },
+          screenH: { type: "number" },
+          pixels: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                x: { type: "number" }, y: { type: "number" },
+                r: { type: "number" }, g: { type: "number" }, b: { type: "number" },
+                hex: { type: "string" }, error: { type: "string" }
+              }
+            }
+          }
+        }
+      },
+      render: (_a, v) => [{
+        type: "text",
+        text: v.ok
+          ? "像素采样 " + (v.pixels || []).length + " 点：" +
+            (v.pixels || []).slice(0, 10).map((q) => "(" + q.x + "," + q.y + ")=" + (q.hex || q.error)).join("  ")
+          : "像素采样失败：" + (v.error || "未知错误")
+      }]
+    },
+    async execute(args) {
+      const pts = args.pts === undefined ? "" : String(args.pts);
+      if (!pts) return { ok: false, error: "android_pixel 需要 pts，例如 \"360,720;420,760\"" };
+      const v = parseResult(await a11yRequest("/pixel", { pts }, 8000));
+      if (v.ok === false) return { ok: false, error: v.error || "像素采样失败" };
+      return v;
+    }
+  }));
+
   ctx.tools.register(defineTool({
     name: "android_find_text",
     description: "在控件树里查找某段文字，并可等它出现（轮询，不截图）。点完等下一页、等按钮可点、等提示出现都用它，比固定 sleep 或反复 android_see 更快也更省内存。",
