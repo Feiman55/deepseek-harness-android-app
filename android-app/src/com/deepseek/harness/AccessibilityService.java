@@ -955,9 +955,13 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                     ro.put("singleTapVia", "gestureTap");
                     // v1.20.9：注入生效有 1~3 秒延迟 → 等界面稳定再判（不再固定 250ms）
                     boolean[] ch = new boolean[1];
-                    long settleMs = waitForUiSettle(fpBeforeGesture, 2000L, ch);
+                    int[] chg = new int[1];
+                    long t0g = System.currentTimeMillis();
+                    waitForUiSettle(fpBeforeGesture, 1500L, ch, chg);
+                    long settleMs = System.currentTimeMillis() - t0g;
                     ro.put("uiChanged", ch[0]);
                     ro.put("settleMs", settleMs);
+                    if (chg[0] >= 3) ro.put("changing", true);
                     if (!tapOk) ro.put("error", "触摸注入没有完成（被系统取消/超时/拒绝）");
                     return ro.toString();
                 }
@@ -1026,12 +1030,16 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                 o.put("ok", true);
                 // v1.20.9：等界面稳定再判（注入生效有 1~3 秒延迟）
                 boolean[] ch2 = new boolean[1];
-                long settleMs = waitForUiSettle(fpBeforeGesture, 2000L, ch2);
+                int[] chg2 = new int[1];
+                long t0g2 = System.currentTimeMillis();
+                waitForUiSettle(fpBeforeGesture, 1500L, ch2, chg2);
+                long settleMs = System.currentTimeMillis() - t0g2;
                 boolean uiChanged = ch2[0];
                 o.put("durationMs", totalT);
                 o.put("held", held);
                 o.put("uiChanged", uiChanged);
                 o.put("settleMs", settleMs);
+                if (chg2[0] >= 3) o.put("changing", true);
                 o.put("strokeCount", gesture.getStrokeCount());
                 o.put("strokes", strokeDiag);
                 if (!uiChanged) {
@@ -1496,10 +1504,20 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
      * 这里轮询控件树指纹：观察到变化后连续两次相同即认为稳定；返回实际等待毫秒数。
      */
     private long waitForUiSettle(String beforeFp, long maxMs, boolean[] changedOut) {
+        return waitForUiSettle(beforeFp, maxMs, changedOut, null);
+    }
+
+    /**
+     * 同上，额外统计"等待期间指纹变更次数"（changesOut[0]）。
+     * 用途：DSH 聊天页在流式输出时内容每秒都在变，此时"已确认"没有意义 ——
+     * 变更次数多（≥3）就标记 changing，提醒只看负例（agent 实测提出）。
+     */
+    private long waitForUiSettle(String beforeFp, long maxMs, boolean[] changedOut, int[] changesOut) {
         long start = System.currentTimeMillis();
         String prev = treeFingerprint();
         boolean changed = !beforeFp.equals(prev);
         int same = 0;
+        int changes = 0;
         while (System.currentTimeMillis() - start < maxMs) {
             try {
                 Thread.sleep(150L);
@@ -1511,11 +1529,13 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
             if (cur.equals(prev)) {
                 if (++same >= 2) break;
             } else {
+                changes++;
                 same = 0;
                 prev = cur;
             }
         }
         if (changedOut != null && changedOut.length > 0) changedOut[0] = changed;
+        if (changesOut != null && changesOut.length > 0) changesOut[0] = changes;
         return System.currentTimeMillis() - start;
     }
 
@@ -1754,10 +1774,15 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
     private String finishTapWithConfirm(JSONObject o, String fpStart) {
         try {
             boolean[] ch = new boolean[1];
-            long confirmMs = waitForUiSettle(fpStart, 2000L, ch);
+            int[] chg = new int[1];
+            long t0 = System.currentTimeMillis();
+            waitForUiSettle(fpStart, 1500L, ch, chg);
+            // v1.21.2：以前 settleMs 从方法入口算起，把点击与 expect 轮询都算进去 → 出现 2444/4538ms
+            long confirmMs = System.currentTimeMillis() - t0;
             o.put("uiChanged", ch[0]);
             o.put("settleMs", confirmMs);
             o.put("confirmMs", confirmMs);
+            if (chg[0] >= 3) o.put("changing", true);
         } catch (Throwable ignored) {}
         return o.toString();
     }

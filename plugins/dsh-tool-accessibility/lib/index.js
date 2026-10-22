@@ -462,7 +462,9 @@ function renderResult(value) {
     text += "\n手势: " + value.strokeCount + " 笔" + (desc ? " · " + desc : "");
   }
   if (value.singleTapVia) text += "\n单笔 tap 派发方式: " + value.singleTapVia;
-  if (typeof value.uiChanged === "boolean") {
+  if (value.changing === true) {
+    text += "\n界面变化: 页面持续变化（流式输出/动画），此时「已确认」不可信 —— 只有「未能确认」这个负例有意义";
+  } else if (typeof value.uiChanged === "boolean") {
     text += "\n界面变化: " + (value.uiChanged
       ? "已确认 ✅（轮询控件树 " + (value.settleMs || value.confirmMs || 0) + "ms）"
       : "未能确认 ⚠ 控件树不敏感，或界面还没刷新 —— 稍等 1~2 秒再用 android_see / android_screen 复核，不要据此判断操作失败");
@@ -1248,7 +1250,8 @@ function apply(ctx) {
         strokes: { type: "array", items: { type: "object", additionalProperties: true } },
         singleTapVia: { type: "string" },
         uiChanged: { type: "boolean" },
-        settleMs: { type: "number" }
+        settleMs: { type: "number" },
+        changing: { type: "boolean" }
       }
     },
     render: (_a, v) => renderResult(v)
@@ -1490,7 +1493,8 @@ function apply(ctx) {
         ...(Array.isArray(v.strokes) ? { strokes: v.strokes } : {}),
         ...(typeof v.singleTapVia === "string" ? { singleTapVia: v.singleTapVia } : {}),
         ...(typeof v.uiChanged === "boolean" ? { uiChanged: v.uiChanged } : {}),
-        ...(typeof v.settleMs === "number" ? { settleMs: v.settleMs } : {})
+        ...(typeof v.settleMs === "number" ? { settleMs: v.settleMs } : {}),
+        ...(v.changing === true ? { changing: true } : {})
       };
     }
   }));
