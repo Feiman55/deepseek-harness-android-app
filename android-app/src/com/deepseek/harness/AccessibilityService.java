@@ -1714,12 +1714,12 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                         o.put("hint", "等几秒重试；或先 android_screen 确认界面还响应；"
                                 + "内存紧张（<400MB）时更容易失败，可先关掉其它 App。");
                     }
-                    if (expect.isEmpty() || !gestureOk) return o.toString();
+                    if (expect.isEmpty() || !gestureOk) return finishTapWithConfirm(o, fpStart);
                 } else {
                     o.put("found", false);
                     o.put("method", "none");
                     o.put("verified", false);
-                    if (expect.isEmpty()) return o.toString();
+                    if (expect.isEmpty()) return finishTapWithConfirm(o, fpStart);
                 }
             } else {
                 o.put("found", true);
@@ -1740,17 +1740,26 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
             // v1.21.0（agent 实测）：注入/点击"生效"有 1~3 秒延迟，而且以前只有 /gesture
             // 会回"界面是否变化" —— /tap 这条路漏了，工具输出只剩"操作成功。"。
             // 这里同样轮询控件树等稳定，把结论回给调用方。
-            try {
-                boolean[] chTap = new boolean[1];
-                long confirmMs = waitForUiSettle(fpStart, 2000L, chTap);
-                o.put("uiChanged", chTap[0]);
-                o.put("settleMs", confirmMs);
-                o.put("confirmMs", confirmMs);
-            } catch (Throwable ignored) {}
-            return o.toString();
+            return finishTapWithConfirm(o, fpStart);
         } catch (Throwable t) {
             return jsonError("tap error: " + t.getMessage());
         }
+    }
+
+    /**
+     * v1.21.1（agent 实测）：/tap 有多个提前 return（纯坐标 gesture 分支、未找到分支），
+     * 只有主路径带了"界面变化"确认 → 纯坐标那条输出只剩「操作成功。」。
+     * 这里统一收口：所有分支都补 uiChanged / settleMs / confirmMs。
+     */
+    private String finishTapWithConfirm(JSONObject o, String fpStart) {
+        try {
+            boolean[] ch = new boolean[1];
+            long confirmMs = waitForUiSettle(fpStart, 2000L, ch);
+            o.put("uiChanged", ch[0]);
+            o.put("settleMs", confirmMs);
+            o.put("confirmMs", confirmMs);
+        } catch (Throwable ignored) {}
+        return o.toString();
     }
 
     private boolean gestureTap(final int x, final int y) {
