@@ -913,6 +913,9 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                     }
                 }
                 final GestureDescription gesture = gb.build();
+                // v1.20.3（实测）：本机出现过"onCompleted 正常回调但界面毫无变化"。
+                // 注入被接受 ≠ 生效 —— 派发前后各取一次界面指纹，把结论回给调用方。
+                final String fpBeforeGesture = treeFingerprint();
 
                 final CountDownLatch latch = new CountDownLatch(1);
                 final boolean[] success = {false};
@@ -976,8 +979,16 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                 }
                 JSONObject o = new JSONObject();
                 o.put("ok", true);
+                boolean uiChanged = !fpBeforeGesture.equals(treeFingerprint());
                 o.put("durationMs", totalT);
                 o.put("held", held);
+                o.put("uiChanged", uiChanged);
+                if (!uiChanged) {
+                    o.put("hint", "注入已被系统接受（onCompleted 正常回调），但界面指纹没有变化 —— "
+                            + "可能是前台应用忽略了这次触摸（本机实测出现过），"
+                            + "建议改用 android_tap(text=…) / android_tap(x,y)（会先试节点点击，"
+                            + "失败再回退手势），或先截图确认画面是否已变。");
+                }
                 return o.toString();
             } catch (Throwable t) {
                 releaseAllFingersUnlocked();
@@ -1940,12 +1951,20 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                 }
 
                 @Override public void onFailure(int errorCode) {
-                    out[0] = jsonError("截图失败（code=" + errorCode + "）");
+                    // code=3 = ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT（截图太频繁）
+                    out[0] = "{\"__retry\":" + errorCode + "}";
                     latch.countDown();
                 }
             });
             latch.await(3000, TimeUnit.MILLISECONDS);
-            return out[0] == null ? jsonError("像素采样超时") : out[0];
+            String first = out[0];
+            // v1.20.3：截图间隔限制（code=3）→ 退避 1.2s 重试一次
+            if (first != null && first.contains("\"__retry\"")) {
+                try { Thread.sleep(1200L); } catch (InterruptedException ignored) {
+                }
+                return handlePixel(path);
+            }
+            return first == null ? jsonError("像素采样超时") : first;
         } catch (Throwable t) {
             return jsonError("pixel error: " + t.getMessage());
         }

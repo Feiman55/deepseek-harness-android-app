@@ -750,7 +750,17 @@ function apply(ctx) {
       noteInputEvent();
       const raw = await a11yRequest("/tap", params, 8000);
       const v = parseResult(raw);
-      if (!v.ok) return { ok: false, error: v.error || GUIDE_TEXT };
+      if (!v.ok) {
+        // v1.20.3：没找到控件时要说明"没找到"，别让上层渲染成"未知错误"
+        if (v.found === false) {
+          return {
+            ok: false,
+            error: "没找到匹配的控件（text/desc=" + JSON.stringify(args.text || args.desc || "") + "）—— "
+              + "可用 android_screen 看当前界面有哪些文字，或改用 x/y、fx/fy 坐标"
+          };
+        }
+        return { ok: false, error: v.error || GUIDE_TEXT };
+      }
       // v1.22（复盘 P1）：可选「期望校验」—— 点完轮询控件树，确认 expect_text 真的出现了。
       //   复盘里"操作成功但什么都没发生"是最高频的坑（尤其 WebView），这里把它变成可判定的返回值。
       let verified;
@@ -1117,8 +1127,10 @@ function apply(ctx) {
         try {
           const ref = await attachments.saveImage({
             data,
-            mediaType: "image/png",
-            name: "screen.png"
+            // v1.20.3（实测回归）：默认改 JPEG 后这里仍写死 image/png →
+            // 附件层报 "Declared image type does not match its bytes"。
+            mediaType: v.format === "jpeg" ? "image/jpeg" : "image/png",
+            name: v.format === "jpeg" ? "screen.jpg" : "screen.png"
           });
           // A7：记录本次截图内容哈希与截取时间，并判断"与上一次是否相同"。
           // 若两次之间发生过输入操作却仍是同一张图，说明截图未刷新（或操作没生效），
