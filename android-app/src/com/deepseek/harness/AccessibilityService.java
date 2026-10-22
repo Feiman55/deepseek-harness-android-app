@@ -957,7 +957,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                     boolean[] ch = new boolean[1];
                     int[] chg = new int[1];
                     long t0g = System.currentTimeMillis();
-                    waitForUiSettle(fpBeforeGesture, 1500L, ch, chg);
+                    waitForUiSettle(fpBeforeGesture, 1200L, ch, chg);
                     long settleMs = System.currentTimeMillis() - t0g;
                     ro.put("uiChanged", ch[0]);
                     ro.put("settleMs", settleMs);
@@ -1032,7 +1032,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                 boolean[] ch2 = new boolean[1];
                 int[] chg2 = new int[1];
                 long t0g2 = System.currentTimeMillis();
-                waitForUiSettle(fpBeforeGesture, 1500L, ch2, chg2);
+                waitForUiSettle(fpBeforeGesture, 1200L, ch2, chg2);
                 long settleMs = System.currentTimeMillis() - t0g2;
                 boolean uiChanged = ch2[0];
                 o.put("durationMs", totalT);
@@ -1525,6 +1525,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                 break;
             }
             String cur = treeFingerprint();
+            if (System.currentTimeMillis() - start >= maxMs) break;
             if (!cur.equals(beforeFp)) changed = true;
             if (cur.equals(prev)) {
                 if (++same >= 2) break;
@@ -1776,7 +1777,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
             boolean[] ch = new boolean[1];
             int[] chg = new int[1];
             long t0 = System.currentTimeMillis();
-            waitForUiSettle(fpStart, 1500L, ch, chg);
+            waitForUiSettle(fpStart, 1200L, ch, chg);
             // v1.21.2：以前 settleMs 从方法入口算起，把点击与 expect 轮询都算进去 → 出现 2444/4538ms
             long confirmMs = System.currentTimeMillis() - t0;
             o.put("uiChanged", ch[0]);

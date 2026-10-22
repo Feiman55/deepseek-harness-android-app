@@ -737,6 +737,7 @@ function apply(ctx) {
           uiChanged: { type: "boolean" },
           settleMs: { type: "number" },
           confirmMs: { type: "number" },
+          changing: { type: "boolean" },
           warning: { type: "string" },
           hint: { type: "string" }
         }
@@ -811,6 +812,7 @@ function apply(ctx) {
         ...(typeof v.uiChanged === "boolean" ? { uiChanged: v.uiChanged } : {}),
         ...(typeof v.settleMs === "number" ? { settleMs: v.settleMs } : {}),
         ...(typeof v.confirmMs === "number" ? { confirmMs: v.confirmMs } : {}),
+        ...(v.changing === true ? { changing: true } : {}),
         ...(v.found === false && v.error ? { error: v.error } : {})
       };
     }
