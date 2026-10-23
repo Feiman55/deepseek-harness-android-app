@@ -10819,8 +10819,7 @@ public class MainActivity extends Activity {
                         if (portListening(port)) return;       // 服务活着，不打扰
                         Log.w(TAG, "无障碍在设置里是开启的，但端口 " + port
                                 + " 没有监听（应用更新后系统常会关停服务）");
-                        conToast("无障碍权限需要重新授权（应用更新后系统常会关掉它）"
-                                + "——请在 设置 → 无障碍 里重新打开「DeepSeek Harness 屏幕助手」");
+                        conToast("无障碍权限需要重新授权");
                     } catch (Throwable ignored) {}
                 }
             }, 12000L);
