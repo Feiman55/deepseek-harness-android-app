@@ -814,14 +814,11 @@ public class OverlayService extends Service {
         brp.topMargin = dp(7);
         btnRow.setLayoutParams(brp);
         btnRow.addView(pillButton("打开", new Runnable() { @Override public void run() {
-            // v1.22.5（维护者要求）：与「点桌面图标」完全同一套逻辑 —— 发 launcher intent，
-            // 让系统把已有任务恢复到前台（不重载、不改页面）。只额外带一个 extra，
-            // 用于"当前停在控制台时切回主界面"。
-            Intent i = new Intent(Intent.ACTION_MAIN);
-            i.addCategory(Intent.CATEGORY_LAUNCHER);
-            i.setClassName(OverlayService.this, MainActivity.class.getName());
-            // 不要 RESET_TASK_IF_NEEDED：它会让系统重置任务（重建 Activity → WebView 空 → 只能重载）
-            i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            // v1.22.6（维护者澄清）：点图标是"回到上次页面（含控制台）"，**不是**期望语义。
+            // 「打开」应当**永远进主界面**：显式启动 MainActivity + EXTRA_OPEN_WEB，
+            // 由 onNewIntent 收起控制台并复用已加载的 WebView（不重载、不弹"未运行"）。
+            Intent i = new Intent(OverlayService.this, MainActivity.class);
+            i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
             i.putExtra(MainActivity.EXTRA_OPEN_WEB, true);
             try { startActivity(i); } catch (Throwable ignored) {}
             setPanelVisible(false, true);
