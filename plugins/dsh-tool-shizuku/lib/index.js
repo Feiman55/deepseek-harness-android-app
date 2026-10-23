@@ -549,7 +549,8 @@ function apply(ctx) {
           newValue: { type: "string" },
           stream: { type: "string" },
           level: { type: "number" },
-          max: { type: "number" }
+          max: { type: "number" },
+          hint: { type: "string" }
         }
       },
       render: (_args, value) => [{
@@ -562,7 +563,9 @@ function apply(ctx) {
                   : (value.oldValue !== undefined && value.newValue !== undefined
               ? "已设置 " + (value.key || "?") + "：" + value.oldValue + " → " + value.newValue
               : "已设置 " + (value.key || "?") + " ✅（读回不可用）") + " ✅"))
-          : "设置失败：" + (value.error || "未知错误")
+          : (_args && String(_args.action || "put").toLowerCase() === "get"
+              ? "读取失败：" + (value.error || "未知错误")
+              : "设置失败：" + (value.error || "未知错误"))
       }]
     },
     async execute(args) {
