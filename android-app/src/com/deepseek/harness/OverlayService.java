@@ -1445,7 +1445,7 @@ public class OverlayService extends Service {
             android.widget.Toast.makeText(getApplicationContext(),
                     "正在退出…", android.widget.Toast.LENGTH_SHORT).show();
         } catch (Throwable ignored) {}
-        MainActivity.shutdownEverything(this);
+        MainActivity.shutdownEverything(this, "悬浮窗面板「退出」按钮");
     }
 
     /** 切换「退出」按钮的待确认外观（红底白字 = 危险动作已上膛）。 */

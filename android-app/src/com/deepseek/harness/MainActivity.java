@@ -1450,6 +1450,11 @@ public class MainActivity extends Activity {
      * 防误触由调用方负责（OverlayService 里做了两步确认）。
      */
     public static void shutdownEverything(final Context ctx) {
+        shutdownEverything(ctx, "未标注");
+    }
+
+    /** 带来源的完全退出（来源只用于日志，方便事后定位"是谁触发的退出"）。 */
+    public static void shutdownEverything(final Context ctx, final String source) {
         if (shuttingDown) return;
         shuttingDown = true;
         // 落盘：进程死后服务被 START_STICKY 重建时，靠它在新进程里挡住（见 shutdownPending）
@@ -1457,7 +1462,7 @@ public class MainActivity extends Activity {
             ctx.getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                     .putBoolean(KEY_SHUTDOWN_PENDING, true).apply();
         } catch (Throwable ignored) {}
-        Log.i(TAG, "shutdown: 完全退出（停引擎 + 停服务 + 清通知 + 结束进程）");
+        Log.i(TAG, "shutdown: 完全退出（来源=" + source + "；停引擎 + 停服务 + 清通知 + 结束进程）");
         final int port = OverlayService.enginePort(ctx);
         new Thread(new Runnable() { @Override public void run() {
             // 1) 停引擎：SIGTERM → 轮询 6 秒 → SIGKILL 兜底
@@ -6377,24 +6382,48 @@ public class MainActivity extends Activity {
         watchdogStarted = true;
         new Thread(new Runnable() {
             @Override public void run() {
+                // v1.22.12（维护者定：连续 3 次 = 15 秒）：判据从「进程死了」改成「接口连续不通」。
+                // 旧判据 `!serverUp && !nodeAlive` 漏掉两类真实故障：
+                //   ① 引擎卡死但进程还在（OOM 抖动 / 事件循环被占死）→ isAlive() 恒为 true → 永不被救；
+                //   ② nodeProcess == null（引擎由别的实例或服务启动）→ 直接 continue → 从不检查。
+                // 单次探测会抖动（connect 1.2s / read 1.5s，Node 单线程忙时答不上），所以取 3 次；
+                // 误重启会打断正在进行的回答，代价高于晚 10 秒才救。
+                int failStreak = 0;
                 while (!Thread.currentThread().isInterrupted()) {
                     try { Thread.sleep(5000); } catch (InterruptedException e) { return; }
+                    // v1.22.11（维护者决定）：用户主动「退出」后看门狗必须停 —— 否则它会判定
+                    // "引擎已死" 又重新拉起引擎并 loadUrl，把退出流程搅成半死状态。
+                    if (shutdownPending(MainActivity.this)) {
+                        Log.i(TAG, "watchdog: 正在完全退出 → 停止看门狗");
+                        return;
+                    }
                     try {
-                        if (nodeProcess == null) continue;
-                        if (engineStoppedByUser) continue;   // v1.13：用户点了「停止」→ 不自动拉起
-                        boolean serverUp = healthOk();
-                        boolean nodeAlive = nodeProcess.isAlive();
-                        if (!serverUp && !nodeAlive) {
-                            long now = System.currentTimeMillis();
-                            if (now - lastRespawnAt < 20000) continue; // 避免风车重启
-                            lastRespawnAt = now;
-                            Log.w(TAG, "node died, respawning engine");
-                            spawnNode(new File(getFilesDir(), "payload"));
-                            final WebView wv = webView;
-                            ui.post(new Runnable() {
-                                @Override public void run() { wv.loadUrl(webHomeUrl()); }
-                            });
+                        if (engineStoppedByUser) {   // v1.13：用户点了「停止」→ 不自动拉起
+                            failStreak = 0;
+                            continue;
                         }
+                        if (starting) {              // 启动中（可能要 60~90 秒）→ 不判死，避免误杀
+                            failStreak = 0;
+                            continue;
+                        }
+                        if (healthOk()) {
+                            if (failStreak > 0) Log.i(TAG, "watchdog: 引擎已恢复（探测成功）");
+                            failStreak = 0;
+                            continue;
+                        }
+                        failStreak++;
+                        Log.w(TAG, "watchdog: 引擎探测失败 " + failStreak + "/3");
+                        if (failStreak < 3) continue;
+                        long now = System.currentTimeMillis();
+                        if (now - lastRespawnAt < 20000) continue; // 避免风车重启
+                        lastRespawnAt = now;
+                        failStreak = 0;
+                        Log.w(TAG, "watchdog: 连续 3 次探测失败 → 重启引擎");
+                        spawnNode(new File(getFilesDir(), "payload"));
+                        final WebView wv = webView;
+                        ui.post(new Runnable() {
+                            @Override public void run() { wv.loadUrl(webHomeUrl()); }
+                        });
                     } catch (Throwable t) {
                         Log.w(TAG, "watchdog error", t);
                     }
