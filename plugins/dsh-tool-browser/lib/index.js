@@ -376,7 +376,7 @@ export function apply(ctx) {
       "按 ref 点击页面元素（看得见时走真原生触摸；承载窗不可见时**退回 JS 点击兜底** —— 返回值里的 `via` 会说明走的哪条：touch / js / touch+js）。必须先用 browser_snapshot 或 browser_find 拿到 ref；" +
       "ref 属于拿到它的那个页签：如果那个页签不是当前激活页签，会回 **stale-tab**（防点错页面）——" +
       "先 browser_tabs{op:'switch',tabId} 切过去再点。" +
-      "返回 via（touch / js / touch+js）、当前 url/title，以及 newText（点击后新出现的可见文本，若有）。",
+      "返回 via（touch / js / touch+js）与 newText（点击后新出现的可见文本，若有）；当前地址请用 browser_tabs 查。",
     parameters: {
       ref: { type: "string", required: true, description: "元素的 ref（形如 r7f3a2 或 r7f3a2-2）" },
       tabId: { type: "string", description: "可选：这个 ref 属于哪个页签（省略=插件按快照来源自动带；带了非激活页签会被 stale-tab 拒绝，先 browser_tabs{op:'switch'}）" }
@@ -387,14 +387,13 @@ export function apply(ctx) {
         properties: {
           ok: { type: "boolean" }, ref: { type: "string" },
           via: { type: "string" }, newText: TEXT_LINES,
-          url: { type: "string" }, title: { type: "string" },
           reason: { type: "string" }, error: { type: "string" }, hint: { type: "string" }
         }
       },
       render: (_args, value) => [{
         type: "text",
         text: value.ok
-          ? `已点击 ${value.ref}（${value.via || "?"}）→ ${value.title || ""} ${value.url || ""}` +
+          ? `已点击 ${value.ref}（${value.via || "?"}）` +
             ((value.newText && value.newText.length) ? `\n新增文本：\n${renderText(value.newText, 8)}` : "")
           : errText(value)
       }],
@@ -404,7 +403,7 @@ export function apply(ctx) {
       const ct = tabFor(ca.ref, args && args.tabId);
       if (ct) ca.tabId = ct;                       // ← 闸门靠它生效（见文件头说明）
       return pick(await browserOp("click", ca, 20000),
-        ["ok", "ref", "via", "newText", "url", "title", "reason", "error", "hint"]);
+        ["ok", "ref", "via", "newText", "reason", "error", "hint"]);
     }
   }));
 
