@@ -663,6 +663,9 @@ public class OverlayService extends Service {
             b = new Notification.Builder(this);
         }
         Intent open = new Intent(this, MainActivity.class);
+        // v1.22.9：补 ACTION_MAIN —— 点通知也要算"用户主动启动"（否则退出标记还在时会被 finish）
+        open.setAction(Intent.ACTION_MAIN);
+        open.addCategory(Intent.CATEGORY_LAUNCHER);
         open.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
         PendingIntent pi = PendingIntent.getActivity(this, 0, open,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);

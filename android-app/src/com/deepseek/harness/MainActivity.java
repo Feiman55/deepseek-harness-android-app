@@ -392,8 +392,14 @@ public class MainActivity extends Activity {
         // v1.21：正在「完全退出」——若被系统/通知重新拉起，直接关掉，别再起界面和引擎。
         // 只有**用户主动点图标**（ACTION_MAIN）才算重新使用：清掉标记正常启动。
         if (shutdownPending(this)) {
-            boolean userLaunch = getIntent() != null
-                    && Intent.ACTION_MAIN.equals(getIntent().getAction());
+            // v1.22.9（维护者实测：面板「打开」/控制台/点开就回桌面）：
+            // 面板与通知发的都是**显式 intent（action 为空）**，原来只认 ACTION_MAIN
+            // → 被当成"系统拉起" → 立刻 finish()。带 open_web / open_console 的也算用户主动启动。
+            Intent li = getIntent();
+            boolean userLaunch = li != null
+                    && (Intent.ACTION_MAIN.equals(li.getAction())
+                        || li.getBooleanExtra(EXTRA_OPEN_WEB, false)
+                        || li.getBooleanExtra(EXTRA_OPEN_CONSOLE, false));
             if (!userLaunch) {
                 Log.i(TAG, "onCreate: 正在完全退出，忽略本次启动");
                 finish();
@@ -10353,8 +10359,10 @@ public class MainActivity extends Activity {
         boolean usable = false;
         try {
             String cur = webView == null ? null : webView.getUrl();
+            // v1.22.8：progress==100 仍可能是空白页（渲染进程被回收）→ 再加"真的画出了内容"
             usable = cur != null && cur.startsWith("http://127.0.0.1:")
-                    && webView.getProgress() >= 100;
+                    && webView.getProgress() >= 100
+                    && webView.getContentHeight() > 0;
         } catch (Throwable ignored) {}
         if (usable) {
             try {
@@ -10796,13 +10804,23 @@ public class MainActivity extends Activity {
                 @Override
                 public void run() {
                     try {
-                        if (!conA11yEnabled()) return;      // 设置里本来就没开 → 走权限页引导即可
+                        // v1.22.8（维护者要求）：只有"曾经授权过 + 设置里仍显示已授权"才提醒。
+                        // 从没授权过 → 走权限页引导；用户手动取消（设置里已关）→ 不打扰。
+                        boolean everGranted = getSharedPreferences(PREFS, MODE_PRIVATE)
+                                .getBoolean("dsh_a11y_ever_granted", false);
+                        boolean enabledNow = conA11yEnabled();
+                        if (enabledNow) {
+                            getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                                    .putBoolean("dsh_a11y_ever_granted", true).apply();
+                        }
+                        if (!enabledNow) return;          // 设置里没开：从没授权或用户手动取消 → 都不提醒
+                        if (!everGranted) return;         // 服务端没记录过授权（首次）→ 交给权限页
                         final int port = notifyPort() + 100;   // 与引擎侧 APP_A11Y_PORT 同源
                         if (portListening(port)) return;       // 服务活着，不打扰
                         Log.w(TAG, "无障碍在设置里是开启的，但端口 " + port
                                 + " 没有监听（应用更新后系统常会关停服务）");
-                        conToast("无障碍服务没有响应（应用更新后系统常会关停它）——"
-                                + "请到 设置 → 无障碍 里重新打开「DeepSeek Harness 屏幕助手」");
+                        conToast("无障碍权限需要重新授权（应用更新后系统常会关掉它）"
+                                + "——请在 设置 → 无障碍 里重新打开「DeepSeek Harness 屏幕助手」");
                     } catch (Throwable ignored) {}
                 }
             }, 12000L);
