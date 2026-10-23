@@ -387,6 +387,7 @@ export function apply(ctx) {
         properties: {
           ok: { type: "boolean" }, ref: { type: "string" },
           via: { type: "string" }, newText: TEXT_LINES,
+          fromGeneration: { type: "number" }, toGeneration: { type: "number" },
           reason: { type: "string" }, error: { type: "string" }, hint: { type: "string" }
         }
       },
@@ -394,6 +395,9 @@ export function apply(ctx) {
         type: "text",
         text: value.ok
           ? `已点击 ${value.ref}（${value.via || "?"}）` +
+            ((typeof value.toGeneration === "number" && typeof value.fromGeneration === "number"
+              && value.toGeneration > value.fromGeneration)
+              ? `（DOM 有更新：gen ${value.fromGeneration} → ${value.toGeneration}）` : "") +
             ((value.newText && value.newText.length) ? `\n新增文本：\n${renderText(value.newText, 8)}` : "")
           : errText(value)
       }],
@@ -403,7 +407,7 @@ export function apply(ctx) {
       const ct = tabFor(ca.ref, args && args.tabId);
       if (ct) ca.tabId = ct;                       // ← 闸门靠它生效（见文件头说明）
       return pick(await browserOp("click", ca, 20000),
-        ["ok", "ref", "via", "newText", "reason", "error", "hint"]);
+        ["ok", "ref", "via", "newText", "fromGeneration", "toGeneration", "reason", "error", "hint"]);
     }
   }));
 
