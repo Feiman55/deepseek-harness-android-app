@@ -462,13 +462,6 @@ function renderResult(value) {
     text += "\n手势: " + value.strokeCount + " 笔" + (desc ? " · " + desc : "");
   }
   if (value.singleTapVia) text += "\n单笔 tap 派发方式: " + value.singleTapVia;
-  if (value.changing === true) {
-    text += "\n界面变化: 页面持续变化（流式输出/动画），此时「已确认」不可信 —— 只有「未能确认」这个负例有意义";
-  } else if (typeof value.uiChanged === "boolean") {
-    text += "\n界面变化: " + (value.uiChanged
-      ? "已确认 ✅（轮询控件树 " + (value.settleMs || value.confirmMs || 0) + "ms）"
-      : "未能确认 ⚠ 控件树不敏感，或界面还没刷新 —— 稍等 1~2 秒再用 android_see / android_screen 复核，不要据此判断操作失败");
-  }
   if (value.hint) text += "\n提示：" + value.hint;
   return [{ type: "text", text }];
 }
@@ -710,7 +703,9 @@ function apply(ctx) {
   // 点击
   ctx.tools.register(defineTool({
     name: "android_tap",
-    description: "点击控件或坐标：text（控件文字，模糊包含匹配，优先可点击项）、desc（内容描述）、x/y（屏幕像素）或 fx/fy（0~1 分数坐标）至少给一个。优先用 fx/fy：截图会被缩放，绝对像素容易点偏。同时给 text 与坐标时先按 text 查找。\n网页/WebView/自绘界面的无障碍点击常被忽略（返回成功但界面没变）：这类目标直接用 fx/fy，或改用 android_gesture 的 tap 笔。需要无障碍服务。",
+    description: "点击控件或坐标：text（控件文字，模糊包含匹配，优先可点击项）、desc（内容描述）、x/y（屏幕像素）或 fx/fy（0~1 分数坐标）至少给一个。优先用 fx/fy：截图会被缩放，绝对像素容易点偏。同时给 text 与坐标时先按 text 查找。\n网页/WebView/自绘界面的无障碍点击常被忽略（返回成功但界面没变）：这类目标直接用 fx/fy，或改用 android_gesture 的 tap 笔。需要无障碍服务。"
+      + "**【怎么确认成功】** 正向确认请用 expect_text（工具会轮询控件树确认文字真的出现）；"
+      + "返回里**不再**猜测\"界面是否变化\"（控件树指纹分不清\"页面自己在动\"和\"点生效了\"，猜错会误导）；",
     parameters: {
       text: { type: "string", description: "控件文字（模糊包含匹配）" },
       desc: { type: "string", description: "控件内容描述（模糊包含匹配）" },
@@ -734,10 +729,6 @@ function apply(ctx) {
           method: { type: "string" },
           verified: { type: "boolean" },
           expected: { type: "string" },
-          uiChanged: { type: "boolean" },
-          settleMs: { type: "number" },
-          confirmMs: { type: "number" },
-          changing: { type: "boolean" },
           warning: { type: "string" },
           hint: { type: "string" }
         }
@@ -809,10 +800,6 @@ function apply(ctx) {
           ? { hint: "若界面没有变化：WebView/网页按钮经常忽略无障碍 ACTION_CLICK。改用坐标点击（fx/fy）或 android_gesture 的 tap 笔通常有效。" }
           : {}),
         ...(verifyHint ? { hint: verifyHint } : {}),
-        ...(typeof v.uiChanged === "boolean" ? { uiChanged: v.uiChanged } : {}),
-        ...(typeof v.settleMs === "number" ? { settleMs: v.settleMs } : {}),
-        ...(typeof v.confirmMs === "number" ? { confirmMs: v.confirmMs } : {}),
-        ...(v.changing === true ? { changing: true } : {}),
         ...(v.found === false && v.error ? { error: v.error } : {})
       };
     }
@@ -1251,9 +1238,6 @@ function apply(ctx) {
         strokeCount: { type: "number" },
         strokes: { type: "array", items: { type: "object", additionalProperties: true } },
         singleTapVia: { type: "string" },
-        uiChanged: { type: "boolean" },
-        settleMs: { type: "number" },
-        changing: { type: "boolean" }
       }
     },
     render: (_a, v) => renderResult(v)
@@ -1494,9 +1478,6 @@ function apply(ctx) {
         ...(typeof v.strokeCount === "number" ? { strokeCount: v.strokeCount } : {}),
         ...(Array.isArray(v.strokes) ? { strokes: v.strokes } : {}),
         ...(typeof v.singleTapVia === "string" ? { singleTapVia: v.singleTapVia } : {}),
-        ...(typeof v.uiChanged === "boolean" ? { uiChanged: v.uiChanged } : {}),
-        ...(typeof v.settleMs === "number" ? { settleMs: v.settleMs } : {}),
-        ...(v.changing === true ? { changing: true } : {})
       };
     }
   }));

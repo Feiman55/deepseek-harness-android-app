@@ -953,15 +953,6 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                     ro.put("durationMs", ends[0]);
                     ro.put("held", new JSONArray());
                     ro.put("singleTapVia", "gestureTap");
-                    // v1.20.9：注入生效有 1~3 秒延迟 → 等界面稳定再判（不再固定 250ms）
-                    boolean[] ch = new boolean[1];
-                    int[] chg = new int[1];
-                    long t0g = System.currentTimeMillis();
-                    waitForUiSettle(fpBeforeGesture, 1000L, ch, chg);
-                    long settleMs = System.currentTimeMillis() - t0g;
-                    ro.put("uiChanged", ch[0]);
-                    ro.put("settleMs", settleMs);
-                    if (chg[0] >= 3) ro.put("changing", true);
                     if (!tapOk) ro.put("error", "触摸注入没有完成（被系统取消/超时/拒绝）");
                     return ro.toString();
                 }
@@ -1028,25 +1019,6 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                 }
                 JSONObject o = new JSONObject();
                 o.put("ok", true);
-                // v1.20.9：等界面稳定再判（注入生效有 1~3 秒延迟）
-                boolean[] ch2 = new boolean[1];
-                int[] chg2 = new int[1];
-                long t0g2 = System.currentTimeMillis();
-                waitForUiSettle(fpBeforeGesture, 1000L, ch2, chg2);
-                long settleMs = System.currentTimeMillis() - t0g2;
-                boolean uiChanged = ch2[0];
-                o.put("durationMs", totalT);
-                o.put("held", held);
-                o.put("uiChanged", uiChanged);
-                o.put("settleMs", settleMs);
-                if (chg2[0] >= 3) o.put("changing", true);
-                o.put("strokeCount", gesture.getStrokeCount());
-                o.put("strokes", strokeDiag);
-                if (!uiChanged) {
-                    o.put("hint", "手势已注入完成（onCompleted 正常回调）。uiChanged=false 表示"
-                            + "「没能从控件树确认界面变化」—— 控件树对游戏/自绘界面不敏感，"
-                            + "不代表没生效。需要确认请用 android_see（截图对比）或 android_pixel 采样。");
-                }
                 return o.toString();
             } catch (Throwable t) {
                 releaseAllFingersUnlocked();
@@ -1499,52 +1471,6 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
     }
 
     /**
-     * 等界面稳定（v1.20.9，agent 实测）：注入类手势"生效"有 1~3 秒延迟，
-     * 刚注入就取指纹/截图会看到旧画面，表现得像"报了成功但没生效"。
-     * 这里轮询控件树指纹：观察到变化后连续两次相同即认为稳定；返回实际等待毫秒数。
-     */
-    private long waitForUiSettle(String beforeFp, long maxMs, boolean[] changedOut) {
-        return waitForUiSettle(beforeFp, maxMs, changedOut, null);
-    }
-
-    /**
-     * 同上，额外统计"等待期间指纹变更次数"（changesOut[0]）。
-     * 用途：DSH 聊天页在流式输出时内容每秒都在变，此时"已确认"没有意义 ——
-     * 变更次数多（≥3）就标记 changing，提醒只看负例（agent 实测提出）。
-     */
-    private long waitForUiSettle(String beforeFp, long maxMs, boolean[] changedOut, int[] changesOut) {
-        long start = System.currentTimeMillis();
-        String prev = treeFingerprint();
-        boolean changed = !beforeFp.equals(prev);
-        int same = 0;
-        int changes = 0;
-        boolean settled = false;
-        while (System.currentTimeMillis() - start < maxMs) {
-            try {
-                Thread.sleep(150L);
-            } catch (InterruptedException ignored) {
-                break;
-            }
-            String cur = treeFingerprint();
-            if (System.currentTimeMillis() - start >= maxMs) break;
-            if (!cur.equals(beforeFp)) changed = true;
-            if (cur.equals(prev)) {
-                if (++same >= 2) { settled = true; break; }
-            } else {
-                changes++;
-                same = 0;
-                prev = cur;
-            }
-        }
-        if (changedOut != null && changedOut.length > 0) changedOut[0] = changed;
-        // 没等到稳定（预算耗尽仍未出现「连续两次相同」）→ 说明页面一直在变，按「持续变化」处理，
-        // 不再依赖变更次数（繁忙页面 800ms 内可能只采样到 2 次，阈值 3 永远达不到）。
-        if (!settled) changes = Math.max(changes, 3);
-        if (changesOut != null && changesOut.length > 0) changesOut[0] = changes;
-        return System.currentTimeMillis() - start;
-    }
-
-    /**
      * 取"工具应该操作的那棵无障碍树"（v1.21.4）。
      *
      * <p>背景（agent 实测）：本应用的黑鲸鱼悬浮窗在屏幕上时，
@@ -1782,12 +1708,12 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
                         o.put("hint", "等几秒重试；或先 android_screen 确认界面还响应；"
                                 + "内存紧张（<400MB）时更容易失败，可先关掉其它 App。");
                     }
-                    if (expect.isEmpty() || !gestureOk) return finishTapWithConfirm(o, fpStart);
+                    if (expect.isEmpty() || !gestureOk) return o.toString();
                 } else {
                     o.put("found", false);
                     o.put("method", "none");
                     o.put("verified", false);
-                    if (expect.isEmpty()) return finishTapWithConfirm(o, fpStart);
+                    if (expect.isEmpty()) return o.toString();
                 }
             } else {
                 o.put("found", true);
@@ -1808,32 +1734,12 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
             // v1.21.0（agent 实测）：注入/点击"生效"有 1~3 秒延迟，而且以前只有 /gesture
             // 会回"界面是否变化" —— /tap 这条路漏了，工具输出只剩"操作成功。"。
             // 这里同样轮询控件树等稳定，把结论回给调用方。
-            return finishTapWithConfirm(o, fpStart);
+            return o.toString();
         } catch (Throwable t) {
             return jsonError("tap error: " + t.getMessage());
         }
     }
 
-    /**
-     * v1.21.1（agent 实测）：/tap 有多个提前 return（纯坐标 gesture 分支、未找到分支），
-     * 只有主路径带了"界面变化"确认 → 纯坐标那条输出只剩「操作成功。」。
-     * 这里统一收口：所有分支都补 uiChanged / settleMs / confirmMs。
-     */
-    private String finishTapWithConfirm(JSONObject o, String fpStart) {
-        try {
-            boolean[] ch = new boolean[1];
-            int[] chg = new int[1];
-            long t0 = System.currentTimeMillis();
-            waitForUiSettle(fpStart, 1000L, ch, chg);
-            // v1.21.2：以前 settleMs 从方法入口算起，把点击与 expect 轮询都算进去 → 出现 2444/4538ms
-            long confirmMs = System.currentTimeMillis() - t0;
-            o.put("uiChanged", ch[0]);
-            o.put("settleMs", confirmMs);
-            o.put("confirmMs", confirmMs);
-            if (chg[0] >= 3) o.put("changing", true);
-        } catch (Throwable ignored) {}
-        return o.toString();
-    }
 
     private boolean gestureTap(final int x, final int y) {
         if (Build.VERSION.SDK_INT < 24) return false;
