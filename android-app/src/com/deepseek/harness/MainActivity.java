@@ -884,9 +884,53 @@ public class MainActivity extends Activity {
             // v1.22.2（维护者要求）：悬浮窗「打开」固定回主界面，而不是控制台上次停留的页面
             Log.i(TAG, "onNewIntent: EXTRA_OPEN_WEB → 进主界面（来源：悬浮窗面板）");
             try {
-                // v1.22.5（维护者要求）：与点桌面图标同一套逻辑 —— 只负责回到主界面，
-                // **不判断引擎、不弹"引擎未运行"**。引擎没起来时由既有的启动/看门狗链路处理。
-                enterMainUiKeepWeb();
+                // v1.22.14（维护者实测）：判据必须是"引擎真的就绪"，不是"WebView 里还有页面"。
+                // 之前启动中点「打开」会复用旧页面直接进 DSH，发消息必失败。
+                // ① 用户主动停止 → 控制台
+                if (engineStoppedByUser || engineStoppedByUserPersisted()) {
+                    Log.i(TAG, "onNewIntent: 引擎处于用户主动停止状态 → 进控制台");
+                    showEngineScreenIfNeeded();
+                    showConsole();
+                    return;
+                }
+                // ② 正在启动 → 控制台（控制台就绪后会自动跳主界面）
+                if (starting) {
+                    Log.i(TAG, "onNewIntent: 引擎正在启动 → 先进控制台");
+                    showEngineScreenIfNeeded();
+                    showConsole();
+                    return;
+                }
+                // ③ 其余：后台确认 healthOk（最多 3 次 × 0.7s），就绪才进主界面
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        boolean up = false;
+                        for (int i = 0; i < 3 && !up; i++) {
+                            if (starting) break;                 // 期间开始启动了 → 交给控制台自动跳转
+                            up = healthOk();
+                            if (!up) {
+                                try { Thread.sleep(700L); } catch (InterruptedException e) { return; }
+                            }
+                        }
+                        final boolean ready = up;
+                        final boolean booting = starting;
+                        ui.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                try {
+                                    if (ready) {
+                                        enterMainUiKeepWeb();
+                                        return;
+                                    }
+                                    Log.i(TAG, "onNewIntent: 引擎未就绪（booting=" + booting + "）→ 进控制台");
+                                    showEngineScreenIfNeeded();
+                                    showConsole();
+                                } catch (Throwable ignored) {}
+                            }
+                        });
+                    }
+                }, "open-web-probe").start();
+                return;
             } catch (Throwable t) {
                 Log.w(TAG, "onNewIntent open web failed", t);
             }
