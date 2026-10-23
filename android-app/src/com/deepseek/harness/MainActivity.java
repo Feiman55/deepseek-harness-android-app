@@ -10348,18 +10348,22 @@ public class MainActivity extends Activity {
         if (consoleLayer != null) consoleLayer.setVisibility(View.GONE);
         if (consoleLayerBox != null) consoleLayerBox.setVisibility(View.GONE);   // 背景图一起收
         if (conTick != null) conTick.removeCallbacks(consoleTick);
-        String cur = null;
+        // v1.22.7（维护者实测：出现黑屏 / 打不开主界面）：只看 getUrl() 不够 ——
+        // 后台被回收后 URL 还在但页面内容是空的。必须同时确认"真的加载完了"（progress>=100）。
+        boolean usable = false;
         try {
-            cur = webView == null ? null : webView.getUrl();
+            String cur = webView == null ? null : webView.getUrl();
+            usable = cur != null && cur.startsWith("http://127.0.0.1:")
+                    && webView.getProgress() >= 100;
         } catch (Throwable ignored) {}
-        if (cur != null && cur.startsWith("http://127.0.0.1:")) {
-            // 已经停在 DSH 页面上 → 保持不动（不重载、不丢失当前会话视图）
+        if (usable) {
             try {
                 webView.setVisibility(View.VISIBLE);
             } catch (Throwable ignored) {}
             Log.i(TAG, "enterMainUiKeepWeb: 复用已加载的 WebView（不重载）");
             return;
         }
+        Log.i(TAG, "enterMainUiKeepWeb: 页面不可用（未加载完成）→ 重新加载主页");
         enterMainUi();
     }
 
