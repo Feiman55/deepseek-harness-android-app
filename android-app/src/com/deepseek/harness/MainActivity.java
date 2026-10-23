@@ -6482,17 +6482,24 @@ public class MainActivity extends Activity {
         startWatchdog();
         ui.post(new Runnable() {
             @Override public void run() {
-                statusView.setVisibility(View.GONE);
-                if (splashLogo != null) splashLogo.setVisibility(View.GONE);
-                if (splashBrand != null) splashBrand.setVisibility(View.GONE);
-                if (splashHint != null) splashHint.setVisibility(View.GONE);
-                if (progressBar != null) {
-                    progressBar.setIndeterminate(false);
-                    progressBar.setVisibility(View.GONE);
-                }
+                hideSplashAndProgress();
                 webView.loadUrl(webHomeUrl());
             }
         });
+    }
+
+    /** 隐藏启动页与进度条（主界面出现时必须调用，否则会话页上会残留一个蓝色加载圈）。 */
+    private void hideSplashAndProgress() {
+        try {
+            statusView.setVisibility(View.GONE);
+            if (splashLogo != null) splashLogo.setVisibility(View.GONE);
+            if (splashBrand != null) splashBrand.setVisibility(View.GONE);
+            if (splashHint != null) splashHint.setVisibility(View.GONE);
+            if (progressBar != null) {
+                progressBar.setIndeterminate(false);
+                progressBar.setVisibility(View.GONE);
+            }
+        } catch (Throwable ignored) {}
     }
 
     private void setStatus(final String s) {
@@ -10438,6 +10445,7 @@ public class MainActivity extends Activity {
                     && webView.getContentHeight() > 0;
         } catch (Throwable ignored) {}
         if (usable) {
+            hideSplashAndProgress();     // v1.22.15：不然会话页上会残留启动页的蓝色进度圈
             try {
                 webView.setVisibility(View.VISIBLE);
             } catch (Throwable ignored) {}
