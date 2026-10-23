@@ -878,13 +878,9 @@ public class MainActivity extends Activity {
             // v1.22.2（维护者要求）：悬浮窗「打开」固定回主界面，而不是控制台上次停留的页面
             Log.i(TAG, "onNewIntent: EXTRA_OPEN_WEB → 进主界面（来源：悬浮窗面板）");
             try {
-                if (conEngineRunning()) {
-                    enterMainUi();
-                } else {
-                    showEngineScreenIfNeeded();
-                    showConsole();
-                    conToast("引擎未运行，已在控制台里启动");
-                }
+                // v1.22.5（维护者要求）：与点桌面图标同一套逻辑 —— 只负责回到主界面，
+                // **不判断引擎、不弹"引擎未运行"**。引擎没起来时由既有的启动/看门狗链路处理。
+                enterMainUiKeepWeb();
             } catch (Throwable t) {
                 Log.w(TAG, "onNewIntent open web failed", t);
             }
@@ -10339,6 +10335,32 @@ public class MainActivity extends Activity {
             try { Thread.sleep(600); } catch (InterruptedException ignored) {}
         }
         nodeProcess = null;
+    }
+
+    /**
+     * v1.22.3（维护者实测）：从悬浮窗「打开」回主界面时**不要重载 WebView**。
+     * 重载会让 SPA 重新启动（闪「Loading plugins…」→ 默认工作区页 → 再恢复上次会话），
+     * 而点桌面图标是"恢复任务"，直接就是上次的会话页。这里对齐图标的行为：
+     * WebView 已经加载过就只把控制台层收起、保持当前页面。
+     */
+    private void enterMainUiKeepWeb() {
+        consoleVisible = false;
+        if (consoleLayer != null) consoleLayer.setVisibility(View.GONE);
+        if (consoleLayerBox != null) consoleLayerBox.setVisibility(View.GONE);   // 背景图一起收
+        if (conTick != null) conTick.removeCallbacks(consoleTick);
+        String cur = null;
+        try {
+            cur = webView == null ? null : webView.getUrl();
+        } catch (Throwable ignored) {}
+        if (cur != null && cur.startsWith("http://127.0.0.1:")) {
+            // 已经停在 DSH 页面上 → 保持不动（不重载、不丢失当前会话视图）
+            try {
+                webView.setVisibility(View.VISIBLE);
+            } catch (Throwable ignored) {}
+            Log.i(TAG, "enterMainUiKeepWeb: 复用已加载的 WebView（不重载）");
+            return;
+        }
+        enterMainUi();
     }
 
     private void enterMainUi() {

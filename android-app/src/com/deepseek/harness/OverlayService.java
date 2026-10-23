@@ -814,9 +814,14 @@ public class OverlayService extends Service {
         brp.topMargin = dp(7);
         btnRow.setLayoutParams(brp);
         btnRow.addView(pillButton("打开", new Runnable() { @Override public void run() {
-            Intent i = new Intent(OverlayService.this, MainActivity.class);
-            i.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
-            // v1.22.2（维护者要求）：「打开」固定进主界面 —— 即使上次停在控制台也切回来
+            // v1.22.5（维护者要求）：与「点桌面图标」完全同一套逻辑 —— 发 launcher intent，
+            // 让系统把已有任务恢复到前台（不重载、不改页面）。只额外带一个 extra，
+            // 用于"当前停在控制台时切回主界面"。
+            Intent i = new Intent(Intent.ACTION_MAIN);
+            i.addCategory(Intent.CATEGORY_LAUNCHER);
+            i.setClassName(OverlayService.this, MainActivity.class.getName());
+            // 不要 RESET_TASK_IF_NEEDED：它会让系统重置任务（重建 Activity → WebView 空 → 只能重载）
+            i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             i.putExtra(MainActivity.EXTRA_OPEN_WEB, true);
             try { startActivity(i); } catch (Throwable ignored) {}
             setPanelVisible(false, true);
@@ -1784,7 +1789,13 @@ public class OverlayService extends Service {
     private void updateEngineStatusUi() {
         if (statusText != null) {
             // v1.21：引擎一行、会话数一行（原先把两件事挤在一行并加 "AI：" 前缀，用户觉得别扭）
-            statusText.setText(engineUp ? "● 引擎运行中…" : "○ 引擎未运行");
+            // v1.22.5（维护者实测）：首次打开面板时探测还没回来，engineUp 还是初值 false
+        // → 会闪一下「未运行」。没探测过就显示「检测中」，不下结论。
+        if (lastProbeAt <= 0L) {
+            statusText.setText("○ 引擎状态检测中…");
+            return;
+        }
+        statusText.setText(engineUp ? "● 引擎运行中…" : "○ 引擎未运行");
         }
         if (sessionText != null) {
             sessionText.setText(sessionStatusText());
