@@ -1694,6 +1694,8 @@ function apply(ctx) {
         verified,
         submitted,
         ...(verifyError ? { error: verifyError } : {}),
+        // v1.21.5：写了但完全没写进去（wrote=false）时也要给原因，否则渲染成「未知错误」
+        ...(!wrote ? { error: "没能写入输入框：无障碍直写与剪贴板粘贴都被系统拒绝（详见 steps）" } : {}),
         changed,
         steps: steps.join(" → "),
         ...(before === null ? { hint: "（注意：读不到控件树，本工具的自证能力受限）" } : {}),

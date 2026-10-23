@@ -1851,11 +1851,23 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
             }
             // v1.20.2（用户实测）：SET_TEXT / PASTE 在 WebView 里**返回 true 但框里没字**（假成功）。
             // 读回节点文本 + 比对界面指纹，二者都没变化就如实报失败（不再报"已写入"）。
+            // v1.21.5（agent 实测）：写完立刻读回会拿到**旧值**（实际已写入，例如 wifi → wifidsh），
+            // 导致 android_paste_text / android_focus_type 误报失败。这里轮询等落地（最多 1.5s）。
             String readback = "";
-            try {
-                CharSequence t2 = target.getText();
-                if (t2 != null) readback = t2.toString();
-            } catch (Throwable ignored) {}
+            final String needle = text.length() > 40 ? text.substring(0, 40) : text;
+            long rbDeadline = System.currentTimeMillis() + 1500L;
+            do {
+                try {
+                    CharSequence t2 = target.getText();
+                    if (t2 != null) readback = t2.toString();
+                } catch (Throwable ignored) {}
+                if (!readback.isEmpty() && readback.contains(needle)) break;
+                try {
+                    Thread.sleep(120L);
+                } catch (InterruptedException ignored) {
+                    break;
+                }
+            } while (System.currentTimeMillis() < rbDeadline);
             // v1.20.3（第二轮反馈）：以前还有"整树指纹变化"兜底，结果聊天里那行
             // `Tool call android_focus_type · CESHI-ABC-2` 被当成证据 → 假阳性。
             // 现在只认**输入节点自身**的读回文本（WebView 里那就是空 → 如实失败）。
