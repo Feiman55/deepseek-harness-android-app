@@ -562,7 +562,7 @@ function apply(ctx) {
                   ? "已设置 " + value.stream + " = " + value.level + "（最大 " + value.max + "）✅"
                   : (value.oldValue !== undefined && value.newValue !== undefined
               ? "已设置 " + (value.key || "?") + "：" + value.oldValue + " → " + value.newValue
-              : "已设置 " + (value.key || "?") + " ✅（读回不可用）") + " ✅"))
+              : "已设置 " + (value.key || "?") + "（读回不可用）") + " ✅"))
           : (_args && String(_args.action || "put").toLowerCase() === "get"
               ? "读取失败：" + (value.error || "未知错误")
               : "设置失败：" + (value.error || "未知错误"))
