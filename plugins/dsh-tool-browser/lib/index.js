@@ -410,9 +410,16 @@ export function apply(ctx) {
       const ca = { ref: String(args.ref || "") };
       const ct = tabFor(ca.ref, args && args.tabId);
       if (ct) ca.tabId = ct;                       // ← 闸门靠它生效（见文件头说明）
-      return pick(await browserOp("click", ca, 20000),
+      const res = pick(await browserOp("click", ca, 20000),
         ["ok", "ref", "changed", "via", "newText", "fromGeneration", "toGeneration", "url", "title",
          "pageGeneration", "loadState", "clickedAt", "delta", "reason", "error", "hint"]);
+        // v1.22.1（agent 实测）：changed 是「点击瞬间」的判定 —— 导航还没完成时会先回 false，
+        // 实际是点成功的。这里只如实说明，不断言「没点动」，并提示复核。
+        if (res && res.ok !== false && res.changed === false) {
+          res.hint = (res.hint ? res.hint + " " : "")
+            + "注意：判定时页面可能仍在导航（导航类点击常先回 changed=false）——请用 browser_snapshot / browser_tabs 复核，不要急着重复点击。";
+        }
+        return res;
     }
   }));
 

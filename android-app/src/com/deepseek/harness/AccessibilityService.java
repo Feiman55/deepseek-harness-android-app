@@ -2058,7 +2058,35 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
         }
     }
 
+    /** v1.22.1：截图串行化 —— 系统同一时刻只允许一次 takeScreenshot，并发必然撞 code=3。 */
+    private static final Object SHOT_LOCK = new Object();
+    private static int shotRetries = 0;
+
     private String handleScreenshot(String path) {
+        synchronized (SHOT_LOCK) {
+            try {
+                return handleScreenshotLocked(path);
+            } finally {
+                shotRetries = 0;
+            }
+        }
+    }
+
+    /** 把 AccessibilityService 的截图错误码翻译成能指导操作的话。 */
+    private String screenshotErrorText(int errorCode) {
+        if (errorCode == 3) {
+            return "截图太频繁（系统同一时刻只允许一次截图）—— 并发调用会撞这个限制，请串行重试";
+        }
+        if (errorCode == 2) {
+            return "没有截图权限，或无障碍服务未连接";
+        }
+        if (errorCode == 1) {
+            return "系统内部错误（可能是安全页面 / 受保护界面）";
+        }
+        return "系统返回错误码 " + errorCode;
+    }
+
+    private String handleScreenshotLocked(String path) {
         if (Build.VERSION.SDK_INT < 30) {
             return jsonError("截图需要 Android 11+（当前 API " + Build.VERSION.SDK_INT + "）；低版本请用 /dump 读屏幕文本");
         }
@@ -2299,7 +2327,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
 
                 @Override
                 public void onFailure(int errorCode) {
-                    result[0] = jsonError("截图失败（错误码 " + errorCode + "，安全页面/未授权截图时常见）");
+                    result[0] = jsonError("截图失败：" + screenshotErrorText(errorCode));
                     latch.countDown();
                 }
             });
@@ -2312,6 +2340,15 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
             }
         } catch (InterruptedException e) {
             return jsonError("截图被中断");
+        }
+        // v1.22.1：撞到「截图太频繁」→ 退避 800ms 重试一次（并发/连拍兜底）
+        if (result[0] != null && result[0].contains("截图太频繁") && shotRetries < 1) {
+            shotRetries++;
+            try {
+                Thread.sleep(800L);
+            } catch (InterruptedException ignored) {
+            }
+            return handleScreenshot(path);
         }
         return result[0] == null ? jsonError("截图无结果") : result[0];
     }
