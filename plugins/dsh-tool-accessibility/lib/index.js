@@ -1613,7 +1613,7 @@ function apply(ctx) {
       } else {
         steps.push("写入=无障碍直写失败（" + (direct.error || "?") + "）");
         const clip = await appPost("/clipboard",
-          { token: process.env.APP_LOCAL_TOKEN || "", action: "write", text }, 8000);
+          { token: process.env.APP_LOCAL_TOKEN || "", action: "write", content: text }, 8000);
         if (clip && clip.ok !== false) {
           const pasted = parseResult(await a11yRequest("/input", { mode: "paste" }, 10000));
           if (pasted.ok !== false && pasted.landed !== false) {

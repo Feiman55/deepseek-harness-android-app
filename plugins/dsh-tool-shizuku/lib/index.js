@@ -559,7 +559,9 @@ function apply(ctx) {
               ? (value.key || "?") + " = " + (value.value === "" ? "(空)" : value.value)
               : (value.stream
                   ? "已设置 " + value.stream + " = " + value.level + "（最大 " + value.max + "）✅"
-                  : "已设置 " + (value.key || "?") + "：" + (value.oldValue ?? "?") + " → " + (value.newValue ?? "?") + " ✅"))
+                  : (value.oldValue !== undefined && value.newValue !== undefined
+              ? "已设置 " + (value.key || "?") + "：" + value.oldValue + " → " + value.newValue
+              : "已设置 " + (value.key || "?") + " ✅（读回不可用）") + " ✅"))
           : "设置失败：" + (value.error || "未知错误")
       }]
     },
@@ -571,8 +573,9 @@ function apply(ctx) {
         // 读当前值：特权 shell（输出可能落在 stdout 或 stderr，统一取非空的那个）
         const readKey = async () => {
           const r = await privCmd("settings get system " + shq(key), 15000);
-          const v = String(r.stdout || "").trim() || String(r.stderr || "").trim();
-          return { ok: r.ok && v !== "" && v !== "null", value: v, raw: r };
+          const v = String(r.stdout || "").trim();
+          // 只认 stdout 的真实值：特权通道超时时 stderr 是错误文本，不能当 oldValue/newValue
+          return { ok: r.ok === true && v !== "" && v !== "null", value: v, raw: r };
         };
         if (action === "get") {
           const cur = await readKey();
@@ -622,9 +625,11 @@ function apply(ctx) {
           ok: true,
           namespace: "system",
           key,
-          oldValue: before.value,
-          newValue: after.value,
-          ...(typeof posted.level === "number" ? { newValue: String(posted.level) } : {})
+          ...(before.ok ? { oldValue: before.value } : {}),
+          ...((after.ok || typeof posted.level === "number")
+              ? { newValue: typeof posted.level === "number" ? String(posted.level) : after.value }
+              : {}),
+          ...(!before.ok && !after.ok ? { hint: "写入已完成；读回不可用（特权通道超时）" } : {})
         };
       } catch (e) {
         return { ok: false, error: String(e && e.message || e) };
@@ -657,7 +662,11 @@ function apply(ctx) {
       render: (_args, value) => [{
         type: "text",
         text: value.ok
-          ? (value.content !== undefined ? "剪贴板内容：\n" + value.content : "已写入剪贴板 ✅")
+          ? (value.content !== undefined
+              ? (value.content === ""
+                  ? "剪贴板内容为空（可能是剪贴板本来为空，或系统限制后台读取）"
+                  : "剪贴板内容：\n" + value.content)
+              : "已写入剪贴板 ✅")
           : "剪贴板操作失败：" + (value.error || "未知错误")
       }]
     },
