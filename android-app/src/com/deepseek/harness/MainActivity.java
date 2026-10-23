@@ -234,6 +234,8 @@ public class MainActivity extends Activity {
      * （控制台的另一条入口是故障自动回退：引擎起不来 / WebView 加载失败。）
      */
     public static final String EXTRA_OPEN_CONSOLE = "open_console";
+    /** v1.22.2：悬浮窗「打开」用 —— 固定进主界面（不回到控制台上次停留的页面）。 */
+    public static final String EXTRA_OPEN_WEB = "open_web";
     private static final int REQ_STORAGE = 200;
     /** v1.20.1：麦克风权限请求码（只在控制台权限页用，不新增引导页）。 */
     private static final int REQ_MIC = 201;
@@ -796,7 +798,13 @@ public class MainActivity extends Activity {
     private boolean consumeOpenConsoleExtra() {
         try {
             Intent it = getIntent();
-            if (it == null || !it.getBooleanExtra(EXTRA_OPEN_CONSOLE, false)) return false;
+            if (it == null) return false;
+            // v1.22.2：带 open_web 启动时，明确不消费 open_console（正常走 autoEnter 进主界面）
+            if (it.getBooleanExtra(EXTRA_OPEN_WEB, false)) {
+                it.removeExtra(EXTRA_OPEN_WEB);
+                return false;
+            }
+            if (!it.getBooleanExtra(EXTRA_OPEN_CONSOLE, false)) return false;
             it.removeExtra(EXTRA_OPEN_CONSOLE);
             return true;
         } catch (Throwable t) {
@@ -861,9 +869,27 @@ public class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         if (intent == null) return;
+        boolean wantWeb = intent.getBooleanExtra(EXTRA_OPEN_WEB, false);
+        intent.removeExtra(EXTRA_OPEN_WEB);
         boolean wantConsole = intent.getBooleanExtra(EXTRA_OPEN_CONSOLE, false);
         intent.removeExtra(EXTRA_OPEN_CONSOLE);
         setIntent(intent);
+        if (wantWeb) {
+            // v1.22.2（维护者要求）：悬浮窗「打开」固定回主界面，而不是控制台上次停留的页面
+            Log.i(TAG, "onNewIntent: EXTRA_OPEN_WEB → 进主界面（来源：悬浮窗面板）");
+            try {
+                if (conEngineRunning()) {
+                    enterMainUi();
+                } else {
+                    showEngineScreenIfNeeded();
+                    showConsole();
+                    conToast("引擎未运行，已在控制台里启动");
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "onNewIntent open web failed", t);
+            }
+            return;
+        }
         if (!wantConsole) return;
         Log.i(TAG, "onNewIntent: EXTRA_OPEN_CONSOLE → 进控制台（来源：常驻通知 / 悬浮窗面板）");
         try {

@@ -816,6 +816,8 @@ public class OverlayService extends Service {
         btnRow.addView(pillButton("打开", new Runnable() { @Override public void run() {
             Intent i = new Intent(OverlayService.this, MainActivity.class);
             i.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
+            // v1.22.2（维护者要求）：「打开」固定进主界面 —— 即使上次停在控制台也切回来
+            i.putExtra(MainActivity.EXTRA_OPEN_WEB, true);
             try { startActivity(i); } catch (Throwable ignored) {}
             setPanelVisible(false, true);
         }}));
