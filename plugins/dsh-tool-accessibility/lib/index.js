@@ -35,8 +35,9 @@ const TOOL_GUIDE = [
   "  android_mem_status 内存体检 | android_a11y_status 无障碍状态（能区分「没开」与「闪断」）",
   "【免特权 · 不需要 root/Shizuku】",
   "  android_capabilities 本工具（能力总览） | android_apps 列已装应用 | android_launch 启动应用（只走桌面入口）",
-  "  android_open_url 打开网址/深链（要开网页一律用它，别在浏览器里打字） | android_screenshot 截图存文件",
-  "  android_overlay 悬浮窗开关 | android_usage 应用使用时长 | android_notify 发通知 | android_clipboard 读写剪贴板",
+  "  android_open_url 打开网址/深链（要开网页一律用它，别在浏览器里打字） | 截图请用 android_see（本版不注册 android_screenshot：它属于特权工具，需 root/Shizuku）",
+  "  android_usage 应用使用时长 | android_notify 发通知 | android_clipboard 读写剪贴板"
+      + "（android_overlay 悬浮窗开关在本版**未启用**，不要再尝试调用）",
   "  android_setting_app 修改系统设置（Settings.System 写入，必填 key + value）",
   "【需特权 · 未授权时这些工具不会出现在工具列表里】",
   "  android_input 模拟输入（点击/滑动/文本/按键 keyevent） | android_package 装/卸/清数据/授撤权",
@@ -1547,9 +1548,7 @@ function apply(ctx) {
           error: { type: "string" },
           wrote: { type: "boolean" },
           path: { type: "string" },
-          verified: { type: "boolean" },
           submitted: { type: "boolean" },
-          changed: { type: "boolean" },
           steps: { type: "string" },
           hint: { type: "string" }
         }
@@ -1558,12 +1557,11 @@ function apply(ctx) {
         v = renderValue(v);
         if (!v.ok && !v.wrote) return renderResult(v);
         const lines = [
-          (v.wrote ? "已写入 ✅" : "未写入 ❌") + (v.path ? "（路径 " + v.path + "）" : "")
-            + (v.wrote ? "· 读回" + (v.verified ? "确认可见 ✅" : "未看到文本 ⚠") : ""),
+          (v.wrote ? "已尝试写入" : "未写入 ❌") + (v.path ? "（" + v.path + "）" : ""),
           "步骤: " + (v.steps || "")
         ];
-        if (v.submitted) lines.push("提交: 已发出 ACTION_IME_ENTER · 界面" + (v.changed ? "有变化 ✅" : "未观察到变化 ⚠"));
-        if (v.hint) lines.push("", "建议: " + v.hint);
+        if (v.submitted) lines.push("提交: 已发出 ACTION_IME_ENTER");
+        if (v.hint) lines.push("", "说明: " + v.hint);
         return [{ type: "text", text: lines.join("\n") }];
       }
     },
@@ -1627,79 +1625,23 @@ function apply(ctx) {
           steps.push("写入=剪贴板写入失败（" + ((clip && clip.error) || "?") + "）");
         }
       }
-      await new Promise((r) => setTimeout(r, 300));
-      // 3) 读回自证（v1.20.3：以服务端"输入节点自身读回"为准 —— 以前扫整棵树，
-      //    结果聊天里那行 `Tool call android_focus_type · <文本>` 被当成证据 → 假阳性）
-      const after = await dumpNodes();
-      let verified = direct.landed === true;
-      if (!verified && typeof direct.readback === "string" && direct.readback.length > 0) {
-        verified = direct.readback.indexOf(text) >= 0;
-      }
-      steps.push("读回=" + (verified ? "输入框已确认" : "输入框里没读到本次文本"));
-      // 3b) v1.22：直写报"成功"但没落地（WebView/自绘输入框很常见）→ 自动再走一次剪贴板粘贴并复验。
-      //   实测（系统设置搜索框）：a11y 直写返回 ok，但控件树里仍是原提示文字 —— 不读回就完全看不出来。
-      if (!verified) {
-        const clip2 = await appPost("/clipboard",
-          { token: process.env.APP_LOCAL_TOKEN || "", action: "write", text }, 8000);
-        if (clip2 && clip2.ok !== false) {
-          const pasted2 = parseResult(await a11yRequest("/input", { mode: "paste" }, 10000));
-          if (pasted2.ok !== false) {
-            path = path ? path + "+clipboard-paste" : "clipboard-paste";
-            steps.push("回退=剪贴板粘贴");
-            await new Promise((r) => setTimeout(r, 300));
-            verified = pasted2.landed === true;
-            steps.push("复验=" + (verified ? "输入框已确认" : "输入框里仍没读到文本"));
-          } else {
-            steps.push("回退=剪贴板粘贴失败（" + (pasted2.error || "?") + "）");
-          }
-        }
-      }
-      // 4) 提交 + 等变化
+      // 3) 可选提交 —— 只发动作，不等界面变化（那是猜测）
       let submitted = false;
-      let changed = false;
       if (args.submit === true) {
         const s = parseResult(await a11yRequest("/ime-enter", undefined, 6000));
         submitted = s.ok !== false;
         steps.push("提交=" + (submitted ? "已发 ACTION_IME_ENTER" : ("失败（" + (s.error || "?") + "）")));
-        const timeout = Math.max(500, Math.min(15000, Number(args.timeout_ms) || 4000));
-        const t0 = Date.now();
-        const fpBefore = treeFingerprint(after);
-        while (Date.now() - t0 < timeout) {
-          await new Promise((r) => setTimeout(r, 400));
-          const now = await dumpNodes();
-          if (now && treeFingerprint(now) !== fpBefore) { changed = true; break; }
-        }
-        steps.push("提交后界面" + (changed ? "有变化" : "未观察到变化"));
       }
-      const hints = [];
-      if (wrote && !verified) {
-        hints.push("写入了但读回没看到文本：可能是 WebView 自绘输入框（无障碍读不到内容）。"
-          + "可用 android_see(select=/region=) 截一次输入区域人工确认，或直接 submit 后再读一次页面。");
-      }
-      if (args.submit === true && submitted && !changed) {
-        hints.push("已发出提交但没观察到界面变化：可能提交未生效，或页面变化很慢。"
-          + "建议再用 android_screen / android_see 确认一次当前页面；若是地址栏场景，改用 android_open_url。");
-      }
-      // v1.20.3：写入成功但读回失败时，必须给出明确原因（以前这里 ok=false 却没 error
-      // → 界面显示"执行失败：未知错误"，完全没法排查）。
-      const verifyError = (wrote && !verified)
-        ? ("写入动作被系统接受了，但输入框读回不到本次文本（多半是 WebView 忽略了 a11y 注入）。"
-          + "可先 android_tap 点中输入框并确认软键盘弹出再重试；仍失败说明该系统屏蔽了 a11y 注入，"
-          + "需要 Shizuku/root 的 android_input。")
-        : "";
+      // v1.22.0（维护者决策）：只报"已尝试写入"，不替调用方确认是否真的落字。
       return {
-        ok: wrote && verified && (args.submit !== true || submitted),
+        ok: wrote && (args.submit !== true || submitted),
         wrote,
         path,
-        verified,
         submitted,
-        ...(verifyError ? { error: verifyError } : {}),
-        // v1.21.5：写了但完全没写进去（wrote=false）时也要给原因，否则渲染成「未知错误」
-        ...(!wrote ? { error: "没能写入输入框：无障碍直写与剪贴板粘贴都被系统拒绝（详见 steps）" } : {}),
-        changed,
         steps: steps.join(" → "),
-        ...(before === null ? { hint: "（注意：读不到控件树，本工具的自证能力受限）" } : {}),
-        ...(hints.length ? { hint: hints.join(" ") } : {})
+        hint: wrote
+          ? "写入动作已被系统接受（本工具不校验是否真的落字）。要确认内容真的进框，用 android_screen 看输入框，或用 android_see 截一小块。"
+          : "没能写入：无障碍直写与剪贴板粘贴都被拒绝（详见 steps）。WebView/自绘输入框建议先用 android_tap 点中并确认软键盘弹出。"
       };
     }
   }));

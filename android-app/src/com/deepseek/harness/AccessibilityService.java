@@ -1851,40 +1851,16 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
             }
             // v1.20.2（用户实测）：SET_TEXT / PASTE 在 WebView 里**返回 true 但框里没字**（假成功）。
             // 读回节点文本 + 比对界面指纹，二者都没变化就如实报失败（不再报"已写入"）。
-            // v1.21.5（agent 实测）：写完立刻读回会拿到**旧值**（实际已写入，例如 wifi → wifidsh），
-            // 导致 android_paste_text / android_focus_type 误报失败。这里轮询等落地（最多 1.5s）。
-            String readback = "";
-            final String needle = text.length() > 40 ? text.substring(0, 40) : text;
-            long rbDeadline = System.currentTimeMillis() + 1500L;
-            do {
-                try {
-                    CharSequence t2 = target.getText();
-                    if (t2 != null) readback = t2.toString();
-                } catch (Throwable ignored) {}
-                if (!readback.isEmpty() && readback.contains(needle)) break;
-                try {
-                    Thread.sleep(120L);
-                } catch (InterruptedException ignored) {
-                    break;
-                }
-            } while (System.currentTimeMillis() < rbDeadline);
-            // v1.20.3（第二轮反馈）：以前还有"整树指纹变化"兜底，结果聊天里那行
-            // `Tool call android_focus_type · CESHI-ABC-2` 被当成证据 → 假阳性。
-            // 现在只认**输入节点自身**的读回文本（WebView 里那就是空 → 如实失败）。
-            boolean textLanded = ok && !readback.isEmpty() && readback.contains(
-                    text.length() > 40 ? text.substring(0, 40) : text);
-            o.put("readbackOnly", true);
-            o.put("readback", readback.length() > 120 ? readback.substring(0, 120) + "…" : readback);
-            o.put("landed", textLanded);
-            if (ok && !textLanded) {
+            // v1.22.0（维护者决策）：**不再自证是否落字** —— 只如实报告"写入动作是否被系统接受"。
+            // 原因：读回校验依赖控件树刷新时机（快照、占位符、异步落地），这几轮反复出现
+            // "报失败但实际成功" / "报成功但实际没写"，比不给结论更误导。
+            // 需要确认落字的调用方，自己用 android_screen / android_see 看一眼即可。
+            if (!ok) {
                 o.put("ok", false);
-                o.put("error", readback.isEmpty()
-                        ? "输入动作返回成功，但输入框读回文本为空 —— 多半是 WebView 忽略了 a11y 注入"
-                        : "输入动作返回成功，但输入框里读回的是「"
-                          + (readback.length() > 60 ? readback.substring(0, 60) + "…" : readback)
-                          + "」，不含本次写入的文本");
-                o.put("hint", "WebView/自绘输入框：先用 android_tap 点中输入框并确认软键盘弹出再试；"
-                        + "仍失败说明该系统屏蔽了 a11y 注入，需要 Shizuku/root 的 android_input（本机是否可用见 android_shizuku_status）。");
+                o.put("error", "系统拒绝了写入动作（ACTION_SET_TEXT / ACTION_PASTE 返回 false）——"
+                        + " 多半是 WebView / 自绘输入框");
+                o.put("hint", "先用 android_tap 点中输入框并确认软键盘弹出再试；"
+                        + "仍失败说明该系统屏蔽了 a11y 注入，需要 Shizuku/root 的 android_input（见 android_shizuku_status）。");
                 return o.toString();
             }
             o.put("focused", focusedNow);
