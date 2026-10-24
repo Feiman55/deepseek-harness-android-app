@@ -642,52 +642,6 @@ function apply(ctx) {
   // （App 侧路由 /overlay 与 OverlayService 都不受影响，仍然可用）。
   const ENABLE_OVERLAY_TOOL = false;
   if (ENABLE_OVERLAY_TOOL) {
-  ctx.tools.register(defineTool({
-    name: "android_overlay",
-    description: "控制悬浮窗小人：show 显示（点击可展开引擎状态面板）、hide 隐藏、status 查询悬浮窗与引擎状态。需要悬浮窗权限。",
-    parameters: {
-      action: {
-        type: "string", required: true, enum: ["show", "hide", "status"],
-        description: "show=显示悬浮窗；hide=隐藏；status=查询状态"
-      }
-    },
-    output: {
-      schema: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          ok: { type: "boolean", required: true },
-          error: { type: "string" },
-          running: { type: "boolean" },
-          hidden: { type: "boolean" },        // v1.24：hide/toggle 后为 true（App 侧返回值）
-          engineUp: { type: "boolean" },
-          granted: { type: "boolean" },
-          action: { type: "string" },
-          visible: { type: "boolean" },
-          changed: { type: "boolean" },
-          msg: { type: "string" }
-        }
-      },
-      render: (_a, v) => renderOverlay(v)
-    },
-    async execute(args, exec) {
-      const action = String(args.action || "status");
-      const before = await overlayVisible();
-      const r = await appRequest("/overlay", { action });
-      let after = before;
-      if (action === "show" || action === "hide") {
-        await sleep(900);                    // 等窗口真正 add/remove 完
-        after = await overlayVisible();
-      }
-      return {
-        ...r,
-        action,
-        changed: before !== null && after !== null ? before !== after : false,
-        // ⚠ schema 里 visible 是 boolean：dumpsys 解析不出来时**不能**塞 null
-        ...(after === null ? {} : { visible: after })
-      };
-    }
-  }));
   }   // ← if (ENABLE_OVERLAY_TOOL)
 
   // ==========================================================================
@@ -983,63 +937,6 @@ function apply(ctx) {
     }
   }));
 
-  // v1.22（复盘 §5）：读本应用自己的 logcat —— 并如实说明系统边界
-  ctx.tools.register(defineTool({
-    name: "android_logcat",
-    description: "读取日志（logcat -d，默认最近 200 行）。免特权，但受系统限制：Android 11+ 起应用只能读到自己的（以及自己启动的子进程的）日志，别家 App 的看不到——这是系统隐私策略，不是工具坏了。看引擎/插件日志时 \"DSH\" 关键字过滤通常就够；更全的日志在控制台「日志」页或 files/dsh-web.log（用 fs 工具读）。",
-    parameters: {
-      lines: { type: "number", description: "最近多少行（默认 200，上限 2000）" },
-      filter: { type: "string", description: "可选关键字过滤（对行做包含匹配）" },
-      tag: { type: "string", description: "可选：按 tag 过滤（等价 logcat -s <tag>）" }
-    },
-    output: {
-      schema: resultSchema({
-        lines: { type: "number" },
-        text: { type: "string" },
-        hint: { type: "string" }
-      }),
-      render: (_a, value) => {
-        if (!value.ok) return renderResult(value);
-        return [{ type: "text", text: "logcat（" + (value.lines || 0) + " 行）:\n" + (value.text || "(空)") }];
-      }
-    },
-    async execute(args) {
-      const n = Math.max(1, Math.min(2000, Number(args.lines) || 200));
-      const argv = ["-d", "-t", String(n), "-v", "brief"];
-      if (args.tag) argv.push("-s", String(args.tag));
-      // 实测（Android 16 模拟器 community 包）：app uid 直接 spawn /system/bin/logcat 报 ENOENT
-      // （SELinux/exec 限制），而 shell 与我们 payload 里的 bash 都能跑通 —— 所以加一层 bash 回退。
-      let out = await runLocal(["/system/bin/logcat", ...argv], 15000);
-      if (out.ok !== true) {
-        const bash = payloadBashPath();
-        if (bash) {
-          const quoted = ["logcat"].concat(argv.map((a) => (a.indexOf(" ") >= 0 ? "'" + a.replace(/'/g, "'\\''") + "'" : a))).join(" ");
-          const viaBash = await runLocal([bash, "-c", quoted], 15000);
-          if (viaBash.ok === true) {
-            out = viaBash;
-          } else {
-            out = { ok: false, stdout: "", stderr: viaBash.stderr || "", error: "直接调用失败（" + out.error + "），经 bash 也失败（" + viaBash.error + "）" };
-          }
-        }
-      }
-      if (out.ok !== true) {
-        return { ok: false, error: out.error || "logcat 执行失败",
-          hint: "部分系统缺 /system/bin/logcat 或限制调用；可改用控制台「日志」页，或读 files/dsh-web.log（用 fs 工具）。" };
-      }
-      let text = out.stdout || "";
-      const filter = args.filter === undefined ? "" : String(args.filter);
-      if (filter) {
-        text = text.split("\n").filter((l) => l.indexOf(filter) >= 0).join("\n");
-      }
-      if (text.length > 60000) text = text.slice(text.length - 60000);
-      return {
-        ok: true,
-        lines: text ? text.split("\n").length : 0,
-        text,
-        hint: "只包含本应用自己的日志（Android 11+ 的系统限制，不是工具问题）；要别的 App 的日志需要 root。"
-      };
-    }
-  }));
 
   // ===== v1.23：让 agent 通过悬浮窗小人的消息气泡"说一句话" =====
   // 上限：中文（含全角标点）≤ 20 个、其它字符 ≤ 40 个，两类分开计、互不挤占。
@@ -1146,289 +1043,313 @@ function apply(ctx) {
   // 未授予 root 且未授予 Shizuku 时：不注册下面这些系统操作工具（android_package 等），
   // AI 工具列表里没有特权工具，就不会反复尝试系统操作；
   // 此时文件读写用 DSH 自带的 fs/bash 工具（只需所有文件访问权限）。
+  // ── 免特权的设备工具（v1.23：从 dsh-tool-shizuku 搬来，它们不需要 root/Shizuku）──
+  ctx.tools.register(defineTool({
+    name: "android_notify",
+    description: "向用户手机发送一条系统通知（标题 + 正文）。**只需要通知权限（POST_NOTIFICATIONS），不需要 Shizuku/root**。用于：后台任务完成、需要用户关注、长时间任务的进度提醒等。如果返回 ok:false 且提示通知权限未授予，请让用户在系统设置里为本应用开启通知权限后重试。",
+    parameters: {
+      title: {
+        type: "string",
+        required: true,
+        description: "通知标题，简短（建议不超过 20 字）。"
+      },
+      text: {
+        type: "string",
+        required: true,
+        description: "通知正文，说明发生了什么或需要用户做什么。"
+      }
+    },
+    output: {
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          ok: { type: "boolean", required: true },
+          error: { type: "string" },
+          posted: { type: "boolean" },
+          visible: { type: "boolean" },
+          evidence: { type: "string" }
+        }
+      },
+      render: (_args, value) => [{
+        type: "text",
+        text: value.ok
+          ? "通知已发送 ✅" + (typeof value.visible === "boolean"
+              ? "（通知栏可见：" + (value.visible ? "是" : "**否**") + "）" : "")
+          : "通知发送失败：" + (value.error || "未知错误")
+      }]
+    },
+    async execute(args) {
+      try {
+        const http = await import("node:http");
+        const port = Number(process.env.APP_NOTIFY_PORT) || 3081;
+        const body = JSON.stringify({ title: String(args.title || ""), text: String(args.text || "") });
+        const result = await new Promise((resolve) => {
+          const req = http.request({
+            host: "127.0.0.1",
+            port,
+            path: "/notify",
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Content-Length": Buffer.byteLength(body),
+              // v1.18.0：本地服务全路由鉴权，通知也必须带令牌
+              "X-DSH-Token": process.env.APP_LOCAL_TOKEN || ""
+            }
+          }, (res) => {
+            let d = "";
+            res.on("data", (c) => d += c);
+            res.on("end", () => {
+              try { resolve(JSON.parse(d || "{}")); }
+              catch (e) { resolve({ ok: false, error: "响应解析失败" }); }
+            });
+          });
+          req.setTimeout(5000, () => { req.destroy(); resolve({ ok: false, error: "通知服务超时" }); });
+          req.on("error", (e) => resolve({
+            ok: false,
+            error: "通知服务不可用（" + String((e && e.message) || e) + "）："
+                 + "App 或它的通知服务没在运行（端口无监听）——先在 App 里启动引擎再重试"
+          }));
+          req.write(body);
+          req.end();
+        });
+        if (!result || result.ok !== true) return { ...result, posted: false };
+        // v1.20.5（用户反馈）：没有 Shizuku/root 时 privCmd 根本执行不了 dumpsys，
+        // 以前把"查不到"当成"不可见"（visible:false）——这是最误导人的一点。
+        // 无特权通道时**不返回 visible**（schema 是 boolean，不能给 null），只说明无法校验。
+        if (!privilegedAvailable()) {
+          return {
+            ok: true,
+            posted: true,
+            evidence: "已发送（App 侧返回成功），但无法校验通知栏：读写 dumpsys 需要 Shizuku/root。"
+                    + "请用户自己下拉通知栏确认；若确实没出现，多半是该应用通知被系统关了"
+                    + "（设置 → 通知 → DeepSeek Harness）。"
+          };
+        }
+        // v1.20.1（AI 建议③）：发完立刻用特权 shell 校验标题/正文是否真的在通知栏里，
+        // 别让"App 说发送成功、系统其实静默拦截"变成假成功（标题/正文在 dumpsys 里是两行）。
+        await sleep(700);
+        const title = String(args.title || "");
+        const text = String(args.text || "");
+        const vt = await privCmd("dumpsys notification --noredact 2>/dev/null | grep -F " + shq(title) + " | head -2", 15000);
+        const vx = await privCmd("dumpsys notification --noredact 2>/dev/null | grep -F " + shq(text) + " | head -2", 15000);
+        const lines = [vt.stdout, vx.stdout].map((s) => String(s || "").trim()).filter(Boolean);
+        const visible = lines.length >= 2;
+        return {
+          ok: true,
+          posted: true,
+          visible,
+          evidence: lines.join(" | ").slice(0, 500)
+        };
+      } catch (e) {
+        return { ok: false, posted: false, error: String(e && e.message || e) };
+      }
+    }
+  }));
+
+  ctx.tools.register(defineTool({
+    name: "android_setting_app",
+    description:
+      "读写 App 自身的 Settings.System 设置。**写入不需要 Shizuku/root**（只需「修改系统设置」WRITE_SETTINGS 权限）；" +
+      "读取走特权 shell 的 settings get（需要 Shizuku/root 任一）。" +
+      "常用 key：screen_brightness（亮度 0-255）、screen_brightness_mode（0=手动 1=自动）、screen_off_timeout（屏幕超时毫秒，如 60000）、" +
+      "accelerometer_rotation（自动旋转 0/1）、font_scale（字体大小，如 1.0/1.3）、volume_music/volume_ring/volume_alarm/volume_notification（音量 0-15）、" +
+      "sound_effects_enabled（触摸音 0/1）、haptic_feedback_enabled（震动反馈 0/1）、notification_light_pulse（通知灯 0/1）、ringtone（铃声 Uri）。" +
+      "put 会带回 oldValue/newValue（一次调用就能确认翻转与还原）；改 Global/Secure 命名空间请用 shizuku_shell 的 settings 命令。",
+    parameters: {
+      action: {
+        type: "string", enum: ["get", "put"],
+        description: "get=读当前值（走特权 shell）；put=写入（缺省，走 App WRITE_SETTINGS）"
+      },
+      key: {
+        type: "string", required: true,
+        description: "Settings.System 的 key（见工具描述常用清单）"
+      },
+      value: {
+        type: "string",
+        description: "put 时要写入的值（数字或字符串）；action=get 时可省略"
+      }
+    },
+    output: {
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          ok: { type: "boolean", required: true },
+          error: { type: "string" },
+          namespace: { type: "string" },
+          key: { type: "string" },
+          value: { type: "string" },
+          oldValue: { type: "string" },
+          newValue: { type: "string" },
+          stream: { type: "string" },
+          level: { type: "number" },
+          max: { type: "number" },
+          hint: { type: "string" }
+        }
+      },
+      render: (_args, value) => [{
+        type: "text",
+        text: value.ok
+          ? (value.action === "get" || (value.value !== undefined && value.newValue === undefined)
+              ? (value.key || "?") + " = " + (value.value === "" ? "(空)" : value.value)
+              : (value.stream
+                  ? "已设置 " + value.stream + " = " + value.level + "（最大 " + value.max + "）✅"
+                  : (value.oldValue !== undefined && value.newValue !== undefined
+              ? "已设置 " + (value.key || "?") + "：" + value.oldValue + " → " + value.newValue
+              : "已设置 " + (value.key || "?") + "（读回不可用）") + " ✅"))
+          : (_args && String(_args.action || "put").toLowerCase() === "get"
+              ? "读取失败：" + (value.error || "未知错误")
+              : "设置失败：" + (value.error || "未知错误"))
+      }]
+    },
+    async execute(args) {
+      const action = String(args.action || "put").toLowerCase();
+      const key = String(args.key || "");
+      if (!key) return { ok: false, error: "缺少 key 参数" };
+      try {
+        // 读当前值：特权 shell（输出可能落在 stdout 或 stderr，统一取非空的那个）
+        const readKey = async () => {
+          const r = await privCmd("settings get system " + shq(key), 15000);
+          const v = String(r.stdout || "").trim();
+          // 只认 stdout 的真实值：特权通道超时时 stderr 是错误文本，不能当 oldValue/newValue
+          return { ok: r.ok === true && v !== "" && v !== "null", value: v, raw: r };
+        };
+        if (action === "get") {
+          const cur = await readKey();
+          return {
+            ok: cur.ok,
+            namespace: "system",
+            key,
+            value: cur.value,
+            ...(cur.ok ? {} : { error: cur.raw.error || ("读不到 " + key) })
+          };
+        }
+        const before = await readKey();
+        const val = String(args.value == null ? "" : args.value);
+        const http = await import("node:http");
+        const port = Number(process.env.APP_NOTIFY_PORT) || 3081;
+        const body = JSON.stringify({ key, value: val });
+        const posted = await new Promise((resolve) => {
+          const req = http.request({
+            host: "127.0.0.1", port, path: "/setting", method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Content-Length": Buffer.byteLength(body),
+              // v1.18.0：本地服务全路由鉴权
+              "X-DSH-Token": process.env.APP_LOCAL_TOKEN || ""
+            }
+          }, (res) => {
+            let d = "";
+            res.on("data", (c) => d += c);
+            res.on("end", () => {
+              try { resolve(JSON.parse(d || "{}")); }
+              catch (e) { resolve({ ok: false, error: "响应解析失败" }); }
+            });
+          });
+          req.setTimeout(5000, () => { req.destroy(); resolve({ ok: false, error: "本地服务超时" }); });
+          req.on("error", (e) => resolve({ ok: false, error: String(e && e.message || e) }));
+          req.write(body);
+          req.end();
+        });
+        if (!posted || posted.ok !== true) {
+          return { ...posted, ok: false, namespace: "system", key, oldValue: before.value };
+        }
+        await sleep(250);
+        const after = await readKey();
+        // 音量类由 App 返回 stream/level/max；普通 key 由回读得到 newValue
+        return {
+          ...posted,
+          ok: true,
+          namespace: "system",
+          key,
+          ...(before.ok ? { oldValue: before.value } : {}),
+          ...((after.ok || typeof posted.level === "number")
+              ? { newValue: typeof posted.level === "number" ? String(posted.level) : after.value }
+              : {}),
+          ...(!before.ok && !after.ok ? { hint: "写入已完成；读回不可用（特权通道超时）" } : {})
+        };
+      } catch (e) {
+        return { ok: false, error: String(e && e.message || e) };
+      }
+    }
+  }));
+
+  ctx.tools.register(defineTool({
+    name: "android_clipboard",
+    description: "读写手机剪贴板。**不需要 Shizuku/root 和任何特殊权限**。action=read 读取当前剪贴板内容；action=write 把 content 写入剪贴板（如 AI 生成代码/文本后让用户粘贴）。",
+    parameters: {
+      action: {
+        type: "string", required: true,
+        enum: ["read", "write"],
+        description: "read=读取剪贴板内容；write=写入剪贴板（需带 content）"
+      },
+      content: { type: "string", description: "write 时要写入的文本内容" }
+    },
+    output: {
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          ok: { type: "boolean", required: true },
+          content: { type: "string" },
+          error: { type: "string" }
+        }
+      },
+      render: (_args, value) => [{
+        type: "text",
+        text: value.ok
+          ? (value.content !== undefined
+              ? (value.content === ""
+                  ? "剪贴板内容为空（可能是剪贴板本来为空，或系统限制后台读取）"
+                  : "剪贴板内容：\n" + value.content)
+              : "已写入剪贴板 ✅")
+          : "剪贴板操作失败：" + (value.error || "未知错误")
+      }]
+    },
+    async execute(args) {
+      try {
+        const http = await import("node:http");
+        const port = Number(process.env.APP_NOTIFY_PORT) || 3081;
+        const body = JSON.stringify({
+          action: String(args.action || "read"),
+          content: String(args.content == null ? "" : args.content)
+        });
+        const result = await new Promise((resolve) => {
+          const req = http.request({
+            host: "127.0.0.1", port, path: "/clipboard", method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Content-Length": Buffer.byteLength(body),
+              // v1.18.0：本地服务全路由鉴权
+              "X-DSH-Token": process.env.APP_LOCAL_TOKEN || ""
+            }
+          }, (res) => {
+            let d = "";
+            res.on("data", (c) => d += c);
+            res.on("end", () => {
+              try { resolve(JSON.parse(d || "{}")); }
+              catch (e) { resolve({ ok: false, error: "响应解析失败" }); }
+            });
+          });
+          req.setTimeout(5000, () => { req.destroy(); resolve({ ok: false, error: "本地服务超时" }); });
+          req.on("error", (e) => resolve({ ok: false, error: String(e && e.message || e) }));
+          req.write(body);
+          req.end();
+        });
+        return result;
+      } catch (e) {
+        return { ok: false, error: String(e && e.message || e) };
+      }
+    }
+  }));
+
   if (!privilegedAvailable()) return;
 
-  // 1) 包管理
-  ctx.tools.register(defineTool({
-    name: "android_package",
-    description:
-      "Android 包管理：列出已安装应用、安装 APK、卸载应用、清除应用数据、授予/撤销运行时权限。" +
-      "底层走 pm 命令（root su 或 Shizuku 特权通道）——无特权时本工具不会注册，" +
-      "此时「列出应用」请改用 android_apps（免特权，且带应用名/版本/是否可启动）。" +
-      "install 会自动把 APK 拷到 /data/local/tmp 并用 install-create/install-write/install-commit 会话式安装" +
-      "（单发 pm install 在 ColorOS 上会卡死，且 system_server 读不了 /storage/emulated/0），" +
-      "并校验 pm 输出确实含 Success，失败会如实报错而不是静默假成功。",
-    parameters: {
-      action: {
-        type: "string", required: true,
-        enum: ["list", "install", "uninstall", "clear", "grant", "revoke"],
-        description: "操作类型：list=列出应用；install=安装APK(需apk_path)；uninstall=卸载(需package)；clear=清数据(需package)；grant/revoke=授权/撤销(需package+permission)"
-      },
-      package: { type: "string", description: "包名，如 com.example.app" },
-      apk_path: { type: "string", description: "install 时的 APK 绝对路径" },
-      permission: { type: "string", description: "grant/revoke 时的权限名，如 android.permission.CAMERA" },
-      third_party_only: { type: "boolean", description: "list 时是否只列第三方应用" },
-      filter: { type: "string", description: "list 时按关键字过滤包名" }
-    },
-    output: {
-      schema: resultSchema({
-        count: { type: "number" },
-        thirdPartyOnly: { type: "boolean" },
-        packages: { type: "array", items: { type: "string" } }
-      }),
-      render: (_a, v) => renderResult(v)
-    },
-    async execute(args, exec) {
-      await maybeApprove(ctx, exec, "android_package", args.action, args.package || args.apk_path || "");
-      const a = safe(args.action);
-      const pkg = safe(args.package);
-      // 路径不能过 safe()：它会把中文目录名（如 "APK安装包"）整段删掉
-      const apk = String(args.apk_path ?? "").trim();
-      const perm = safe(args.permission);
-      let cmd = "";
-      switch (a) {
-        case "list":
-          cmd = "pm list packages" + (args.third_party_only ? " -3" : "") +
-                (args.filter ? " | grep " + safe(args.filter) : "");
-          break;
-        case "install":
-          if (!apk) throw new Error("install 需要 apk_path 参数");
-          return await installApk(apk, pkg);
-        case "uninstall": cmd = "pm uninstall " + pkg; break;
-        case "clear": cmd = "pm clear " + pkg; break;
-        case "grant": cmd = "pm grant " + pkg + " " + perm; break;
-        case "revoke": cmd = "pm revoke " + pkg + " " + perm; break;
-        default: throw new Error("未知 action: " + a);
-      }
-      const r = await privCmd(cmd, 60000);
-      if (a === "list") {
-        // v1.20.1（AI 建议③）：把 pm 的纯文本收敛成 count + packages 数组，别再让调用方逐行数
-        const pkgs = String(r.stdout || "").split(/\r?\n/)
-          .map((s) => s.trim())
-          .filter((s) => s.startsWith("package:"))
-          .map((s) => s.slice("package:".length).trim());
-        return { ...r, count: pkgs.length, thirdPartyOnly: !!args.third_party_only, packages: pkgs.slice(0, 200) };
-      }
-      return r;
-    }
-  }));
 
-  // 2) 应用管理
-  ctx.tools.register(defineTool({
-    name: "android_app",
-    description: "Android 应用管理：启动应用、强制停止应用、查看当前前台应用。底层走 am/dumpsys（root su 或 Shizuku 特权通道）。" +
-      "启动应用不需要特权也行：免特权请用 android_launch(package=…)；本工具仅在你需要指定 activity 或走特权通道时使用（无特权时不注册）。",
-    parameters: {
-      action: {
-        type: "string", required: true,
-        enum: ["launch", "force_stop", "current"],
-        description: "launch=启动应用(需package)；force_stop=强制停止(需package)；current=查看当前前台应用"
-      },
-      package: { type: "string", description: "目标包名" },
-      activity: { type: "string", description: "launch 时指定 activity 组件名（可选，留空自动用 launcher 入口）" }
-    },
-    output: { schema: resultSchema(), render: (_a, v) => renderResult(v) },
-    async execute(args, exec) {
-      await maybeApprove(ctx, exec, "android_app", args.action, args.package || "");
-      const a = safe(args.action);
-      const pkg = safe(args.package);
-      let cmd = "";
-      switch (a) {
-        case "launch":
-          cmd = args.activity
-            ? "am start -n " + pkg + "/" + safe(args.activity)
-            : "monkey -p " + pkg + " -c android.intent.category.LAUNCHER 1";
-          break;
-        case "force_stop": cmd = "am force-stop " + pkg; break;
-        case "current": cmd = "dumpsys activity activities | grep -E 'mResumedActivity|mFocusedApp' | head -5"; break;
-        default: throw new Error("未知 action: " + a);
-      }
-      return await privCmd(cmd, 30000);
-    }
-  }));
 
-  // 3) 系统设置
-  ctx.tools.register(defineTool({
-    name: "android_setting",
-    description: "Android 系统设置读写：settings get/put/list，namespace 为 global/system/secure。改设置影响系统行为，请谨慎。",
-    parameters: {
-      action: { type: "string", required: true, enum: ["get", "put", "list"], description: "get=读；put=写；list=列出某 namespace 全部" },
-      namespace: { type: "string", enum: ["global", "system", "secure"], description: "设置命名空间" },
-      key: { type: "string", description: "设置项 key" },
-      value: { type: "string", description: "put 时写入的值" }
-    },
-    output: {
-      schema: resultSchema({
-        namespace: { type: "string" },
-        key: { type: "string" },
-        value: { type: "string" },
-        range: { type: "string" }
-      }),
-      render: (_a, v) => renderResult(v)
-    },
-    async execute(args, exec) {
-      await maybeApprove(ctx, exec, "android_setting", args.action, (args.namespace || "") + " " + (args.key || ""));
-      const a = safe(args.action);
-      const ns = safe(args.namespace);
-      const key = safe(args.key);
-      const val = safe(args.value);
-      let cmd = "";
-      switch (a) {
-        case "get": cmd = "settings get " + ns + " " + key; break;
-        case "put": cmd = "settings put " + ns + " " + key + " " + val; break;
-        case "list": cmd = "settings list " + ns; break;
-        default: throw new Error("未知 action: " + a);
-      }
-      const r = await privCmd(cmd, 30000);
-      if (a === "get") {
-        // v1.20.1（AI 建议③）：回 namespace/key/value + 量纲提示；读不到明确报 not found。
-        // ⚠ AI 实测：同一个 settings get，值有时落 stdout、有时落 stderr（特权通道实现差异）——
-        // 所以取值必须 stdout || stderr，否则会把成功读取误判成失败。
-        const value = String(r.stdout || "").trim() || String(r.stderr || "").trim();
-        const found = r.ok && value !== "" && value !== "null";
-        return {
-          ...r,
-          ok: found,
-          namespace: ns,
-          key,
-          value,
-          range: SETTING_RANGE[key] || "",
-          ...(found ? {} : { error: r.error || ("not found: " + ns + "/" + key) })
-        };
-      }
-      return r;
-    }
-  }));
 
-  // 4) 截图
-  ctx.tools.register(defineTool({
-    name: "android_screenshot",
-    description: "截取当前屏幕，保存为 PNG，返回文件路径。默认存到 " + EXT_DIR + "/screenshots/。",
-    parameters: {
-      save_path: { type: "string", description: "可选，完整保存路径；留空自动生成" }
-    },
-    output: {
-      schema: resultSchema({ path: { type: "string" } }),
-      render: (_a, v) => [{
-        type: "text",
-        text: v.ok ? "截图已保存：\n" + v.path : "截图失败：" + (v.error || v.stderr || "未知错误")
-      }]
-    },
-    async execute(args, exec) {
-      await maybeApprove(ctx, exec, "android_screenshot", "screenshot", "");
-      const ts = new Date().toISOString().replace(/[:.]/g, "-");
-      const path = args.save_path
-        ? safe(args.save_path)
-        : EXT_DIR + "/screenshots/shot-" + ts + ".png";
-      const r = await privCmd("mkdir -p " + path.substring(0, path.lastIndexOf("/")) + "; screencap -p " + path + " && echo __SHOT_OK__", 30000);
-      return { ...r, path: r.ok ? path : "" };
-    }
-  }));
 
-  // 5) 模拟输入
-  ctx.tools.register(defineTool({
-    name: "android_input",
-    description: "模拟用户输入（需特权通道 root/Shizuku）：点击坐标、滑动、输入文本、发送按键事件。用于自动化操作当前屏幕。坐标以屏幕像素为单位。" +
-      "text 动作：纯 ASCII 走系统 input text；含中文/emoji 等非 ASCII 字符时自动改为「写剪贴板 + 粘贴」——" +
-      "input text 通道会静默丢弃非 ASCII 字符且不报错，绝不能用它输入中文。中文也可直接用无障碍版 android_type。",
-    parameters: {
-      action: { type: "string", required: true, enum: ["tap", "swipe", "text", "keyevent"], description: "tap=点击；swipe=滑动；text=输入文本；keyevent=按键" },
-      x: { type: "number", description: "tap 的 x 坐标 / swipe 起点 x" },
-      y: { type: "number", description: "tap 的 y 坐标 / swipe 起点 y" },
-      x2: { type: "number", description: "swipe 终点 x" },
-      y2: { type: "number", description: "swipe 终点 y" },
-      duration: { type: "number", description: "swipe 持续时间(毫秒，默认 300)" },
-      text: { type: "string", description: "text 动作要输入的文本（支持中文：非 ASCII 会自动走剪贴板粘贴）" },
-      keycode: { type: "number", description: "keyevent 的按键码，如 3=HOME, 4=BACK, 26=POWER" }
-    },
-    output: {
-      schema: resultSchema({
-        action: { type: "string" },
-        injected: { type: "boolean" },
-        x: { type: "number" }, y: { type: "number" },
-        screenW: { type: "number" }, screenH: { type: "number" },
-        targetPackage: { type: "string" }
-      }),
-      render: (_a, v) => [{
-        type: "text",
-        text: v.ok
-          ? `已执行 ${v.action || "?"}${v.injected ? "（已注入）" : "（未注入）"}` +
-            (typeof v.x === "number" ? ` @(${v.x},${v.y}) 屏幕 ${v.screenW}x${v.screenH}` : "") +
-            (v.targetPackage ? ` → 前台 ${v.targetPackage}` : "") +
-            (v.stdout ? "\n" + v.stdout : "")
-          : "执行失败：" + (v.error || v.stderr || "未知错误")
-      }]
-    },
-    async execute(args, exec) {
-      await maybeApprove(ctx, exec, "android_input", args.action, args.text || "");
-      const a = safe(args.action);
-      const sz = await screenSize();
-      // ⚠ 输出 schema 是 additionalProperties:false 且 x/y 声明为 number ——
-      //   text/keyevent 没有坐标，**不能**把 x/y 放成 null（会被判非法输出：value.x 必须为数字）。
-      const base = {
-        action: a, injected: false,
-        screenW: sz ? sz.w : 0, screenH: sz ? sz.h : 0, targetPackage: ""
-      };
-      const withXY = (x, y) => { base.x = x; base.y = y; return base; };
-      const bad = (msg, extra) => ({ ...base, ok: false, exit_code: -1, stdout: "", stderr: "", error: msg, ...(extra || {}) });
-      let cmd = "";
-      switch (a) {
-        case "tap": {
-          const x = Math.round(Number(args.x) || 0);
-          const y = Math.round(Number(args.y) || 0);
-          // v1.20.1（AI 建议②）：越界必须明确失败，不能给一个 exit_code=0 的"静默成功"
-          if (!sz) return bad("拿不到屏幕尺寸（wm size 无返回），拒绝盲点");
-          if (x < 0 || y < 0 || x >= sz.w || y >= sz.h) {
-            return bad(`坐标越界：(${x},${y}) 不在 0..${sz.w - 1} × 0..${sz.h - 1}`, { x, y });
-          }
-          withXY(x, y);
-          cmd = "input tap " + x + " " + y;
-          break;
-        }
-        case "swipe": {
-          const nums = [args.x, args.y, args.x2, args.y2].map((v) => Math.round(Number(v) || 0));
-          if (!sz) return bad("拿不到屏幕尺寸（wm size 无返回），拒绝盲滑");
-          for (const [i, n] of nums.entries()) {
-            const lim = i % 2 === 0 ? sz.w : sz.h;
-            if (n < 0 || n >= lim) return bad(`swipe 坐标越界：${n} 不在 0..${lim - 1}`, { x: nums[0], y: nums[1] });
-          }
-          withXY(nums[0], nums[1]);
-          cmd = "input swipe " + nums[0] + " " + nums[1] + " " + nums[2] + " " + nums[3] + " " +
-                Math.max(50, Math.round(Number(args.duration) || 300));
-          break;
-        }
-        case "text": {
-          const text = String(args.text ?? "");
-          if (!/^[\x20-\x7e]*$/.test(text)) {
-            // 非 ASCII（中文/emoji 等）：input text 会静默丢弃这些字符且 exit_code 仍为 0，
-            // 所以改走「剪贴板 + 粘贴」；写剪贴板走 App 本地 HTTP POST（GET 会被当成 read，见 appPost）。
-            const wrote = await appPost("/clipboard", { action: "write", content: text });
-            if (!wrote || wrote.ok !== true) {
-              return bad("文本含非 ASCII 字符，需经剪贴板粘贴，但写入剪贴板失败：" +
-                ((wrote && wrote.error) || "未知错误"));
-            }
-            const pasted = await privCmd("input keyevent 279", 15000); // 279 = KEYCODE_PASTE
-            const pkg = await currentPackage();
-            return {
-              ...base, ...pasted, injected: !!pasted.ok, targetPackage: pkg,
-              stdout: pasted.ok ? ("已通过剪贴板粘贴输入（" + text.length + " 字符，含非 ASCII）" + (pasted.stdout ? "\n" + pasted.stdout : "")) : pasted.stdout
-            };
-          }
-          // ASCII：空格必须转成 %s，否则会被命令解析当成参数分隔符吃掉
-          cmd = "input text " + shq(text.replace(/ /g, "%s"));
-          break;
-        }
-        case "keyevent":
-          cmd = "input keyevent " + Math.round(Number(args.keycode) || 0);
-          break;
-        default: throw new Error("未知 action: " + a);
-      }
-      const r = await privCmd(cmd, 15000);
-      const pkg = await currentPackage();
-      // v1.20.1（AI 建议②）：把"注入到底有没有发生"变成可判定字段，而不是空 stdout
-      return { ...base, ...r, injected: !!r.ok, targetPackage: pkg };
-    }
-  }));
 }
 
 export { apply, inject, name };
