@@ -21,21 +21,21 @@ const GUIDE_TEXT =
 
 /**
  * v1.22：能力清单（静态索引表 + 一句用途）。
- * 为什么需要：真机 Agent 复盘里，他没用到 android_screenshot / android_touch / android_input /
- * android_usage / android_app / android_swipe 等本来就有的工具 —— 这是纯粹的发现性问题。
+ * 为什么需要：真机 Agent 复盘里，他没用到 android_screenshot / android_accessibility_touch / android_input /
+ * android_usage / android_app / android_accessibility_swipe 等本来就有的工具 —— 这是纯粹的发现性问题。
  * 诚实说明：本表是静态维护的，可能滞后于实际注册的工具；以工具列表为准，这里只作索引用。
  */
 const TOOL_GUIDE = [
   "【无障碍 · 需开启「屏幕助手」，免 root/Shizuku】",
-  "  android_screen 读控件树（最省内存） | android_see 截图给模型看（区域用 select= / region=）",
-  "  android_tap 点击（text/desc/fx,fy，或区域图内的 ix,iy） | android_focus_type 聚焦→输入→提交→读回自证",
-  "  android_find_text 等文字出现 | android_wait_stable 等界面稳定（控件树指纹，不产生截图）",
-  "  android_scroll 滚动 | android_gesture(网页按钮/WebView 点不动时首选) / swipe / hold / touch / touch_status",
-  "  android_type 写文本 | android_paste_text 剪贴板粘贴 | android_back / android_home",
-  "  android_mem_status 内存体检 | android_a11y_status 无障碍状态（能区分「没开」与「闪断」）",
+  "  android_accessibility_screen 读控件树（最省内存） | android_accessibility_see 截图给模型看（区域用 select= / region=）",
+  "  android_accessibility_tap 点击（text/desc/fx,fy，或区域图内的 ix,iy） | android_accessibility_focus_type 聚焦→输入→可选提交",
+  "  android_accessibility_find_text 等文字出现 | android_accessibility_wait_stable 等界面稳定（控件树指纹，不产生截图）",
+  "  android_accessibility_scroll 滚动 | android_accessibility_gesture(网页按钮/WebView 点不动时首选) / swipe / hold / touch / touch_status",
+  "  android_accessibility_type 写文本 | android_accessibility_paste_text 剪贴板粘贴 | android_back / android_home",
+  "  android_accessibility_mem_status 内存体检 | android_a11y_status 无障碍状态（能区分「没开」与「闪断」）",
   "【免特权 · 不需要 root/Shizuku】",
-  "  android_capabilities 本工具（能力总览） | android_apps 列已装应用 | android_launch 启动应用（只走桌面入口）",
-  "  android_open_url 打开网址/深链（要开网页一律用它，别在浏览器里打字） | 截图请用 android_see（本版不注册 android_screenshot：它属于特权工具，需 root/Shizuku）",
+  "  android_accessibility_capabilities 本工具（能力总览） | android_apps 列已装应用 | android_launch 启动应用（只走桌面入口）",
+  "  android_open_url 打开网址/深链（要开网页一律用它，别在浏览器里打字） | 截图请用 android_accessibility_see（本版不注册 android_screenshot：它属于特权工具，需 root/Shizuku）",
   "  android_usage 应用使用时长 | android_notify 发通知 | android_clipboard 读写剪贴板"
       + "（android_overlay 悬浮窗开关在本版**未启用**，不要再尝试调用）",
   "  android_setting_app 修改系统设置（Settings.System 写入，必填 key + value）",
@@ -60,7 +60,7 @@ const hostAppId = () => process.env.DSH_APP_ID || "com.deepseek.harness";
 /** 输入事件计数：任何会改变屏幕的操作 +1，用于判断"两次截图之间是否操作过"（A7）。 */
 let inputEventSeq = 0;
 const noteInputEvent = () => { inputEventSeq += 1; };
-/** 上一次 android_see 的记录：内容哈希 / 当时的输入计数 / 时间戳（A7）。 */
+/** 上一次 android_accessibility_see 的记录：内容哈希 / 当时的输入计数 / 时间戳（A7）。 */
 let lastShot = { hash: "", seq: 0, at: 0 };
 
 /**
@@ -143,7 +143,7 @@ function cropToScreen(ix, iy) {
 }
 
 /**
- * A6：把 ix/iy（上一张 android_see 截图里的像素）换算成屏幕绝对坐标并写进 params。
+ * A6：把 ix/iy（上一张 android_accessibility_see 截图里的像素）换算成屏幕绝对坐标并写进 params。
  * 这样"看图 → 点击"全程由工具做算术，模型只抄图上看到的数字，避免三点换算出错。
  * @returns "" = 正常（或本次没用 ix/iy）；非空 = 需要返回给模型的错误说明。
  */
@@ -153,7 +153,7 @@ function applyCropPoint(args, ixKey, iyKey, params, xKey, yKey) {
   if (ix === undefined || iy === undefined) return "需要同时提供 " + ixKey + " 与 " + iyKey + "（分别是图内 x/y 像素）";
   const p = cropToScreen(Number(ix), Number(iy));
   if (p === null) {
-    return "没有可用的截图几何：先用 android_see（可带 select 或 region 做区域截图）截一次图，再用 " + ixKey + "/" + iyKey + " 传图内像素";
+    return "没有可用的截图几何：先用 android_accessibility_see（可带 select 或 region 做区域截图）截一次图，再用 " + ixKey + "/" + iyKey + " 传图内像素";
   }
   params[xKey] = String(p.x);
   params[yKey] = String(p.y);
@@ -330,7 +330,7 @@ async function a11yPost(path, body, timeoutMs) {
 
 // ============================================================================
 // v1.22：App 本地服务助手（通知端口）—— 供剪贴板回退用。
-//   android_focus_type 在 a11y setText 失败时要走「写剪贴板 + 粘贴」，剪贴板在 App 侧（/clipboard）。
+//   android_accessibility_focus_type 在 a11y setText 失败时要走「写剪贴板 + 粘贴」，剪贴板在 App 侧（/clipboard）。
 // ============================================================================
 const appPort = () => parseInt(process.env.APP_NOTIFY_PORT || "3081", 10);
 
@@ -368,7 +368,7 @@ function appPost(path, obj, timeoutMs) {
   });
 }
 
-/** 上一次看过的控件树节点键集合（供 android_screen_diff 比较"与上次相比变了什么"）。 */
+/** 上一次看过的控件树节点键集合（供 android_accessibility_screen_diff 比较"与上次相比变了什么"）。 */
 let lastDumpKeys = null;
 
 /** 节点身份键：文字 + 描述 + 几何（同一次界面里足以区分）。 */
@@ -377,7 +377,7 @@ function nodeKey(n) {
     + (n.x || 0) + "," + (n.y || 0) + "," + (n.w || 0) + "," + (n.h || 0);
 }
 
-/** 读一次控件树；失败返回 null。顺带记录本次节点键集合（供 android_screen_diff 用）。 */
+/** 读一次控件树；失败返回 null。顺带记录本次节点键集合（供 android_accessibility_screen_diff 用）。 */
 async function dumpNodes(timeoutMs) {
   const v = parseResult(await a11yRequest("/dump", undefined, timeoutMs || 8000));
   if (v && v.ok) {
@@ -415,7 +415,7 @@ function pickTextMatch(nodes, needle) {
   return { hit: best, count: hits.length };
 }
 
-/** 控件树指纹 —— 用于 android_wait_stable（比"截图哈希"省内存得多：不产生任何位图）。 */
+/** 控件树指纹 —— 用于 android_accessibility_wait_stable（比"截图哈希"省内存得多：不产生任何位图）。 */
 function treeFingerprint(v) {
   const nodes = (v && v.nodes) || [];
   const s = nodes.map((n) => (n.text || "") + "|" + (n.desc || "") + "|"
@@ -468,7 +468,7 @@ function renderResult(value) {
 }
 
 /**
- * android_touch_status 专用渲染：把 held[] 的坐标与按住时长如实回显。
+ * android_accessibility_touch_status 专用渲染：把 held[] 的坐标与按住时长如实回显。
  * 通用 renderResult 只输出「操作成功。」——execute 返回了这些字段、schema 也声明了，
  * 但 AI 看不到，而 touch_status 的全部意义就是「问一下现在按着什么」。
  */
@@ -498,7 +498,7 @@ function renderTouchStatus(value) {
   return [{ type: "text", text: lines.join("\n") }];
 }
 
-/** 屏幕节点树渲染成 AI 可读文本列表（带索引，方便 android_tap 引用坐标）。 */
+/** 屏幕节点树渲染成 AI 可读文本列表（带索引，方便 android_accessibility_tap 引用坐标）。 */
 function renderScreen(_args, value) {
   value = renderValue(value, _args);
   if (!value.ok) return renderResult(value);
@@ -510,7 +510,7 @@ function renderScreen(_args, value) {
   const count = typeof value.count === "number" ? value.count : -1;
   if (value.package === hostAppId() || count === 0 || (count >= 0 && count < 3)) {
     lines.push("⚠ 前台判定可能不准：前台=" + (value.package || "未知") + "，节点数=" + value.count +
-      "。可能正处于锁屏/桌面/动画过渡，或无障碍拿不到当前窗口 —— 结论请以 android_see 截图为准。");
+      "。可能正处于锁屏/桌面/动画过渡，或无障碍拿不到当前窗口 —— 结论请以 android_accessibility_see 截图为准。");
   }
   if (value.hint) lines.push("提示: " + value.hint);
   lines.push("");
@@ -532,7 +532,7 @@ function apply(ctx) {
   // 状态查询（始终注册：AI 先查状态，未开启时引导用户去系统设置开启）
   ctx.tools.register(defineTool({
     name: "android_a11y_status",
-    description: "查询无障碍服务（屏幕助手）是否开启，以及当前焦点应用。未开启时 android_screen / android_tap / android_type 等全部不可用，需引导用户到：系统设置 → 无障碍 → 开启「DeepSeek Harness 屏幕助手」。",
+    description: "查询无障碍服务（屏幕助手）是否开启，以及当前焦点应用。未开启时 android_accessibility_screen / android_accessibility_tap / android_accessibility_type 等全部不可用，需引导用户到：系统设置 → 无障碍 → 开启「DeepSeek Harness 屏幕助手」。",
     parameters: {},
     output: {
       schema: {
@@ -597,8 +597,8 @@ function apply(ctx) {
       let hint = "";
       if (running && reconnectedRecently) {
         diagnosis = "运行中，但刚刚重连过（" + Math.round(ago / 1000) + " 秒前）—— 说明它此前断开过：这是「闪断」！";
-        hint = "闪断通常是系统内存吃紧或服务被回收的前兆：接下来优先用区域截图（android_see 的 select/region）"
-          + "与 android_screen 读控件树，避免连续全屏截图；若紧接着出现点击/输入成片失败，先停下让内存回收。";
+        hint = "闪断通常是系统内存吃紧或服务被回收的前兆：接下来优先用区域截图（android_accessibility_see 的 select/region）"
+          + "与 android_accessibility_screen 读控件树，避免连续全屏截图；若紧接着出现点击/输入成片失败，先停下让内存回收。";
       } else if (running) {
         diagnosis = "运行中（已稳定运行 " + (ago >= 0 ? Math.round(ago / 1000) + " 秒" : "一段时间") + "）";
       } else if (!everConnected) {
@@ -629,11 +629,42 @@ function apply(ctx) {
     }
   }));
 
+    async function screenDiffImpl(args) {
+      const before = lastDumpKeys;                 // 先取基准（dumpNodes 会覆盖它）
+      const now = await dumpNodes();
+      if (!now) {
+        return { ok: false, error: "读不到控件树：无障碍可能没开或刚闪断（先用 android_a11y_status 看状态）" };
+      }
+      const curKeys = (now.nodes || []).map((n) => nodeKey(n));
+      const curSet = new Set(curKeys);
+      const prevSet = new Set(before || []);
+      const limit = Math.max(1, Math.min(100, Number(args.limit) || 20));
+      const label = (k) => {
+        const parts = k.split("\u0001");
+        const s = (parts[0] || parts[1] || "(无文字)").replace(/\s+/g, " ").trim();
+        return s.length > 50 ? s.slice(0, 50) + "…" : s;
+      };
+      const addedAll = before === null ? [] : curKeys.filter((k) => !prevSet.has(k));
+      const removedAll = before === null ? [] : (before || []).filter((k) => !curSet.has(k));
+      const changed = before === null ? true : (addedAll.length > 0 || removedAll.length > 0);
+      return {
+        ok: true,
+        changed,
+        addedCount: addedAll.length,
+        removedCount: removedAll.length,
+        addedText: addedAll.slice(0, limit).map(label).join(" | "),
+        removedText: removedAll.slice(0, limit).map(label).join(" | "),
+        nodeCount: curKeys.length,
+        ...(before === null ? { hint: "这是本次会话第一次读取控件树，没有基准可比；之后再用本工具就能看出变化。" } : {})
+      };
+    }
+
   // 读屏（控件树）
   ctx.tools.register(defineTool({
-    name: "android_screen",
-    description: "读取当前屏幕的控件树：前台应用包名，以及可见控件的文字/描述/坐标/可点击性。坐标是屏幕绝对像素，可直接给 android_tap 的 x/y。看不出布局或图片内容时改用 android_see。需要无障碍服务。",
+    name: "android_accessibility_screen",
+    description: "读取当前屏幕的控件树：前台应用包名，以及可见控件的文字/描述/坐标/可点击性。坐标是屏幕绝对像素，可直接给 android_accessibility_tap 的 x/y。看不出布局或图片内容时改用 android_accessibility_see。需要无障碍服务。",
     parameters: {},
+      diff: { type: "boolean", description: "true = 只回「与上次读屏相比新增/消失了什么」（原 screen_diff）" },
     output: {
       schema: {
         type: "object",
@@ -672,6 +703,7 @@ function apply(ctx) {
       render: renderScreen
     },
     async execute(args, exec) {
+      if (args.diff === true) return await screenDiffImpl(args, exec);
       const raw = await a11yRequest("/dump", undefined, 8000);
       const v = parseResult(raw);
       if (!v.ok) return { ok: false, error: v.error || GUIDE_TEXT };
@@ -703,8 +735,8 @@ function apply(ctx) {
 
   // 点击
   ctx.tools.register(defineTool({
-    name: "android_tap",
-    description: "点击控件或坐标：text（控件文字，模糊包含匹配，优先可点击项）、desc（内容描述）、x/y（屏幕像素）或 fx/fy（0~1 分数坐标）至少给一个。优先用 fx/fy：截图会被缩放，绝对像素容易点偏。同时给 text 与坐标时先按 text 查找。\n网页/WebView/自绘界面的无障碍点击常被忽略（返回成功但界面没变）：这类目标直接用 fx/fy，或改用 android_gesture 的 tap 笔。需要无障碍服务。"
+    name: "android_accessibility_tap",
+    description: "点击控件或坐标：text（控件文字，模糊包含匹配，优先可点击项）、desc（内容描述）、x/y（屏幕像素）或 fx/fy（0~1 分数坐标）至少给一个。优先用 fx/fy：截图会被缩放，绝对像素容易点偏。同时给 text 与坐标时先按 text 查找。\n网页/WebView/自绘界面的无障碍点击常被忽略（返回成功但界面没变）：这类目标直接用 fx/fy，或改用 android_accessibility_gesture 的 tap 笔。需要无障碍服务。"
       + "**【怎么确认成功】** 正向确认请用 expect_text（工具会轮询控件树确认文字真的出现）；"
       + "返回里**不再**猜测\"界面是否变化\"（控件树指纹分不清\"页面自己在动\"和\"点生效了\"，猜错会误导）；",
     parameters: {
@@ -714,8 +746,8 @@ function apply(ctx) {
       y: { type: "number", description: "屏幕绝对 y 坐标（像素）" },
       fx: { type: "number", description: "分数 x 坐标（0~1，相对屏幕宽度比例；推荐，避免截图缩放误差）" },
       fy: { type: "number", description: "分数 y 坐标（0~1，相对屏幕高度比例；推荐，避免截图缩放误差）" },
-      ix: { type: "number", description: "区域截图专用：在最近一张 android_see 图里的 x 像素（工具会自动换算回屏幕坐标，免手算）" },
-      iy: { type: "number", description: "区域截图专用：在最近一张 android_see 图里的 y 像素" },
+      ix: { type: "number", description: "区域截图专用：在最近一张 android_accessibility_see 图里的 x 像素（工具会自动换算回屏幕坐标，免手算）" },
+      iy: { type: "number", description: "区域截图专用：在最近一张 android_accessibility_see 图里的 y 像素" },
       expect_text: { type: "string", description: "可选但强烈建议：点击后应出现的文字。给了它，工具会在点完后轮询控件树确认它真的出现了，并回 verified=true/false —— 专治「操作成功但没生效」（WebView 里尤其常见）" },
       expect_timeout_ms: { type: "number", description: "expect_text 最多等多久（默认 4000）" }
     },
@@ -748,7 +780,7 @@ function apply(ctx) {
       const cropErr = applyCropPoint(args, "ix", "iy", params, "x", "y");
       if (cropErr) return { ok: false, error: cropErr };
       if (Object.keys(params).length === 0) {
-        return { ok: false, error: "android_tap 需要至少一个参数：text / desc / x / y / fx / fy（或区域截图的 ix/iy）" };
+        return { ok: false, error: "android_accessibility_tap 需要至少一个参数：text / desc / x / y / fx / fy（或区域截图的 ix/iy）" };
       }
       // v1.20.3（第二轮反馈）：校验交给服务端做「点击前后差异 + 排除 tool-call 回显」。
       // 本地扫整棵树会被聊天记录里的 TOOL/参数回显骗到 —— 任意 expect_text 都会"通过"。
@@ -769,7 +801,7 @@ function apply(ctx) {
         return {
           ok: false,
           error: "没找到匹配的控件（text/desc=" + JSON.stringify(args.text || args.desc || "") + "）—— "
-            + "可用 android_screen 看当前界面有哪些文字，或改用 x/y、fx/fy 坐标"
+            + "可用 android_accessibility_screen 看当前界面有哪些文字，或改用 x/y、fx/fy 坐标"
         };
       }
       if (!v.ok) return { ok: false, error: v.error || GUIDE_TEXT };
@@ -784,8 +816,8 @@ function apply(ctx) {
         verified = v.verified === true;
         if (!verified) {
           verifyHint = "点击后没等到「" + expect + "」出现（服务端已按「点击前后新增文字」判定，并排除了工具回显）："
-            + "这一下很可能没生效。可试：改用坐标点击（fx/fy）或 android_gesture 的 tap 笔；"
-            + "或先 android_screen_diff 看界面到底变没变。";
+            + "这一下很可能没生效。可试：改用坐标点击（fx/fy）或 android_accessibility_gesture 的 tap 笔；"
+            + "或先 android_accessibility_screen_diff 看界面到底变没变。";
         }
       }
       return {
@@ -798,7 +830,7 @@ function apply(ctx) {
         // v1.19（真机对话实测）：WebView/网页按钮上无障碍 ACTION_CLICK 常被忽略（返回成功但界面无变化）。
         // 如实提示替代路径，别让模型把"点了没反应"当成自己坐标算错。
         ...(v.found === true && v.method === "node-text" && !warning && !verifyHint
-          ? { hint: "若界面没有变化：WebView/网页按钮经常忽略无障碍 ACTION_CLICK。改用坐标点击（fx/fy）或 android_gesture 的 tap 笔通常有效。" }
+          ? { hint: "若界面没有变化：WebView/网页按钮经常忽略无障碍 ACTION_CLICK。改用坐标点击（fx/fy）或 android_accessibility_gesture 的 tap 笔通常有效。" }
           : {}),
         ...(verifyHint ? { hint: verifyHint } : {}),
         ...(v.found === false && v.error ? { error: v.error } : {})
@@ -808,14 +840,21 @@ function apply(ctx) {
 
   // 输入文本（无障碍版；与特权版 android_input 区分，避免工具名冲突）
   ctx.tools.register(defineTool({
-    name: "android_type",
+    name: "android_accessibility_type",
     description:
-      "在当前聚焦的输入框中输入文本（无障碍版，不需要 root/Shizuku）。输入前先用 android_tap 点击输入框使其聚焦。\n" +
-      "真机实测的限制：网页/WebView、contenteditable（如 DSH 自己的聊天输入框）对无障碍输入不可靠——setText 只改无障碍节点、不触发前端 input 事件；paste:true 也常只落到输入法候选栏、不提交。这类目标改用系统级 android_input（先 tap 聚焦再 text 输入，两条路径均已实测可用）。\n" +
-      "无障碍点击不保证建立输入焦点：键盘没弹出就是没聚焦，先用 android_input 的 tap 聚焦并确认键盘弹出。原生 App 的 EditText 用默认 setText 即可。",
+      "往**当前已聚焦**的输入框写文本（不需要 root/Shizuku）。输入框没聚焦时先用 android_accessibility_tap 点它并确认软键盘弹出，或用 android_accessibility_focus_type 一步完成聚焦+写+提交。\n" +
+      "mode 选择写入方式：\n" +
+      "  auto（默认）= 先 ACTION_SET_TEXT，返回 false 才改用剪贴板 + ACTION_PASTE；\n" +
+      "  set        = 只用 ACTION_SET_TEXT（原生 EditText 最稳）；\n" +
+      "  paste      = 只用剪贴板 + ACTION_PASTE（中文/emoji、WebView、contenteditable 用它）。\n" +
+      "注意：WebView 里 ACTION_SET_TEXT 常返回成功但界面没变，这种情况请显式用 mode=paste；本工具不校验是否真的落字。",
     parameters: {
-      text: { type: "string", required: true, description: "要输入的文本" },
-      paste: { type: "boolean", description: "是否用剪贴板粘贴方式输入（WebView/网页输入框建议 true；默认 false 用 setText）" }
+      text: { type: "string", required: true, description: "要写入的文本（中文 / emoji 均可）" },
+      mode: {
+        type: "string",
+        enum: ["auto", "set", "paste"],
+        description: "写入方式：auto=先直写失败再粘贴（默认）；set=只直写；paste=只粘贴（WebView/中文首选）"
+      }
     },
     output: {
       schema: {
@@ -834,21 +873,36 @@ function apply(ctx) {
     async execute(args, exec) {
       // 空字符串是合法入参（语义 = 清空输入框），只拦真正缺参；用真值判断会把 "" 误判成没传。
       if (args.text === undefined || args.text === null) {
-        return { ok: false, error: "android_type 需要 text 参数" };
+        return { ok: false, error: "android_accessibility_type 需要 text 参数" };
       }
-      const params = { text: String(args.text) };
-      if (args.paste === true) params.mode = "paste";
+      const mode = String(args.mode || (args.paste === true ? "paste" : "auto"));
       noteInputEvent();
-      const raw = await a11yRequest("/input", params, 8000);
-      const v = parseResult(raw);
+      let params = { text: String(args.text) };
+      let raw;
+      let v;
+      if (mode === "paste") {
+        params.mode = "paste";
+        raw = await a11yRequest("/input", params, 8000);
+        v = parseResult(raw);
+      } else {
+        raw = await a11yRequest("/input", params, 8000);
+        v = parseResult(raw);
+        // auto：直写失败（动作返回 false）→ 改用剪贴板粘贴再试一次
+        if (mode === "auto" && (v.ok === false || (typeof v.error === "string" && v.error))) {
+          const pasted = parseResult(await a11yRequest("/input", { text: String(args.text), mode: "paste" }, 8000));
+          if (pasted.ok !== false) {
+            v = { ...pasted, method: "paste" };
+          }
+        }
+      }
       // A3：服务端（v1.18 起）会自带可执行的 hint；这里优先用它，旧服务端则用本地启发式兜底。
       const errText = String(v.error || "");
       const serverHint = typeof v.hint === "string" && v.hint ? String(v.hint) : "";
       const hint = serverHint || (!v.ok
         ? (/未找到可输入|没有活动窗口|没有可编辑/.test(errText)
-            ? "输入框未聚焦或当前窗口没有可编辑节点：先用 android_tap 点击目标输入框（或用坐标点一次），确认软键盘已弹出，再重试本工具。中文/WebView 建议改用 android_paste_text。"
+            ? "输入框未聚焦或当前窗口没有可编辑节点：先用 android_accessibility_tap 点击目标输入框（或用坐标点一次），确认软键盘已弹出，再重试本工具。中文/WebView 建议改用 android_accessibility_paste_text。"
             : /粘贴未执行|setText 未执行|输入动作未被执行/.test(errText)
-              ? "目标节点拒绝粘贴/写文本（常见于 WebView、contenteditable 或第三方输入法）：可改用 android_paste_text，或先 android_see 截图后点击输入法自带的「粘贴」键。"
+              ? "目标节点拒绝粘贴/写文本（常见于 WebView、contenteditable 或第三方输入法）：可改用 android_accessibility_paste_text，或先 android_accessibility_see 截图后点击输入法自带的「粘贴」键。"
               : "")
         : "");
       // v1.19（真机对话实测）：服务端可能"动作返回 false 但仍 ok=true"，
@@ -866,54 +920,6 @@ function apply(ctx) {
     }
   }));
 
-  // 中文/WebView 输入的标准动作（A4）：写剪贴板 → 聚焦 → ACTION_PASTE，
-  // 失败时给出可执行回退路径（而不是让模型自己去猜"为什么没输入进去"）。
-  ctx.tools.register(defineTool({
-    name: "android_paste_text",
-    description: "把文本经剪贴板粘贴进当前输入框（中文、emoji、WebView/contenteditable 首选）：写系统剪贴板后对聚焦的输入框执行 ACTION_PASTE。目标未聚焦时先用 android_tap 点击并确认软键盘弹出。\n是否生效取决于输入法：第三方输入法可能只把内容放进候选栏而不提交。失败时返回的回退路径是 android_see 后点输入法的「粘贴」键（键盘上方一行，屏幕底部约 y≈0.586）。",
-    parameters: {
-      text: { type: "string", required: true, description: "要粘贴的文本（支持中文）" }
-    },
-    output: {
-      schema: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          ok: { type: "boolean", required: true },
-          error: { type: "string" },
-          focused: { type: "boolean" },
-          method: { type: "string" },
-          hint: { type: "string" }
-        }
-      },
-      render: (_a, v) => renderResult(v)
-    },
-    async execute(args, exec) {
-      if (args.text === undefined || args.text === null) {
-        return { ok: false, error: "android_paste_text 需要 text 参数" };
-      }
-      noteInputEvent();
-      const raw = await a11yRequest("/input", { text: String(args.text), mode: "paste" }, 8000);
-      const v = parseResult(raw);
-      const fallback =
-        "回退路径：① 确保输入框已聚焦（android_tap 点一次、确认键盘弹出）；" +
-        "② 用 android_see 截图，找到输入法的「粘贴」键（键盘上方一行，屏幕底部约 y≈0.586 一带）并用 android_tap 点它；" +
-        "③ 仍不行则改用特权通道 android_input（action=text，需 Shizuku/root）。";
-      const serverHint = typeof v.hint === "string" && v.hint ? String(v.hint) : "";
-      // 同上：动作返回 false 时按失败上报，别显示"操作成功"
-      const actionFailed = v.ok === false || (typeof v.error === "string" && v.error.length > 0);
-      if (actionFailed) {
-        return { ok: false, error: v.error || GUIDE_TEXT, hint: serverHint || fallback };
-      }
-      const method = v.method ? String(v.method) : "paste";
-      return {
-        ok: true,
-        ...(v.focused !== undefined ? { focused: v.focused === true } : {}),
-        method,
-        ...(serverHint ? { hint: serverHint } : {})
-      };
-    }
-  }));
 
   // 返回 / 回桌面
   const globalAction = (toolName, actionPath, description) => {
@@ -941,14 +947,63 @@ function apply(ctx) {
       }
     }));
   };
-  globalAction("android_back", "/back", "模拟按下系统返回键（回到上一界面）。需要已开启无障碍服务。");
-  globalAction("android_home", "/home", "模拟按下系统 Home 键（回到桌面）。需要已开启无障碍服务。");
+  globalAction("android_accessibility_back", "/back", "模拟按下系统返回键（回到上一界面）。需要已开启无障碍服务。");
+  globalAction("android_accessibility_home", "/home", "模拟按下系统 Home 键（回到桌面）。需要已开启无障碍服务。");
+
+    async function scrollToImpl(args) {
+      const needle = args.text === undefined ? "" : String(args.text);
+      if (!needle) return { ok: false, error: "android_accessibility_scroll_to 需要 text 参数" };
+      const dirRaw = String(args.direction || "down").toLowerCase();
+      const dir = ["up", "down", "left", "right"].includes(dirRaw) ? dirRaw : "down";
+      const maxScrolls = Math.max(1, Math.min(50, Number(args.max_scrolls) || 10));
+      const t0 = Date.now();
+      let scrolls = 0;
+      let lastNodes = 0;
+      const look = async () => {
+        const d = await dumpNodes();
+        if (!d) return null;
+        lastNodes = (d.nodes || []).length;
+        // v1.24：与 android_accessibility_find_text 用同一套匹配（丢零尺寸占位节点 / 优先可点击 / 取最具体）
+        return pickTextMatch(d.nodes, needle).hit;
+      };
+      let hit = await look();
+      while (!hit && scrolls < maxScrolls) {
+        await a11yRequest("/scroll", { direction: dir }, 8000);
+        scrolls++;
+        await new Promise((r) => setTimeout(r, 450));
+        hit = await look();
+      }
+      if (!hit) {
+        return {
+          ok: true,
+          found: false,
+          error: needle,
+          scrolls,
+          waitedMs: Date.now() - t0,
+          hint: lastNodes === 0
+            ? "全程读不到控件树：无障碍可能没开或刚闪断（先用 android_a11y_status 看状态）。"
+            : "滚了 " + scrolls + " 次仍未出现该文字：可能不在可滚动区域里，或它是图片/图标（无障碍读不到文字）。"
+              + "可加大 max_scrolls，或先用 android_accessibility_screen 看看列表里实际文案。"
+        };
+      }
+      return {
+        ok: true,
+        found: true,
+        scrolls,
+        waitedMs: Date.now() - t0,
+        matchText: (hit.text || hit.desc || ""),
+        matchX: hit.x || 0,
+        matchY: hit.y || 0,
+        clickable: hit.clickable === true
+      };
+    }
 
   // 滚动
   ctx.tools.register(defineTool({
-    name: "android_scroll",
+    name: "android_accessibility_scroll",
     description: "在当前可滚动区域滚动屏幕：direction 为 up / down / left / right。需要无障碍服务。",
     parameters: {
+      to: { type: "string", description: "填了就改成「反复滚动直到这段文字出现」（原 scroll_to）" },
       direction: {
         type: "string", required: true, enum: ["up", "down", "left", "right"],
         description: "滚动方向"
@@ -967,6 +1022,7 @@ function apply(ctx) {
       render: (_a, v) => renderResult(v)
     },
     async execute(args, exec) {
+      if (args.to !== undefined && String(args.to).length > 0) { const a2 = { ...args, text: String(args.to) }; return await scrollToImpl(a2, exec); }
       noteInputEvent();
       const raw = await a11yRequest("/scroll", { direction: String(args.direction || "down") }, 8000);
       const v = parseResult(raw);
@@ -982,15 +1038,15 @@ function apply(ctx) {
   // 截图（需要 attachments 服务 + 视觉模型）
   ctx.inject(["attachments"], (imageCtx) => {
     imageCtx.tools.register(defineTool({
-      name: "android_see",
+      name: "android_accessibility_see",
       description:
-        "截取当前屏幕（无障碍截图，无 MediaProjection 弹窗）并把图片发给模型查看。控件树（android_screen）看不出布局或图片内容时用它，Unity/游戏等无控件界面尤其需要。\n" +
+        "截取当前屏幕（无障碍截图，无 MediaProjection 弹窗）并把图片发给模型查看。控件树（android_accessibility_screen）看不出布局或图片内容时用它，Unity/游戏等无控件界面尤其需要。\n" +
         "**坐标怎么读**：返回里直接给了换算所需的全部字段 —— screenW/screenH（屏幕真实分辨率）、imageW/imageH（图片分辨率）、scaleX/scaleY（每张图 1 像素 = 多少屏幕像素）、以及区域截图时的 cropX/cropY/cropW/cropH。换算公式（ix/iy 是**图内**像素）：screenX = cropX + ix × scaleX，screenY = cropY + iy × scaleY。**不要靠肉眼估像素**：图会被查看器缩放，估 10px 到屏幕上可能差 20~30px。\n" +
-        "**三种更省更快的方式**（优先于整屏截图）：① ticks:true —— 图上直接标出屏幕坐标数字，读数字即可；② grid:true —— 4×4 网格按行列定位；③ 只关心颜色/是否高亮时用 android_pixel 采样 3~5 个点（毫秒级、零体积、不烧 token）。区域截图（select/region）比整屏小得多，也更快。\n" +
-        "需要当前模型支持图片输入（不支持时用 android_screen 读文字）、已开启无障碍服务、且设备为 Android 11+（低版本用 android_screen）。",
+        "**三种更省更快的方式**（优先于整屏截图）：① ticks:true —— 图上直接标出屏幕坐标数字，读数字即可；② grid:true —— 4×4 网格按行列定位；③ 只关心颜色/是否高亮时用 android_accessibility_pixel 采样 3~5 个点（毫秒级、零体积、不烧 token）。区域截图（select/region）比整屏小得多，也更快。\n" +
+        "需要当前模型支持图片输入（不支持时用 android_accessibility_screen 读文字）、已开启无障碍服务、且设备为 Android 11+（低版本用 android_accessibility_screen）。",
       parameters: {
         grid: { type: "boolean", description: "true 时在截图上叠加 4×4 网格线，方便按行列定位（游戏/无控件界面推荐）" },
-        ticks: { type: "boolean", description: "true 时叠加**屏幕坐标刻度**（每 100 屏幕像素一条细线 + 坐标数字）。比 grid 更准：数字就是屏幕坐标，可直接给 android_tap/android_pixel，不用自己乘 scale" },
+        ticks: { type: "boolean", description: "true 时叠加**屏幕坐标刻度**（每 100 屏幕像素一条细线 + 坐标数字）。比 grid 更准：数字就是屏幕坐标，可直接给 android_accessibility_tap/android_accessibility_pixel，不用自己乘 scale" },
         png: { type: "boolean", description: "true 时输出 PNG（无损，体积大）；默认 JPEG q70，体积小 5~8 倍、传模型更快" },
         select: { type: "string", description: "区域截图：按无障碍节点文字取景（完全相等优先，其次更短的包含匹配），只截该节点（可配 pad 外扩）。适合看清小字/一条数据，比整屏清晰得多" },
         selectIndex: { type: "number", description: "select 命中多个候选时取第几个（0 起，默认 0）。返回里的 selectCount/selectLabel 会告诉你命中是谁、还有几个候选" },
@@ -1056,10 +1112,10 @@ function apply(ctx) {
               : "",
             value.cropped
               ? `换算（ix/iy = 图中像素）：screenX = ${value.cropX} + ix×${value.scaleX}，screenY = ${value.cropY} + iy×${value.scaleY}；`
-                + "也可以把 ix/iy 直接交给 android_tap/android_swipe/android_hold/android_touch 的 ix/iy 参数，由工具自动换算（推荐，免手算）"
+                + "也可以把 ix/iy 直接交给 android_accessibility_tap/android_accessibility_swipe/android_accessibility_hold/android_accessibility_touch 的 ix/iy 参数，由工具自动换算（推荐，免手算）"
               : "操作优先用分数坐标 fx/fy（0~1）：图中位置 (ix,iy) → fx=ix/imageW, fy=iy/imageH；用绝对像素 = 图中像素 × scaleX/Y",
             value.selectFx !== undefined
-              ? `命中节点：「${value.selectLabel || "?"}」中心 fx=${value.selectFx}, fy=${value.selectFy}（可直接 android_tap(fx,fy)）`
+              ? `命中节点：「${value.selectLabel || "?"}」中心 fx=${value.selectFx}, fy=${value.selectFy}（可直接 android_accessibility_tap(fx,fy)）`
                 + (value.selectCount ? `；候选 ${value.selectCount} 个${value.selectCount > 1 ? `，当前第 ${value.selectIndex || 0} 个（换一个用 selectIndex）` : ""}` : "")
               : ""
           ].filter(Boolean).join("\n");
@@ -1104,16 +1160,16 @@ function apply(ctx) {
               ok: false,
               error: "可用内存过低（" + mbOf(mem.availKb) + "MB / 共 " + mbOf(mem.totalKb)
                 + "MB），已拒绝全屏截图以免触发系统回收（App 与无障碍服务可能被重启，之后点击/输入会全部失败）。"
-                + "请改用区域截图：android_see(select=\"界面上的文字\") 或 android_see(region=\"x,y,w,h\")，"
-                + "或用 android_screen 读控件树（最省内存）。"
+                + "请改用区域截图：android_accessibility_see(select=\"界面上的文字\") 或 android_accessibility_see(region=\"x,y,w,h\")，"
+                + "或用 android_accessibility_screen 读控件树（最省内存）。"
             };
           }
           if (fullShotBudgetExceeded()) {
             return {
               ok: false,
               error: "全屏截图过于频繁（每分钟上限 " + FULL_SHOT_BUDGET_PER_MIN + " 张），已拒绝。"
-                + "请优先用 android_see(select=…) / android_see(region=…) 做区域截图，"
-                + "或 android_screen 读控件树；需要等界面变化时不要反复整屏截图。"
+                + "请优先用 android_accessibility_see(select=…) / android_accessibility_see(region=…) 做区域截图，"
+                + "或 android_accessibility_screen 读控件树；需要等界面变化时不要反复整屏截图。"
             };
           }
         }
@@ -1159,11 +1215,11 @@ function apply(ctx) {
           if (isFullShot && mem && mem.availKb < FULL_SHOT_WARN_AVAIL_KB) {
             hints.push("可用内存偏低（" + mbOf(mem.availKb) + "MB / 共 " + mbOf(mem.totalKb)
               + "MB）：继续高频全屏截图可能导致系统回收 App 与无障碍服务（之后再点击/输入会失败）。"
-              + "后续优先用 android_see(select=…) / android_see(region=…) 做区域截图。");
+              + "后续优先用 android_accessibility_see(select=…) / android_accessibility_see(region=…) 做区域截图。");
           }
           if (typeof v.hint === "string" && v.hint) hints.push(v.hint);
           if (staleAfterInput) {
-            hints.push("与上一次截图内容完全相同，但期间发生过输入操作：截图可能未刷新或操作未生效，建议重新截图确认（或先用 android_screen 看节点是否变化）。");
+            hints.push("与上一次截图内容完全相同，但期间发生过输入操作：截图可能未刷新或操作未生效，建议重新截图确认（或先用 android_accessibility_screen 看节点是否变化）。");
           }
           return {
             ok: true,
@@ -1246,7 +1302,7 @@ function apply(ctx) {
 
   // 滑动
   ctx.tools.register(defineTool({
-    name: "android_swipe",
+    name: "android_accessibility_swipe",
     description: "从起点滑动到终点（按下→**静止 holdBeforeMoveMs（默认 150ms）**→逐点移动→抬起，单指）。坐标用 fx1/fy1→fx2/fy2（0~1，推荐）或 x1/y1→x2/y2 绝对像素；durationMs 默认 300（慢速拖 800~1500）。拖动型操作（游戏选朝向、画板画线、拖拽物品）务必保留默认的按住阶段，否则会被当成快速滑动/滚动。需要无障碍服务。",
     parameters: {
       x1: { type: "number", description: "起点 x（像素）" },
@@ -1257,7 +1313,7 @@ function apply(ctx) {
       fy1: { type: "number", description: "起点分数 y（0~1，推荐）" },
       fx2: { type: "number", description: "终点分数 x（0~1，推荐）" },
       fy2: { type: "number", description: "终点分数 y（0~1，推荐）" },
-      ix1: { type: "number", description: "区域截图专用：起点在最近一张 android_see 图里的 x 像素（自动换算）" },
+      ix1: { type: "number", description: "区域截图专用：起点在最近一张 android_accessibility_see 图里的 x 像素（自动换算）" },
       iy1: { type: "number", description: "区域截图专用：起点在图里的 y 像素" },
       ix2: { type: "number", description: "区域截图专用：终点在图里的 x 像素" },
       iy2: { type: "number", description: "区域截图专用：终点在图里的 y 像素" },
@@ -1281,7 +1337,7 @@ function apply(ctx) {
       if (args.finger !== undefined) params.finger = String(Number(args.finger));
       if (!(("x1" in params || "fx1" in params) && ("y1" in params || "fy1" in params) &&
             ("x2" in params || "fx2" in params) && ("y2" in params || "fy2" in params))) {
-        return { ok: false, error: "android_swipe 需要起点(x1/y1 或 fx1/fy1)和终点(x2/y2 或 fx2/fy2)" };
+        return { ok: false, error: "android_accessibility_swipe 需要起点(x1/y1 或 fx1/fy1)和终点(x2/y2 或 fx2/fy2)" };
       }
       // A5：边缘起点防呆（只对能拿到的分数坐标判定；像素坐标需要屏幕尺寸，这里不额外探测）
       const warning = edgeGestureWarning(args.fx1, args.fy1);
@@ -1299,68 +1355,52 @@ function apply(ctx) {
   }));
 
   // 长按 / 按住指定时长后自动抬起
-  ctx.tools.register(defineTool({
-    name: "android_hold",
-    description: "在指定位置按住 durationMs 毫秒后自动抬起，可用 finger 指定手指。需要一直按住、延续到后续操作时改用 android_touch 的 action=down。需要无障碍服务。",
-    parameters: {
-      x: { type: "number", description: "按住 x（像素）" },
-      y: { type: "number", description: "按住 y（像素）" },
-      fx: { type: "number", description: "分数 x（0~1，推荐）" },
-      fy: { type: "number", description: "分数 y（0~1，推荐）" },
-      ix: { type: "number", description: "区域截图专用：在最近一张 android_see 图里的 x 像素（自动换算）" },
-      iy: { type: "number", description: "区域截图专用：在最近一张 android_see 图里的 y 像素" },
-      durationMs: { type: "number", description: "按住时长毫秒（默认 500）" },
-      finger: { type: "number", description: "可选：指定手指（0~7）" }
-    },
-    output: touchOutput,
-    async execute(args, exec) {
-      const params = {};
-      for (const k of ["x", "y", "fx", "fy"]) {
-        if (args[k] !== undefined) params[k] = String(Number(args[k]));
-      }
-      if (args.durationMs !== undefined) params.duration = String(Number(args.durationMs));
-      if (args.finger !== undefined) params.finger = String(Number(args.finger));
-      // A6：hold 也支持图内像素 ix/iy
-      const cropErr = applyCropPoint(args, "ix", "iy", params, "x", "y");
-      if (cropErr) return { ok: false, error: cropErr };
-      if (!(("x" in params || "fx" in params) && ("y" in params || "fy" in params))) {
-        return { ok: false, error: "android_hold 需要 x/y 或 fx/fy（或区域截图的 ix/iy）" };
-      }
-      const warning = edgeGestureWarning(args.fx, args.fy);
-      noteInputEvent();
-      const raw = await a11yRequest("/hold", params, 12000);
-      const v = parseResult(raw);
-      if (!v.ok) return { ok: false, error: v.error || GUIDE_TEXT };
-      return {
-        ok: true,
-        ...(warning ? { warning } : {}),
-        ...(Array.isArray(v.held) ? { held: v.held } : {})
-      };
-    }
-  }));
 
   // 状态式虚拟触摸屏（多指核心）
   ctx.tools.register(defineTool({
-    name: "android_touch",
+    name: "android_accessibility_touch",
     description:
       "虚拟触摸屏状态式控制：action=down（按下并保持）/ move（按住的手指滑到新位置）/ up（抬起），手指用 finger 编号 0~7，可多指同时按住。\n" +
-      "典型用法：按住摇杆 = down(0) 在摇杆位置，再 move(0) 控制方向，松开 = up(0)。down 后手指一直按住，直到 up、android_touch_status 确认、或超时 30s 自动抬起；down(0) 之后直接调 android_tap/android_gesture 也不会松开，会并入后续手势。\n" +
+      "典型用法：按住摇杆 = down(0) 在摇杆位置，再 move(0) 控制方向，松开 = up(0)。down 后手指一直按住，直到 up、android_accessibility_touch_status 确认、或超时 30s 自动抬起；down(0) 之后直接调 android_accessibility_tap/android_accessibility_gesture 也不会松开，会并入后续手势。\n" +
       "坐标支持 x/y 或 fx/fy（0~1，推荐）。需要已开启无障碍服务。",
     parameters: {
-      action: { type: "string", required: true, enum: ["down", "move", "up", "reset"], description: "down=按下保持 / move=按住移动 / up=抬起" },
-      finger: { type: "number", required: true, description: "手指编号 0~7（多指的关键：每根手指一个编号）" },
+      action: {
+        type: "string",
+        required: true,
+        enum: ["down", "move", "up", "hold", "reset", "status"],
+        description: "down=按下保持 / move=按住移动 / up=抬起 / hold=按下→等 ms→抬起 / reset=全部抬起 / status=查当前按住的手指"
+      },
+      finger: { type: "number", description: "手指编号 0~7（action=reset|status 可省略）" },
+      ms: { type: "number", description: "action=hold 的按住时长（毫秒，默认 500）" },
       x: { type: "number", description: "目标 x（像素）" },
       y: { type: "number", description: "目标 y（像素）" },
       fx: { type: "number", description: "分数 x（0~1，推荐）" },
       fy: { type: "number", description: "分数 y（0~1，推荐）" },
-      ix: { type: "number", description: "区域截图专用：在最近一张 android_see 图里的 x 像素（自动换算）" },
-      iy: { type: "number", description: "区域截图专用：在最近一张 android_see 图里的 y 像素" }
+      ix: { type: "number", description: "区域截图专用：在最近一张 android_accessibility_see 图里的 x 像素（自动换算）" },
+      iy: { type: "number", description: "区域截图专用：在最近一张 android_accessibility_see 图里的 y 像素" }
     },
     output: touchOutput,
     async execute(args, exec) {
-      if (!args.action) return { ok: false, error: "android_touch 需要 action=down|move|up|reset" };
-      if (String(args.action) !== "reset" && args.finger === undefined) {
-        return { ok: false, error: "android_touch 需要 finger=0~7（action=reset 时可不给）" };
+      const act = String(args.action || "");
+      if (!act) return { ok: false, error: "android_accessibility_touch 需要 action=down|move|up|hold|reset|status" };
+      if (act === "status") {
+        const st = parseResult(await a11yRequest("/touch-status", undefined, 6000));
+        if (!st.ok) return { ok: false, error: st.error || GUIDE_TEXT };
+        return { ok: true, ...(Array.isArray(st.held) ? { held: st.held } : {}) };
+      }
+      if (act !== "reset" && args.finger === undefined) {
+        return { ok: false, error: "android_accessibility_touch 需要 finger=0~7（action=reset|status 时可不给）" };
+      }
+      if (act === "hold") {
+        const holdMs = Math.max(50, Math.min(10000, Number(args.ms) || 500));
+        const fp = { finger: String(Number(args.finger)) };
+        for (const k of ["x", "y", "fx", "fy"]) if (args[k] !== undefined) fp[k] = String(Number(args[k]));
+        const down = parseResult(await a11yRequest("/touch", { ...fp, action: "down" }, 12000));
+        if (down.ok === false) return { ok: false, error: down.error || GUIDE_TEXT };
+        await new Promise((r) => setTimeout(r, holdMs));
+        const up = parseResult(await a11yRequest("/touch", { ...fp, action: "up" }, 12000));
+        if (up.ok === false) return { ok: false, error: up.error || GUIDE_TEXT };
+        return { ok: true };
       }
       const params = { action: String(args.action), finger: String(Number(args.finger)) };
       for (const k of ["x", "y", "fx", "fy"]) {
@@ -1381,7 +1421,7 @@ function apply(ctx) {
 
   // 组合手势（多笔时间轴，一次全部注入）
   ctx.tools.register(defineTool({
-    name: "android_gesture",
+    name: "android_accessibility_gesture",
     description:
       "一次执行一组多指手势（多笔时间轴同时注入，真多指）。每笔形如 {kind, finger?, x/y 或 fx/fy}，按顺序执行，kind 支持：\n" +
       "- down 按下并保持 / move 按住的手指滑到新位置 / up 抬起\n" +
@@ -1423,10 +1463,10 @@ function apply(ctx) {
     async execute(args, exec) {
       const strokes = args.strokes;
       if (!Array.isArray(strokes) || strokes.length === 0) {
-        return { ok: false, error: "android_gesture 需要 strokes 数组" };
+        return { ok: false, error: "android_accessibility_gesture 需要 strokes 数组" };
       }
       const ALLOWED = ["kind", "finger", "x", "y", "fx", "fy", "x2", "y2", "fx2", "fy2", "durationMs", "ms", "holdBeforeMoveMs"];
-      // v1.19（真机对话实测）：模型常用 android_gesture 只传一个 wait 当"睡眠"用，
+      // v1.19（真机对话实测）：模型常用 android_accessibility_gesture 只传一个 wait 当"睡眠"用，
       // 而服务端会回"手势没有可执行的笔"→ 白白浪费一次调用。纯 wait 直接在本地睡，不再往返。
       if (strokes.every((s) => s && s.kind === "wait")) {
         let ms = 0;
@@ -1484,40 +1524,6 @@ function apply(ctx) {
   }));
 
   // 触摸状态查询
-  ctx.tools.register(defineTool({
-    name: "android_touch_status",
-    description: "查询当前按住的手指（虚拟触摸屏状态）：编号、坐标、按住时长。手指超过 30 秒会被自动抬起。需要无障碍服务。",
-    parameters: {},
-    output: {
-      schema: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          ok: { type: "boolean", required: true },
-          error: { type: "string" },
-          screenW: { type: "number" },
-          screenH: { type: "number" },
-          maxFingers: { type: "number" },
-          holdTimeoutMs: { type: "number" },
-          held: { type: "array", items: heldSchema }
-        }
-      },
-      render: (_a, v) => renderTouchStatus(v)
-    },
-    async execute(args, exec) {
-      const raw = await a11yRequest("/touch-status", undefined, 6000);
-      const v = parseResult(raw);
-      if (!v.ok) return { ok: false, error: v.error || GUIDE_TEXT };
-      return {
-        ok: true,
-        screenW: typeof v.screenW === "number" ? v.screenW : 0,
-        screenH: typeof v.screenH === "number" ? v.screenH : 0,
-        maxFingers: typeof v.maxFingers === "number" ? v.maxFingers : 0,
-        holdTimeoutMs: typeof v.holdTimeoutMs === "number" ? v.holdTimeoutMs : 0,
-        held: Array.isArray(v.held) ? v.held : []
-      };
-    }
-  }));
 
   // ==========================================================================
   // A2：统一能力探测（一次问清"现在到底能做什么"）
@@ -1529,15 +1535,17 @@ function apply(ctx) {
   // ==========================================================================
   // v1.22（P1）：把「聚焦 → 写文本 → 提交 → 读回自证」做成一个原子工具（真机 Agent 复盘 §4）
   ctx.tools.register(defineTool({
-    name: "android_focus_type",
-    description: "把「聚焦输入框 → 写入文本 → 可选提交 → 读回自证」做成一次调用。实测在 Chromium/WebView 里，单独用 android_type 会 ACTION_SET_TEXT 返回 false、android_paste_text 易落进输入法候选栏、输入法的确定键只收键盘不导航，所以本工具内部按序回退：无障碍直接写 → 写 App 剪贴板再粘贴；提交走 ACTION_IME_ENTER（Android 11+）；每步都读回控件树自证，并写在 steps/verified 里说明哪步生效。要打开网址请优先用 android_open_url。",
+    name: "android_accessibility_focus_type",
+    description:
+      "把「聚焦输入框 → 写入文本 → 可选提交」做成一次调用（WebView / 中文首选）。\n" +
+      "内部顺序：① 按 select 或 fx/fy 点中目标输入框；② 无障碍直接写（ACTION_SET_TEXT）失败时，改为「写 App 剪贴板 + ACTION_PASTE」；③ submit=true 时发 ACTION_IME_ENTER（Android 11+）。\n" +
+      "只回报「已尝试写入」，不校验是否真的落字 —— 要确认请用 android_accessibility_screen 看控件。要打开网址请用 android_open_url。",
     parameters: {
       text: { type: "string", required: true, description: "要写入的文本（中文 / emoji 均可）" },
       select: { type: "string", description: "目标输入框的文字或提示（按文字找控件并点击聚焦，推荐）" },
       fx: { type: "number", description: "或直接给分数坐标 x（0~1）" },
       fy: { type: "number", description: "或直接给分数坐标 y（0~1）" },
       submit: { type: "boolean", description: "写完后是否提交（触发输入法的「前往 / 发送」），默认 false" },
-      timeout_ms: { type: "number", description: "提交后等待界面变化的最长时间（默认 4000）" }
     },
     output: {
       schema: {
@@ -1567,7 +1575,7 @@ function apply(ctx) {
     },
     async execute(args) {
       const text = args.text === undefined ? "" : String(args.text);
-      if (!text) return { ok: false, error: "android_focus_type 需要 text 参数" };
+      if (!text) return { ok: false, error: "android_accessibility_focus_type 需要 text 参数" };
       const steps = [];
       const before = await dumpNodes();
       // 1) 聚焦
@@ -1586,7 +1594,7 @@ function apply(ctx) {
               ok: false,
               error: "按文字没找到可点击的输入框：「" + sel + "」",
               steps: steps.join(" → "),
-              hint: "先用 android_screen 看控件文字（注意匹配区分大小写），或改用 fx/fy 指定位置。"
+              hint: "先用 android_accessibility_screen 看控件文字（注意匹配区分大小写），或改用 fx/fy 指定位置。"
             };
           }
           const cx = Math.round((hit.x || 0) + (hit.w || 0) / 2);
@@ -1617,7 +1625,7 @@ function apply(ctx) {
         if (clip && clip.ok !== false) {
           const pasted = parseResult(await a11yRequest("/input", { mode: "paste" }, 10000));
           if (pasted.ok !== false && pasted.landed !== false) {
-            wrote = true; path = "clipboard-paste"; steps.push("写入=剪贴板粘贴（读回确认）");
+            wrote = true; path = "clipboard-paste"; steps.push("写入=剪贴板粘贴");
           } else {
             steps.push("写入=剪贴板粘贴失败（" + (pasted.error || "?") + "）");
           }
@@ -1640,16 +1648,16 @@ function apply(ctx) {
         submitted,
         steps: steps.join(" → "),
         hint: wrote
-          ? "写入动作已被系统接受（本工具不校验是否真的落字）。要确认内容真的进框，用 android_screen 看输入框，或用 android_see 截一小块。"
-          : "没能写入：无障碍直写与剪贴板粘贴都被拒绝（详见 steps）。WebView/自绘输入框建议先用 android_tap 点中并确认软键盘弹出。"
+          ? "写入动作已被系统接受（本工具不校验是否真的落字）。要确认内容真的进框，用 android_accessibility_screen 看输入框，或用 android_accessibility_see 截一小块。"
+          : "没能写入：无障碍直写与剪贴板粘贴都被拒绝（详见 steps）。WebView/自绘输入框建议先用 android_accessibility_tap 点中并确认软键盘弹出。"
       };
     }
   }));
 
   // v1.22（P1）：等某段文字出现 —— 替代「sleep + 反复截图」
   ctx.tools.register(defineTool({
-    name: "android_pixel",
-    description: "按**屏幕坐标**采样像素颜色（毫秒级，不用看图）。判断「这个格子是不是绿色可部署格」「按钮是不是高亮」「血条还剩多少」这类问题，采 3~5 个点比截一张图快一个数量级，也不烧 token。坐标与 android_tap 的 x/y 同一口径（屏幕像素）；配合 android_see(ticks=true) 可以读出精确坐标。",
+    name: "android_accessibility_pixel",
+    description: "按**屏幕坐标**采样像素颜色（毫秒级，不用看图）。判断「这个格子是不是绿色可部署格」「按钮是不是高亮」「血条还剩多少」这类问题，采 3~5 个点比截一张图快一个数量级，也不烧 token。坐标与 android_accessibility_tap 的 x/y 同一口径（屏幕像素）；配合 android_accessibility_see(ticks=true) 可以读出精确坐标。",
     parameters: {
       pts: {
         type: "string",
@@ -1690,7 +1698,7 @@ function apply(ctx) {
     },
     async execute(args) {
       const pts = args.pts === undefined ? "" : String(args.pts);
-      if (!pts) return { ok: false, error: "android_pixel 需要 pts，例如 \"360,720;420,760\"" };
+      if (!pts) return { ok: false, error: "android_accessibility_pixel 需要 pts，例如 \"360,720;420,760\"" };
       const v = parseResult(await a11yRequest("/pixel", { pts }, 8000));
       if (v.ok === false) return { ok: false, error: v.error || "像素采样失败" };
       return v;
@@ -1698,8 +1706,8 @@ function apply(ctx) {
   }));
 
   ctx.tools.register(defineTool({
-    name: "android_find_text",
-    description: "在控件树里查找某段文字，并可等它出现（轮询，不截图）。点完等下一页、等按钮可点、等提示出现都用它，比固定 sleep 或反复 android_see 更快也更省内存。",
+    name: "android_accessibility_find_text",
+    description: "在控件树里查找某段文字，并可等它出现（轮询，不截图）。点完等下一页、等按钮可点、等提示出现都用它，比固定 sleep 或反复 android_accessibility_see 更快也更省内存。",
     parameters: {
       text: { type: "string", required: true, description: "要找的文字（包含匹配）" },
       timeout_ms: { type: "number", description: "最多等多久（默认 5000；给 0 表示只查一次）" },
@@ -1733,12 +1741,12 @@ function apply(ctx) {
             + (v.nodeCount || 0) + " 个）" + (v.hint ? "\n建议: " + v.hint : "") }];
         }
         return [{ type: "text", text: "找到「" + v.matchText + "」@(" + v.matchX + "," + v.matchY + ")"
-          + (v.clickable ? " · 可点击（可直接 android_tap）" : "") + "（等了 " + (v.waitedMs || 0) + "ms）" }];
+          + (v.clickable ? " · 可点击（可直接 android_accessibility_tap）" : "") + "（等了 " + (v.waitedMs || 0) + "ms）" }];
       }
     },
     async execute(args) {
       const needle = args.text === undefined ? "" : String(args.text);
-      if (!needle) return { ok: false, error: "android_find_text 需要 text 参数" };
+      if (!needle) return { ok: false, error: "android_accessibility_find_text 需要 text 参数" };
       const timeout = Math.max(0, Math.min(60000, args.timeout_ms === undefined ? 5000 : Number(args.timeout_ms)));
       const interval = Math.max(200, Math.min(3000, Number(args.interval_ms) || 500));
       const t0 = Date.now();
@@ -1775,14 +1783,14 @@ function apply(ctx) {
         nodeCount: last ? (last.nodes || []).length : 0,
         hint: last === null
           ? "读不到控件树：无障碍服务可能没开或刚闪断，先用 android_a11y_status 看状态。"
-          : "该文字没出现。可先用 android_screen 看看实际文案（可能是图标/图片，无障碍读不到文字）。"
+          : "该文字没出现。可先用 android_accessibility_screen 看看实际文案（可能是图标/图片，无障碍读不到文字）。"
       };
     }
   }));
 
   // v1.22（P1）：等界面稳定（控件树指纹）—— 比截图比哈希省内存（不产生位图）
   ctx.tools.register(defineTool({
-    name: "android_wait_stable",
+    name: "android_accessibility_wait_stable",
     description: "等界面稳定：轮询控件树指纹，直到连续两次相同（或超时）。不产生任何位图，比反复截图比哈希省内存。",
     parameters: {
       timeout_ms: { type: "number", description: "最多等多久（默认 6000）" },
@@ -1854,190 +1862,12 @@ function apply(ctx) {
   }));
 
   // v1.22（P1）：与「上次看过的界面」做差异 —— 用来确认"刚才那一下到底生效没有"，不产生截图
-  ctx.tools.register(defineTool({
-    name: "android_screen_diff",
-    description: "对比上一次读控件树以来界面变了什么：回新增/消失的节点与计数，没变则明确回无变化。点击或输入之后确认是否真的生效用它（操作成功但没生效是高频坑）。纯控件树比较、不截图。基准是最近一次读控件树的操作（android_screen / android_find_text / android_wait_stable / 本工具）。",
-    parameters: {
-      limit: { type: "number", description: "最多各列出多少条新增/消失（默认 20）" }
-    },
-    output: {
-      schema: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          ok: { type: "boolean", required: true },
-          error: { type: "string" },
-          changed: { type: "boolean" },
-          addedCount: { type: "number" },
-          removedCount: { type: "number" },
-          addedText: { type: "string" },
-          removedText: { type: "string" },
-          nodeCount: { type: "number" },
-          hint: { type: "string" }
-        }
-      },
-      render(_a, v) {
-        v = renderValue(v);
-        if (!v.ok) return renderResult(v);
-        if (!v.changed) return [{ type: "text", text: "界面无变化（控件 " + (v.nodeCount || 0) + " 个）。" }];
-        const lines = ["界面有变化：新增 " + (v.addedCount || 0) + " / 消失 " + (v.removedCount || 0)
-          + "（当前控件 " + (v.nodeCount || 0) + " 个）"];
-        if (v.addedText) lines.push("  + " + v.addedText);
-        if (v.removedText) lines.push("  - " + v.removedText);
-        if (v.hint) lines.push("", "提示: " + v.hint);
-        return [{ type: "text", text: lines.join("\n") }];
-      }
-    },
-    async execute(args) {
-      const before = lastDumpKeys;                 // 先取基准（dumpNodes 会覆盖它）
-      const now = await dumpNodes();
-      if (!now) {
-        return { ok: false, error: "读不到控件树：无障碍可能没开或刚闪断（先用 android_a11y_status 看状态）" };
-      }
-      const curKeys = (now.nodes || []).map((n) => nodeKey(n));
-      const curSet = new Set(curKeys);
-      const prevSet = new Set(before || []);
-      const limit = Math.max(1, Math.min(100, Number(args.limit) || 20));
-      const label = (k) => {
-        const parts = k.split("\u0001");
-        const s = (parts[0] || parts[1] || "(无文字)").replace(/\s+/g, " ").trim();
-        return s.length > 50 ? s.slice(0, 50) + "…" : s;
-      };
-      const addedAll = before === null ? [] : curKeys.filter((k) => !prevSet.has(k));
-      const removedAll = before === null ? [] : (before || []).filter((k) => !curSet.has(k));
-      const changed = before === null ? true : (addedAll.length > 0 || removedAll.length > 0);
-      return {
-        ok: true,
-        changed,
-        addedCount: addedAll.length,
-        removedCount: removedAll.length,
-        addedText: addedAll.slice(0, limit).map(label).join(" | "),
-        removedText: removedAll.slice(0, limit).map(label).join(" | "),
-        nodeCount: curKeys.length,
-        ...(before === null ? { hint: "这是本次会话第一次读取控件树，没有基准可比；之后再用本工具就能看出变化。" } : {})
-      };
-    }
-  }));
 
   // v1.22（P1）：滚动直到某段文字出现（替代「scroll + screen」反复手试）
-  ctx.tools.register(defineTool({
-    name: "android_scroll_to",
-    description: "反复滚动直到某段文字出现（可指定方向与最大次数），用于长列表/长页面里找目标。每滚一次读一次控件树、不截图；找到回 found=true 及位置，滚满仍未出现如实回 found=false。",
-    parameters: {
-      text: { type: "string", required: true, description: "要找的文字（包含匹配）" },
-      direction: { type: "string", description: "down（默认，向下翻）/ up / left / right" },
-      max_scrolls: { type: "number", description: "最多滚几次（默认 10，上限 50）" }
-    },
-    output: {
-      schema: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          ok: { type: "boolean", required: true },
-          error: { type: "string" },
-          found: { type: "boolean" },
-          scrolls: { type: "number" },
-          waitedMs: { type: "number" },
-          matchText: { type: "string" },
-          matchX: { type: "number" },
-          matchY: { type: "number" },
-          clickable: { type: "boolean" },
-          hint: { type: "string" }
-        }
-      },
-      render(_a, v) {
-        v = renderValue(v);
-        if (!v.ok && v.found !== false) return renderResult(v);
-        if (!v.found) {
-          return [{ type: "text", text: "滚了 " + (v.scrolls || 0) + " 次仍未找到「" + (v.error || "") + "」"
-            + (v.hint ? "\n建议: " + v.hint : "") }];
-        }
-        return [{ type: "text", text: "滚 " + (v.scrolls || 0) + " 次后找到「" + v.matchText + "」@(" + v.matchX + "," + v.matchY + ")"
-          + (v.clickable ? " · 可点击" : "") }];
-      }
-    },
-    async execute(args) {
-      const needle = args.text === undefined ? "" : String(args.text);
-      if (!needle) return { ok: false, error: "android_scroll_to 需要 text 参数" };
-      const dirRaw = String(args.direction || "down").toLowerCase();
-      const dir = ["up", "down", "left", "right"].includes(dirRaw) ? dirRaw : "down";
-      const maxScrolls = Math.max(1, Math.min(50, Number(args.max_scrolls) || 10));
-      const t0 = Date.now();
-      let scrolls = 0;
-      let lastNodes = 0;
-      const look = async () => {
-        const d = await dumpNodes();
-        if (!d) return null;
-        lastNodes = (d.nodes || []).length;
-        // v1.24：与 android_find_text 用同一套匹配（丢零尺寸占位节点 / 优先可点击 / 取最具体）
-        return pickTextMatch(d.nodes, needle).hit;
-      };
-      let hit = await look();
-      while (!hit && scrolls < maxScrolls) {
-        await a11yRequest("/scroll", { direction: dir }, 8000);
-        scrolls++;
-        await new Promise((r) => setTimeout(r, 450));
-        hit = await look();
-      }
-      if (!hit) {
-        return {
-          ok: true,
-          found: false,
-          error: needle,
-          scrolls,
-          waitedMs: Date.now() - t0,
-          hint: lastNodes === 0
-            ? "全程读不到控件树：无障碍可能没开或刚闪断（先用 android_a11y_status 看状态）。"
-            : "滚了 " + scrolls + " 次仍未出现该文字：可能不在可滚动区域里，或它是图片/图标（无障碍读不到文字）。"
-              + "可加大 max_scrolls，或先用 android_screen 看看列表里实际文案。"
-        };
-      }
-      return {
-        ok: true,
-        found: true,
-        scrolls,
-        waitedMs: Date.now() - t0,
-        matchText: (hit.text || hit.desc || ""),
-        matchX: hit.x || 0,
-        matchY: hit.y || 0,
-        clickable: hit.clickable === true
-      };
-    }
-  }));
 
   // v1.22：内存体检（真机 Agent 复盘要求的前置守卫项）
-  ctx.tools.register(defineTool({
-    name: "android_mem_status",
-    description: "查看全机内存（读 /proc/meminfo，不受 App cgroup 限制）。做长时间或高频屏幕操作前先看一眼：可用内存低于约 400MB 时，高频全屏截图会显著提高系统回收 App 与无障碍服务的概率（表现是无障碍闪断、随后 tap/scroll/type 全部失败）。紧张时改用 android_see 的 select/region 区域截图，或 android_screen 读控件树。",
-    parameters: {},
-    output: {
-      schema: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          ok: { type: "boolean", required: true },
-          error: { type: "string" },
-          totalMb: { type: "number" },
-          availMb: { type: "number" },
-          freeMb: { type: "number" },
-          level: { type: "string" },
-          recentFullShots: { type: "number" },
-          fullShotBudgetPerMin: { type: "number" },
-          hint: { type: "string" }
-        }
-      },
-      render(_a, v) {
-        v = renderValue(v);
-        if (!v.ok) return renderResult(v);
-        const lines = [
-          "本机内存：" + v.availMb + "MB 可用 / 共 " + v.totalMb + "MB（MemFree " + v.freeMb + "MB）· 等级：" + v.level,
-          "最近一分钟全屏截图：" + v.recentFullShots + " / " + v.fullShotBudgetPerMin + " 张（超限会被拒绝）"
-        ];
-        if (v.hint) lines.push("", "建议: " + v.hint);
-        return [{ type: "text", text: lines.join("\n") }];
-      }
-    },
-    async execute() {
+
+    async function memStatusImpl() {
       const mem = await readMem();
       if (!mem) return { ok: false, error: "读取 /proc/meminfo 失败（部分系统会限制）" };
       const now = Date.now();
@@ -2046,8 +1876,8 @@ function apply(ctx) {
         : (mem.availKb < FULL_SHOT_WARN_AVAIL_KB ? "偏低" : "充足");
       const hints = [];
       if (level === "紧张") {
-        hints.push("可用内存紧张：不要做全屏截图（会被本插件直接拒绝），改用 android_see(select=/region=) 区域截图"
-          + "或 android_screen 读控件树；若已出现工具大面积失败，先停下、让 App 回前台，等系统回收内存后再继续。");
+        hints.push("可用内存紧张：不要做全屏截图（会被本插件直接拒绝），改用 android_accessibility_see(select=/region=) 区域截图"
+          + "或 android_accessibility_screen 读控件树；若已出现工具大面积失败，先停下、让 App 回前台，等系统回收内存后再继续。");
       } else if (level === "偏低") {
         hints.push("可用内存偏低：接下来优先区域截图，避免连续整屏截图。");
       }
@@ -2062,12 +1892,12 @@ function apply(ctx) {
         ...(hints.length ? { hint: hints.join(" ") } : {})
       };
     }
-  }));
 
   ctx.tools.register(defineTool({
-    name: "android_capabilities",
+    name: "android_accessibility_status",
     description: "一次查询当前可用的 Android 能力：无障碍是否开启、能否截图、Shizuku/root 特权通道、虚拟屏服务是否就绪、能否做需要特权的系统操作。开始手机操作任务前先调一次可避免逐个试错（无特权时 android_input / android_package 等根本不在工具列表里）。返回每项可用性与不可用时的下一步建议。",
     parameters: {},
+      scope: { type: "string", enum: ["a11y", "mem"], description: "a11y=无障碍/截图/手势等能力位（默认）；mem=内存与截图配额" },
     output: {
       schema: {
         type: "object",
@@ -2098,13 +1928,13 @@ function apply(ctx) {
         const lines = [
           "当前 Android 能力总览（appId=" + (v.appId || "?") + "）:",
           "  无障碍读屏/点击: " + yn(v.a11yRunning) + (v.a11yRunning ? "" : "（系统设置 → 无障碍 → 开启「DeepSeek Harness 屏幕助手」）"),
-          "  无障碍截图(android_see): " + yn(v.canScreenshot) + (v.canScreenshot ? "" : "（需无障碍开启且 Android 11+）"),
+          "  无障碍截图(android_accessibility_see): " + yn(v.canScreenshot) + (v.canScreenshot ? "" : "（需无障碍开启且 Android 11+）"),
           "  特权通道(Shizuku/root): " + yn(v.privileged) + (v.privileged ? "（" + (v.privilegedChannel || "?") + "）" : "（不授权也能用：文件/读屏/中文输入走无障碍与剪贴板）"),
           "  系统操作(装机/改设置/模拟输入 android_input·android_package…): " + yn(v.canSystemOps),
           "  列应用/启动应用(android_apps·android_launch): " + yn(v.canListApps) + (v.canListApps ? "（免特权；后台启动受 Android 10+ 限制）" : ""),
           "  特权方式启动/停止应用(android_app): " + yn(v.canLaunchApps),
           "  虚拟屏服务(android_vscreen_*): " + yn(v.vscreenBridge) + (v.vscreenBridge ? "" : "（打开一次 App 会自动拉起；整个虚拟屏功能还必须有 Shizuku/root）"),
-          "  内存(android_mem_status): " + (v.memAvailMb || 0) + "MB 可用 · " + (v.memLevel || "?")
+          "  内存(android_accessibility_mem_status): " + (v.memAvailMb || 0) + "MB 可用 · " + (v.memLevel || "?")
             + "（最近一分钟全屏截图 " + (v.recentFullShots || 0) + " 张）"
         ];
         if (v.hint) lines.push("", "建议: " + v.hint);
@@ -2113,6 +1943,7 @@ function apply(ctx) {
       }
     },
     async execute(args, exec) {
+      if (String(args.scope || "a11y") === "mem") return await memStatusImpl(args, exec);
       const channel = privilegedChannel();
       const privileged = channel !== "";
       // 1) 无障碍状态（读屏 + 截图能力）
@@ -2137,22 +1968,22 @@ function apply(ctx) {
         req.on("timeout", () => { req.destroy(); finish(false); });
       });
       const hints = [];
-      if (!a11yRunning) hints.push("开启无障碍（系统设置 → 无障碍 → DeepSeek Harness 屏幕助手）后，android_screen/android_tap/android_type/android_see 才可用。");
+      if (!a11yRunning) hints.push("开启无障碍（系统设置 → 无障碍 → DeepSeek Harness 屏幕助手）后，android_accessibility_screen/android_accessibility_tap/android_accessibility_type/android_accessibility_see 才可用。");
       // v1.22：内存状况一并报出，并据此给截图策略（全屏截图是内存杀手）
       const mem = await readMem();
       const memLevel = !mem ? "未知"
         : (mem.availKb < FULL_SHOT_MIN_AVAIL_KB ? "紧张"
           : (mem.availKb < FULL_SHOT_WARN_AVAIL_KB ? "偏低" : "充足"));
       if (memLevel === "紧张") {
-        hints.push("可用内存紧张（" + mbOf(mem.availKb) + "MB）：不要用 android_see 全屏截图（会被拒绝），"
-          + "改用 android_see(select=文字) / android_see(region=x,y,w,h) 区域截图或 android_screen 读控件树；"
+        hints.push("可用内存紧张（" + mbOf(mem.availKb) + "MB）：不要用 android_accessibility_see 全屏截图（会被拒绝），"
+          + "改用 android_accessibility_see(select=文字) / android_accessibility_see(region=x,y,w,h) 区域截图或 android_accessibility_screen 读控件树；"
           + "否则容易触发系统回收 App 与无障碍服务，之后点击/输入会成片失败。");
       } else if (memLevel === "偏低") {
-        hints.push("可用内存偏低（" + mbOf(mem.availKb) + "MB）：优先区域截图（android_see 的 select/region 参数），避免连续整屏截图。");
+        hints.push("可用内存偏低（" + mbOf(mem.availKb) + "MB）：优先区域截图（android_accessibility_see 的 select/region 参数），避免连续整屏截图。");
       }
-      hints.push("截图省内存的姿势：android_see(select=\"界面上的文字\") 或 region=\"x,y,w,h\"（区域图几十 KB），"
-        + "比整屏截图（每张 2~4MB、位图缓冲 ~10MB）省得多；需要大量读界面时优先 android_screen 读控件树。");
-      if (!privileged) hints.push("未授予 Shizuku/root：特权工具（android_input/android_package/android_app/android_setting/android_screenshot）不会出现在工具列表；中文输入请用 android_paste_text，截图请用 android_see。");
+      hints.push("截图省内存的姿势：android_accessibility_see(select=\"界面上的文字\") 或 region=\"x,y,w,h\"（区域图几十 KB），"
+        + "比整屏截图（每张 2~4MB、位图缓冲 ~10MB）省得多；需要大量读界面时优先 android_accessibility_screen 读控件树。");
+      if (!privileged) hints.push("未授予 Shizuku/root：特权工具（android_input/android_package/android_app/android_setting/android_screenshot）不会出现在工具列表；中文输入请用 android_accessibility_paste_text，截图请用 android_accessibility_see。");
       hints.push("列应用/启动应用不需要特权：用 android_apps 列（走 PackageManager），用 android_launch(package=…) 启动；"
         + "注意 Android 10+ 后台启动 Activity 有限制，App 在前台时最稳；要指定 activity 或在虚拟屏启动仍需 Shizuku/root。");
       if (privileged && !vscreenBridge) hints.push("虚拟屏桥未就绪：打开一次 App 即可拉起（桥在 App 进程内，随 App 启动）。");

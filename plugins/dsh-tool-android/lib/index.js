@@ -756,7 +756,7 @@ function apply(ctx) {
   // 输入法的「确定」只收键盘不导航 —— 这条路基本不可用。一条 Intent 就能直达，且不依赖无障碍。
   ctx.tools.register(defineTool({
     name: "android_open_url",
-    description: "用系统默认应用打开 URL 或深链（ACTION_VIEW），免 root 与 Shizuku。打开网页、唤起深链（https://、market://、weixin:// 等）一律优先用它，不要走「在浏览器里点地址栏→输入→提交」：实测 Chromium 无障碍下极不可靠（setText 返回 false、粘贴被输入法吃掉），且要十几步。\n返回 ok 只表示 Intent 已发出，系统能不能处理由系统决定（没装对应 App 会失败）；要确认界面真的换了，接着读一次 android_screen / android_see。",
+    description: "用系统默认应用打开 URL 或深链（ACTION_VIEW），免 root 与 Shizuku。打开网页、唤起深链（https://、market://、weixin:// 等）一律优先用它，不要走「在浏览器里点地址栏→输入→提交」：实测 Chromium 无障碍下极不可靠（setText 返回 false、粘贴被输入法吃掉），且要十几步。\n返回 ok 只表示 Intent 已发出，系统能不能处理由系统决定（没装对应 App 会失败）；要确认界面真的换了，接着读一次 android_accessibility_screen / android_accessibility_see。",
     parameters: {
       url: { type: "string", required: true, description: "要打开的 URL 或深链，如 https://example.com 或 market://details?id=com.tencent.mm" },
       package: { type: "string", description: "可选：指定交给哪个应用处理（如 com.android.chrome、com.microsoft.emmx）" },
@@ -800,7 +800,7 @@ function apply(ctx) {
   // 与 android_open_url 的区别：可指定 action / type / extras（例如测试"某 App 能不能被深链唤起"）。
   ctx.tools.register(defineTool({
     name: "android_open_intent",
-    description: "发起通用 Intent（免特权）：action（默认 view）、url/data、package（指定由谁处理）、type、extras。用于打开网页、唤起深链（weixin://、alipays://）、测试某 App 是否响应某 Intent。返回 ok 只表示 Intent 已发出；要确认界面真的换了，接着读一次 android_screen / android_see。",
+    description: "发起通用 Intent（免特权）：action（默认 view）、url/data、package（指定由谁处理）、type、extras。用于打开网页、唤起深链（weixin://、alipays://）、测试某 App 是否响应某 Intent。返回 ok 只表示 Intent 已发出；要确认界面真的换了，接着读一次 android_accessibility_screen / android_accessibility_see。",
     parameters: {
       action: { type: "string", description: "Intent action，如 android.intent.action.VIEW / SEND / DIAL（默认 VIEW）" },
       url: { type: "string", description: "data URI，如 https://… / weixin:// / tel:10086" },
@@ -846,11 +846,33 @@ function apply(ctx) {
     }
   }));
 
+    async function apkExtractImpl(args) {
+      if (!args.package) return { ok: false, error: "android_apk_extract 需要 package 参数" };
+      if (!args.entry && !args.prefix) return { ok: false, error: "需要 entry（单个）或 prefix（前缀）" };
+      const body = { token: process.env.APP_LOCAL_TOKEN || "", action: "extract", package: String(args.package) };
+      if (args.entry) body.entry = String(args.entry);
+      if (args.prefix) body.prefix = String(args.prefix);
+      if (args.out_dir) body.out_dir = String(args.out_dir);
+      const r = await appPost("/apk", body, 120000);
+      if (!r.ok) {
+        return { ok: false, error: r.error || "解包失败",
+          hint: "先用 android_apk_info(list=true) 看包内条目名，再决定 entry / prefix。" };
+      }
+      return {
+        ok: true,
+        outDir: r.outDir || "",
+        files: Array.isArray(r.files) ? r.files.join("\n") : String(r.files || ""),
+        copied: typeof r.copied === "number" ? r.copied : 0,
+        bytes: typeof r.bytes === "number" ? r.bytes : 0
+      };
+    }
+
   // v1.22（复盘 §5）：免特权查看 / 解包已安装应用的 APK —— 逆向侦查入口（纪律：只读）
   ctx.tools.register(defineTool({
-    name: "android_apk_info",
+    name: "android_apk",
     description: "查看一个已安装应用的 APK：路径、大小、应用名，或列出包内条目（action=list）。免特权。用于逆向侦查（找 JS bundle、接口表、资源、manifest），不需要设备有 unzip。\n只读：读别人的安装包在 Android 上是正常操作，但不要用它去改动他人的应用。",
     parameters: {
+      op: { type: "string", enum: ["info", "extract"], description: "info=读 APK 元数据（默认）；extract=从 APK 里取出某个文件" },
       package: { type: "string", required: true, description: "包名（用 android_apps 查）" },
       list: { type: "boolean", description: "true = 附带包内条目清单（默认 false 只回路径/大小）" },
       limit: { type: "number", description: "list 时最多列多少条（默认 2000）" }
@@ -875,6 +897,7 @@ function apply(ctx) {
       }
     },
     async execute(args) {
+      if (String(args.op || "info") === "extract") return await apkExtractImpl(args, exec);
       if (!args.package) return { ok: false, error: "android_apk_info 需要 package 参数" };
       const body = { token: process.env.APP_LOCAL_TOKEN || "", action: args.list === true ? "list" : "path", package: String(args.package) };
       if (args.limit !== undefined) body.limit = Number(args.limit);
@@ -892,50 +915,6 @@ function apply(ctx) {
     }
   }));
 
-  ctx.tools.register(defineTool({
-    name: "android_apk_extract",
-    description: "从已安装应用的 APK 里取出文件（单个 entry，或按 prefix 批量如 assets/），免特权。默认解到应用私有目录 files/apk-extract，可用 out_dir 指定其它可写路径；取出 JS bundle 后用 fs 工具读。只读，不要改动任何东西。",
-    parameters: {
-      package: { type: "string", required: true, description: "包名" },
-      entry: { type: "string", description: "包内完整路径（与 prefix 二选一）" },
-      prefix: { type: "string", description: "包内前缀，如 assets/（与 entry 二选一）" },
-      out_dir: { type: "string", description: "可选：输出目录（默认 应用私有 files/apk-extract）" }
-    },
-    output: {
-      schema: resultSchema({
-        outDir: { type: "string" },
-        files: { type: "string" },
-        copied: { type: "number" },
-        bytes: { type: "number" },
-        hint: { type: "string" }
-      }),
-      render: (_a, value) => {
-        if (!value.ok) return renderResult(value);
-        return [{ type: "text", text: "已取出 " + (value.copied || 0) + " 个文件（"
-          + Math.round((value.bytes || 0) / 1024) + " KB）→ " + (value.outDir || "") + "\n" + (value.files || "") }];
-      }
-    },
-    async execute(args) {
-      if (!args.package) return { ok: false, error: "android_apk_extract 需要 package 参数" };
-      if (!args.entry && !args.prefix) return { ok: false, error: "需要 entry（单个）或 prefix（前缀）" };
-      const body = { token: process.env.APP_LOCAL_TOKEN || "", action: "extract", package: String(args.package) };
-      if (args.entry) body.entry = String(args.entry);
-      if (args.prefix) body.prefix = String(args.prefix);
-      if (args.out_dir) body.out_dir = String(args.out_dir);
-      const r = await appPost("/apk", body, 120000);
-      if (!r.ok) {
-        return { ok: false, error: r.error || "解包失败",
-          hint: "先用 android_apk_info(list=true) 看包内条目名，再决定 entry / prefix。" };
-      }
-      return {
-        ok: true,
-        outDir: r.outDir || "",
-        files: Array.isArray(r.files) ? r.files.join("\n") : String(r.files || ""),
-        copied: typeof r.copied === "number" ? r.copied : 0,
-        bytes: typeof r.bytes === "number" ? r.bytes : 0
-      };
-    }
-  }));
 
 
   // ===== v1.23：让 agent 通过悬浮窗小人的消息气泡"说一句话" =====
@@ -1003,7 +982,7 @@ function apply(ctx) {
           other: cnt.other,
           cost: cnt.cost,
           budget: BUBBLE_BUDGET,
-          hint: "改短后重试。20 个汉字、40 个英文字母、或 10 个汉字加 20 个字母都算满；细节用 android_screen / android_see 交待。"
+          hint: "改短后重试。20 个汉字、40 个英文字母、或 10 个汉字加 20 个字母都算满；细节用 android_accessibility_screen / android_accessibility_see 交待。"
         };
       }
       const ttlNum = Number(args.ttl);
@@ -1021,7 +1000,7 @@ function apply(ctx) {
         return {
           ok: false,
           error: r.error || "App 本地服务未响应",
-          hint: "App 没在跑、或悬浮窗没开时无法显示气泡；可先用 android_capabilities 看状态。"
+          hint: "App 没在跑、或悬浮窗没开时无法显示气泡；可先用 android_accessibility_capabilities 看状态。"
         };
       }
       // 设计：调用阻塞 ttl 秒 —— 返回的那一刻，气泡正好按 App 侧计时器消失。
