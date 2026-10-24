@@ -7833,23 +7833,26 @@ public class MainActivity extends Activity {
                 // 换成中性说法；语义不变（附件坏掉导致会话打不开 → 只降级那一条消息）。
                 t("desc.sessionheal", "被坏附件卡住的会话：只降级那一条消息"), "", PAGE_SESSION_HEAL));
 
+        // ── 功能（v1.25 维护者要求：AI 浏览器 / 悬浮窗 从「系统」挪出来，独立成组）──
+        items.put("group.features", cGrpTitle(t("title.grpFeatures", "功能")));
+        // AI 浏览器的常驻入口（同屏查看 / 页签 / 关闭）：同屏是"AI 正在点哪一页"的唯一人眼通道。
+        items.put("browser", cNavRow(t("card.browser", "浏览器"),
+                t("desc.browser", "看 AI 正在哪一页 · 同屏查看（画面可直接操作，拖顶部小条搬窗）"),
+                conBrowserSummary(), PAGE_BROWSER));
+        // 悬浮窗（原「悬浮窗消息」：小人气泡的文案：空闲 / 思考 / 调用工具 / 结束）
+        items.put("overlaymsg", cNavRow(t("card.overlay", "悬浮窗"),
+                t("desc.overlay", "小人气泡里说什么 · 空闲 / 思考 / 调用工具 / 结束"), "", PAGE_OVERLAY_MSG));
+
         // ── 系统 ──
         items.put("group.system", cGrpTitle(t("title.grpSystem", "系统")));
         // **常驻**的运行环境入口（「重新解压」是修坏树的一键入口，v1.19.7 起进 KEEP_CARDS，不许藏）。
         items.put("env", cNavRowEnv());
-        // AI 浏览器的常驻入口（同屏查看 / 页签 / 关闭）：同屏是"AI 正在点哪一页"的唯一人眼通道。
-        items.put("browser", cNavRow(t("card.browser", "AI 浏览器"),
-                t("desc.browser", "看 AI 正在哪一页 · 同屏查看（画面可直接操作，拖顶部小条搬窗）"),
-                conBrowserSummary(), PAGE_BROWSER));
         items.put("perm", cNavRow(t("card.perm", "授予权限"), t("desc.perm", "存储 · 通知 · 悬浮窗 · 电池 · root · Shizuku · 无障碍"),
                 conPermSummary(), 1));
         items.put("plugins", cNavRow(t("card.plugins", "插件"), t("desc.plugins", "关掉用不到的，省上下文"), conPlugSummary(), 2));
         items.put("log", cNavRow(t("card.log", "日志"), conLogLine(), "", 3));
         items.put("theme", cNavRow(t("card.theme", "主题"), t("desc.theme", "外观 / 布局 / 文案都由 console.json 决定 · 点这里导入导出"),
                 "", 4));
-        // v1.24：悬浮窗消息（小人气泡的文案：空闲 / 思考 / 调用工具 / 结束）
-        items.put("overlaymsg", cNavRow(t("card.overlaymsg", "悬浮窗消息"),
-                t("desc.overlaymsg", "小人气泡里说什么 · 空闲 / 思考 / 调用工具 / 结束"), "", PAGE_OVERLAY_MSG));
 
         // ── 诊断 ──
         items.put("group.diagnose", cGrpTitle(t("title.grpDiagnose", "诊断")));
@@ -11728,7 +11731,7 @@ public class MainActivity extends Activity {
 
     private void renderConsoleBrowser() {
         LinearLayout col = consoleBody;
-        col.addView(conBackRow(t("card.browser", "AI 浏览器")));
+        col.addView(conBackRow(t("card.browser", "浏览器")));
         col.addView(cNote(t("desc.browserPage",
                 "AI 浏览器跑在独立进程里：页面崩了不会带走控制台和引擎。这里能看它正在哪一页，也能把画面同屏显示出来。")),
                 cTop(cGap(8)));
@@ -11751,7 +11754,7 @@ public class MainActivity extends Activity {
         LinearLayout box = cCardBox();
         String right = conBrowserErr.length() > 0 ? t("status.browserUnreachable", "读不到状态")
                 : (conBrowserRunning ? t("status.browserRunning", "运行中") : t("status.browserIdle", "未运行"));
-        box.addView(cCardRow(t("card.browser", "AI 浏览器"), conBrowserStateText(), right, false,
+        box.addView(cCardRow(t("card.browser", "浏览器"), conBrowserStateText(), right, false,
                 new View.OnClickListener() {
                     @Override public void onClick(View v) { conBrowserRun(null, null); }
                 }));
@@ -11820,7 +11823,7 @@ public class MainActivity extends Activity {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.addView(cSep(cGap(20)));
-        box.addView(cNavRow(t("card.browser", "AI 浏览器"),
+        box.addView(cNavRow(t("card.browser", "浏览器"),
                 t("desc.browser", "看 AI 正在哪一页 · 同屏查看（能看不能点）"), conBrowserSummary(), PAGE_BROWSER));
         box.addView(cSep(0));
         return box;
@@ -12513,7 +12516,7 @@ public class MainActivity extends Activity {
 
     private void renderConsoleOverlayMsg() {
         LinearLayout col = consoleBody;
-        col.addView(conBackRow(t("card.overlaymsg", "悬浮窗消息")));
+        col.addView(conBackRow(t("card.overlay", "悬浮窗")));
         // ── 悬浮窗设置（本版按维护者要求重排）──────────────────────────────
         // 第一行：两个开关并排；第二行：两个滑动条并排。
         // 「显示悬浮窗」的状态口径 = **是否被隐藏**（拖到底部 / 手动关闭），不再要求"服务已经在跑"
