@@ -306,10 +306,19 @@ async function screenSize() {
   const now = Date.now();
   if (_screenCache && now - _screenAt < 60000) return _screenCache;
   const r = await privCmd("wm size", 8000);
-  const m = /(\d+)\s*x\s*(\d+)/.exec(String(r.stdout || ""));
+  // v1.22.16（安卓 agent 实测）：Shizuku 通道下 `wm size` 的输出可能落到 **stderr**，
+  // 只读 stdout 会拿不到尺寸 → android_input 直接拒绝执行（"拿不到屏幕尺寸"）。
+  // 另外优先取 Override size（那才是生效尺寸），再退回 Physical size。
+  const out = String(r.stdout || "") + "\n" + String(r.stderr || "");
+  const override = /Override size:\s*(\d+)\s*x\s*(\d+)/.exec(out);
+  const physical = /Physical size:\s*(\d+)\s*x\s*(\d+)/.exec(out);
+  const anySize = /(\d+)\s*x\s*(\d+)/.exec(out);
+  const m = override || physical || anySize;
   if (m) {
     _screenCache = { w: parseInt(m[1], 10), h: parseInt(m[2], 10) };
     _screenAt = now;
+  } else {
+    _screenCache = null;          // 失败不缓存，下次重试
   }
   return _screenCache;
 }

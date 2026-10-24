@@ -239,6 +239,8 @@ public class MainActivity extends Activity {
     private static final int REQ_STORAGE = 200;
     /** v1.20.1：麦克风权限请求码（只在控制台权限页用，不新增引导页）。 */
     private static final int REQ_MIC = 201;
+    /** v1.22.16：WebView 里等麦克风授权的请求（用户在系统框里点完再回填）。 */
+    private android.webkit.PermissionRequest pendingMicRequest = null;
     private static final int REQ_NOTIFICATION = 201;
     private static final int REQ_SHIZUKU = 300;
     /** v1.13：已发出 Shizuku 授权请求、等待结果（用于超时傅底判断）。 */
@@ -636,6 +638,47 @@ public class MainActivity extends Activity {
         } catch (Throwable ignored) {}
 
         webView.setWebChromeClient(new WebChromeClient() {
+            /**
+             * v1.22.16（用户实测）：WebView 里语音输入插件调 getUserMedia 一律被拒 ——
+             * 因为没覆写 onPermissionRequest，WebView 默认 deny。
+             * 这里只处理音频采集：权限判定与「控制台 → 授予权限 → 麦克风」完全同一个运行时权限
+             * （RECORD_AUDIO），不新增任何配置入口；缺权限时就弹系统运行时框（等价于点那个按钮）。
+             */
+            @Override
+            public void onPermissionRequest(final android.webkit.PermissionRequest request) {
+                try {
+                    String[] res = request.getResources();
+                    boolean audio = false;
+                    for (String r : res) {
+                        if (android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(r)) audio = true;
+                    }
+                    Log.i(TAG, "webview: onPermissionRequest " + java.util.Arrays.toString(res)
+                            + " origin=" + request.getOrigin() + " audio=" + audio);
+                    if (!audio) {
+                        request.deny();      // 摄像头等其他资源不支持
+                        return;
+                    }
+                    if (checkSelfPermission("android.permission.RECORD_AUDIO")
+                            == PackageManager.PERMISSION_GRANTED) {
+                        request.grant(new String[]{android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE});
+                        return;
+                    }
+                    pendingMicRequest = request;   // 等运行时授权回调
+                    runOnUiThread(new Runnable() {
+                        @Override public void run() {
+                            requestPermissions(new String[]{"android.permission.RECORD_AUDIO"}, REQ_MIC);
+                        }
+                    });
+                } catch (Throwable t) {
+                    Log.w(TAG, "onPermissionRequest failed", t);
+                    try { request.deny(); } catch (Throwable ignored) {}
+                }
+            }
+
+            @Override
+            public void onPermissionRequestCanceled(android.webkit.PermissionRequest request) {
+                if (pendingMicRequest == request) pendingMicRequest = null;
+            }
             @Override
             public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback,
                                              FileChooserParams params) {
@@ -3602,6 +3645,25 @@ public class MainActivity extends Activity {
                     }
                 }
             }
+        }
+        // v1.22.16：WebView 等着的麦克风请求 —— 授权结果回来后再决定 grant/deny
+        if (code == REQ_MIC && pendingMicRequest != null) {
+            boolean granted = perms != null && results != null && results.length > 0
+                    ? results[0] == PackageManager.PERMISSION_GRANTED
+                    : checkSelfPermission("android.permission.RECORD_AUDIO") == PackageManager.PERMISSION_GRANTED;
+            try {
+                if (granted) {
+                    pendingMicRequest.grant(new String[]{
+                            android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE});
+                    Log.i(TAG, "webview: 麦克风授权通过 → grant 给页面");
+                } else {
+                    pendingMicRequest.deny();
+                    Log.i(TAG, "webview: 麦克风授权被拒 → deny");
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "pending mic grant failed", t);
+            }
+            pendingMicRequest = null;
         }
         refreshAllStatuses();
     }
