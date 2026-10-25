@@ -979,13 +979,36 @@ public class OverlayService extends Service {
      * ① App 在前台（foregroundWantsHidden）→ 隐藏，无论虚拟屏是否钉住；
      * ② 用户拖底主动隐藏（userHidden）→ 隐藏，直到通知栏「显示小鲸鱼」。
      */
+    /** App 是否真的在前台（importance == FOREGROUND）；拿不到时保守返回 true（沿用旧行为）。 */
+    private boolean appReallyForeground() {
+        try {
+            android.app.ActivityManager am =
+                    (android.app.ActivityManager) getSystemService(android.content.Context.ACTIVITY_SERVICE);
+            if (am == null) return true;
+            java.util.List<android.app.ActivityManager.RunningAppProcessInfo> ps = am.getRunningAppProcesses();
+            if (ps == null) return true;
+            String self = getPackageName();
+            for (android.app.ActivityManager.RunningAppProcessInfo pi : ps) {
+                if (self.equals(pi.processName)) {
+                    return pi.importance == android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND;
+                }
+            }
+        } catch (Throwable ignored) {}
+        return true;
+    }
+
     private void applyVisibleNow() {
         try {
             if (rootView != null) {
                 // ① App 在前台 → 默认隐藏（不挡界面）；但用户开了「在 App 内也显示」就不隐藏。
-            boolean show = (!foregroundWantsHidden || sShowInApp) && !userHidden;
+            // v1.25 热修（维护者实测：在桌面时悬浮窗仍然消失）：
+            // foregroundWantsHidden 来自 MainActivity.onStart/onStop，但 onStop 在某些情况下不触发
+            // （悬浮窗/预览窗/弹框让 Activity 停在 paused），于是"App 在前台"这个判断一直为真 → 桌面也不显示。
+            // 这里隐藏前再用 ActivityManager importance 复核一次：不是 FOREGROUND 就照常显示。
+            boolean fgHide = foregroundWantsHidden && appReallyForeground();
+            boolean show = (!fgHide || sShowInApp) && !userHidden;
             // v1.25（维护者实测：退到桌面后悬浮窗不出现）→ 留下判定依据，便于定位
-            android.util.Log.i("DSHOverlay", "applyVisibleNow show=" + show + " foregroundWantsHidden=" + foregroundWantsHidden
+            android.util.Log.i("DSHOverlay", "applyVisibleNow show=" + show + " fgHide=" + fgHide + " foregroundWantsHidden=" + foregroundWantsHidden
                     + " sShowInApp=" + sShowInApp + " userHidden=" + userHidden);
             // 兜底：显示时缩放必须是 1（拖底隐藏动画会把 scale 压到 0.5）
             if (show) { rootView.setScaleX(1f); rootView.setScaleY(1f); }
