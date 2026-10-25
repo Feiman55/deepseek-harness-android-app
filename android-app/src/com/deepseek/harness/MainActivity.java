@@ -6512,8 +6512,11 @@ public class MainActivity extends Activity {
                             failStreak = 0;
                             continue;
                         }
-                        if (healthOk()) {
-                            if (failStreak > 0) Log.i(TAG, "watchdog: 引擎已恢复（探测成功）");
+                        // v1.25 热修（实机事故：看门狗把引擎反复重启，最后堆了 5 个 node 进程）：
+                        // HTTP 探测在高负载下会误报失败（connect 1.2s 超时），但端口明明在监听。
+                        // 端口通 = 引擎活着 → 不再重启；否则会陷入"重启→互相抢端口→探测依旧失败"的死循环。
+                        if (healthOk() || portListening(enginePort)) {
+                            if (failStreak > 0) Log.i(TAG, "watchdog: 引擎已恢复（探测成功或端口在监听）");
                             failStreak = 0;
                             continue;
                         }

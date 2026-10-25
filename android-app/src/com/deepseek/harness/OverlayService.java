@@ -984,6 +984,9 @@ public class OverlayService extends Service {
             if (rootView != null) {
                 // ① App 在前台 → 默认隐藏（不挡界面）；但用户开了「在 App 内也显示」就不隐藏。
             boolean show = (!foregroundWantsHidden || sShowInApp) && !userHidden;
+            // v1.25（维护者实测：退到桌面后悬浮窗不出现）→ 留下判定依据，便于定位
+            android.util.Log.i("DSHOverlay", "applyVisibleNow show=" + show + " foregroundWantsHidden=" + foregroundWantsHidden
+                    + " sShowInApp=" + sShowInApp + " userHidden=" + userHidden);
             // 兜底：显示时缩放必须是 1（拖底隐藏动画会把 scale 压到 0.5）
             if (show) { rootView.setScaleX(1f); rootView.setScaleY(1f); }
                 rootView.setVisibility(show ? View.VISIBLE : View.GONE); layoutCompanions();   // v1.21（重构）：小人隐藏时气泡/面板一起收

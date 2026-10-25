@@ -110,6 +110,8 @@ public class VsreenBridgeService extends Service {
      * 但语义与 ✕ 不同：虚拟屏仍在跑，用户可从桌面小鲸鱼面板把预览窗叫回来。
      */
     private volatile boolean previewCollapsedToWhale = false;
+    /** v1.25：连续探测到未运行的次数（抗单次抖动，>=2 才收窗）。 */
+    private volatile int vscreenNotRunningStreak = 0;
     /** v1.13.11：服务实例（供小鲸鱼面板回调「重新打开预览窗」）。 */
     private static volatile VsreenBridgeService instance = null;
     /**
@@ -551,6 +553,7 @@ public class VsreenBridgeService extends Service {
                             sVscreenRunning = running;   // 小鲸鱼面板「销毁屏」按钮的显示依据
                             if (id >= 0 && vdW > 0 && vdH > 0) applyAspect(vdW, vdH);
                             if (running) {
+                                vscreenNotRunningStreak = 0;   // v1.25：任一次"在跑"就清零，抗单次抖动
                                 // 用户手动 ✕ 关掉的那块虚拟屏不再自动弹回来
                                 // （虚拟屏被关掉/换新的一块时下面会清掉这个标记）
                                 if (!previewWindowVisible && id != previewDismissedDisplayId) showPreviewWindow();
@@ -558,7 +561,14 @@ public class VsreenBridgeService extends Service {
                                 if (id < 0) previewDismissedDisplayId = Integer.MIN_VALUE;   // 虚拟屏已销毁 → 下次重建照常弹预览
                                 // issue #36：正在「确保虚拟屏可用」（拉核心 / 建屏）时不能收窗 ——
                                 // 否则用户点小鲸鱼「虚拟屏」后，窗刚建好就被这里收掉 = 闪一下就没。
-                                if (previewWindowVisible && !vscreenEnsureInFlight) hidePreviewWindow();
+                                // v1.25（维护者实测：预览窗"自动隐藏"后又被弹回来 = 闪烁）：
+                                // 状态查询偶发失败也会得到 id<0 → 单次就收窗就闪。改成连续 2 次才收。
+                                vscreenNotRunningStreak++;
+                                if (vscreenNotRunningStreak >= 2
+                                        && previewWindowVisible && !vscreenEnsureInFlight) {
+                                    Log.i(TAG, "预览窗：连续 " + vscreenNotRunningStreak + " 次探测未运行 → 收起");
+                                    hidePreviewWindow();
+                                }
                             }
                         }
                         sinceStatus--;
