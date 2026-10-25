@@ -842,9 +842,11 @@ function apply(ctx) {
   ctx.tools.register(defineTool({
     name: "android_accessibility_type",
     description:
-      "往**当前已聚焦**的输入框写文本（不需要 root/Shizuku）。输入框没聚焦时先用 android_accessibility_tap 点它并确认软键盘弹出，或用 android_accessibility_focus_type 一步完成聚焦+写+提交。\n" +
-      "mode 选择写入方式：\n" +
-      "  auto（默认）= 先 ACTION_SET_TEXT，返回 false 才改用剪贴板 + ACTION_PASTE；\n" +
+      "往**当前已聚焦**的输入框写文本（不需要 root/Shizuku）。"
+      + "**WebView 输入框（含 DSH 自己的聊天输入框、contenteditable）必须用 mode=paste** —— "
+      + "WebView 里 set 会返回 true 但框里没字（假成功）；先 android_accessibility_tap 点一下输入框再调用。\n"
+      + "mode 选择写入方式：\n" +
+      "  auto（默认）= 先 ACTION_SET_TEXT，返回 false 才改用剪贴板 + ACTION_PASTE（WebView 会假成功，别依赖 auto）；\n" +
       "  set        = 只用 ACTION_SET_TEXT（原生 EditText 最稳）；\n" +
       "  paste      = 只用剪贴板 + ACTION_PASTE（中文/emoji、WebView、contenteditable 用它）。\n" +
       "注意：WebView 里 ACTION_SET_TEXT 常返回成功但界面没变，这种情况请显式用 mode=paste；本工具不校验是否真的落字。",
@@ -1791,7 +1793,8 @@ function apply(ctx) {
   // v1.22（P1）：等界面稳定（控件树指纹）—— 比截图比哈希省内存（不产生位图）
   ctx.tools.register(defineTool({
     name: "android_accessibility_wait_stable",
-    description: "等界面稳定：轮询控件树指纹，直到连续两次相同（或超时）。不产生任何位图，比反复截图比哈希省内存。",
+    description: "等界面稳定：轮询控件树指纹，直到连续两次相同（或超时）。不产生任何位图，比反复截图比哈希省内存。" +
+      "⚠ 只适合静态页面；聊天流、日志、动画、进度条这类**动态页面必然超时** —— 要确认某个界面到了，请用 android_accessibility_find_text 或 android_accessibility_see。",
     parameters: {
       timeout_ms: { type: "number", description: "最多等多久（默认 6000）" },
       interval_ms: { type: "number", description: "轮询间隔（默认 500）" },
@@ -1815,9 +1818,10 @@ function apply(ctx) {
       render(_a, v) {
         v = renderValue(v);
         if (!v.ok && v.stable !== false) return renderResult(v);
+        const dyn = v.stable ? "" : "\n提示: 动态页面（聊天流/日志/动画）会持续刷新，本工具必然超时；改用 android_accessibility_find_text 或 android_accessibility_see。";
         return [{ type: "text", text: (v.stable ? "界面已稳定 ✅" : "超时仍未稳定 ⚠")
           + "（等了 " + (v.waitedMs || 0) + "ms，采样 " + (v.samples || 0) + " 次，控件 " + (v.nodeCount || 0)
-          + " 个）" + (v.hint ? "\n建议: " + v.hint : "") }];
+          + " 个）" + (v.hint ? "\n建议: " + v.hint : "") + dyn }];
       }
     },
     async execute(args) {

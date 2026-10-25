@@ -1093,32 +1093,26 @@ function apply(ctx) {
           req.end();
         });
         if (!result || result.ok !== true) return { ...result, posted: false };
-        // v1.20.5（用户反馈）：没有 Shizuku/root 时 privCmd 根本执行不了 dumpsys，
-        // 以前把"查不到"当成"不可见"（visible:false）——这是最误导人的一点。
-        // 无特权通道时**不返回 visible**（schema 是 boolean，不能给 null），只说明无法校验。
-        if (!privilegedAvailable()) {
+        // v1.26（实测修正）：可见性由 App 用 NotificationManager.getActiveNotifications() 判断
+        // 并放在响应里 —— 不再 grep dumpsys（标题/正文常在同一行，导致误报"不可见"），
+        // 也不再需要 Shizuku/root 才能校验。
+        const visible = (typeof result.visible === "boolean") ? result.visible : undefined;
+        if (visible === false) {
           return {
             ok: true,
             posted: true,
-            evidence: "已发送（App 侧返回成功），但无法校验通知栏：读写 dumpsys 需要 Shizuku/root。"
-                    + "请用户自己下拉通知栏确认；若确实没出现，多半是该应用通知被系统关了"
-                    + "（设置 → 通知 → DeepSeek Harness）。"
+            visible: false,
+            evidence: "App 返回发送成功，但通知栏里没有这条记录：多半是通知权限被系统静默拦截，"
+                    + "或该应用通知被关了（设置 → 通知 → DeepSeek Harness）。"
           };
         }
-        // v1.20.1（AI 建议③）：发完立刻用特权 shell 校验标题/正文是否真的在通知栏里，
-        // 别让"App 说发送成功、系统其实静默拦截"变成假成功（标题/正文在 dumpsys 里是两行）。
-        await sleep(700);
-        const title = String(args.title || "");
-        const text = String(args.text || "");
-        const vt = await privCmd("dumpsys notification --noredact 2>/dev/null | grep -F " + shq(title) + " | head -2", 15000);
-        const vx = await privCmd("dumpsys notification --noredact 2>/dev/null | grep -F " + shq(text) + " | head -2", 15000);
-        const lines = [vt.stdout, vx.stdout].map((s) => String(s || "").trim()).filter(Boolean);
-        const visible = lines.length >= 2;
         return {
           ok: true,
           posted: true,
-          visible,
-          evidence: lines.join(" | ").slice(0, 500)
+          ...(visible === true ? { visible: true } : {}),
+          evidence: visible === true
+            ? "通知已在通知栏（App 内 getActiveNotifications 确认）"
+            : "App 未回报可见性（旧版本 App），请下拉通知栏确认"
         };
       } catch (e) {
         return { ok: false, posted: false, error: String(e && e.message || e) };
@@ -1188,11 +1182,24 @@ function apply(ctx) {
       if (!key) return { ok: false, error: "缺少 key 参数" };
       try {
         // 读当前值：特权 shell（输出可能落在 stdout 或 stderr，统一取非空的那个）
-        const readKey = async () => {
+        // v1.26（实测修正）：shizuku/su 的 `settings get` 偶尔返回非零（或首轮超时），
+        // 但 stdout 里其实已经有值（例如 screen_brightness=102）。
+        // 旧逻辑要求 r.ok===true，导致"值明明读到了却报读不到"。现在只看 stdout + 重试一次。
+        const readOnce = async () => {
           const r = await privCmd("settings get system " + shq(key), 15000);
           const v = String(r.stdout || "").trim();
-          // 只认 stdout 的真实值：特权通道超时时 stderr 是错误文本，不能当 oldValue/newValue
-          return { ok: r.ok === true && v !== "" && v !== "null", value: v, raw: r };
+          const good = v !== "" && v !== "null" && v !== "undefined";
+          return { ok: good, value: v, raw: r };
+        };
+        const readKey = async () => {
+          let cur = await readOnce();
+          if (!cur.ok) {
+            await new Promise((res) => setTimeout(res, 250));
+            const again = await readOnce();
+            if (again.ok) return again;
+            return cur;
+          }
+          return cur;
         };
         if (action === "get") {
           const cur = await readKey();

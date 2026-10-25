@@ -207,6 +207,28 @@ public class VsreenBridgeService extends Service {
             FrameLayout.LayoutParams barLp = new FrameLayout.LayoutParams(dp(64), dp(6));
             barLp.gravity = Gravity.CENTER_HORIZONTAL | Gravity.CENTER_VERTICAL;
             barZone.addView(bar, barLp);
+
+            // v1.25（维护者要求）：加一个明确可见的「隐藏」按钮，不再靠"点横条任意位置"去猜。
+            android.widget.TextView hideBtn = new android.widget.TextView(this);
+            // v1.26（维护者要求）：圆形按钮 + 「—」符号（原来是一个 ▾ 文字）
+            hideBtn.setText("\u2014");
+            hideBtn.setTextSize(13f);
+            hideBtn.setGravity(android.view.Gravity.CENTER);
+            hideBtn.setTextColor(getColor(R.color.panel_text_bright));
+            hideBtn.setIncludeFontPadding(false);
+            GradientDrawable hideBg = new GradientDrawable();
+            hideBg.setShape(GradientDrawable.OVAL);
+            hideBg.setColor(0x33FFFFFF);
+            hideBtn.setBackground(hideBg);
+            FrameLayout.LayoutParams hideLp = new FrameLayout.LayoutParams(dp(22), dp(22));
+            hideLp.gravity = android.view.Gravity.END | android.view.Gravity.CENTER_VERTICAL;
+            hideLp.rightMargin = dp(6);
+            hideBtn.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) {
+                    try { collapsePreviewToWhale(); } catch (Throwable ignored) {}
+                }
+            });
+            barZone.addView(hideBtn, hideLp);
             // v1.25（维护者实测）：原来只挂 OnClickListener —— 用户拖动小条时会被判成点击，
             // 预览窗直接收起（"拖一下就没了"）。改成：
             //   · 有位移（>touchSlop）→ 拖动窗口位置（与浏览器面板"拖顶部小条搬窗"一致）
@@ -238,10 +260,8 @@ public class VsreenBridgeService extends Service {
                             return true;
                         }
                         case MotionEvent.ACTION_UP:
-                            if (!barDragged[0]) {
-                                try { collapsePreviewToWhale(); } catch (Throwable ignored) {}
-                            }
-                            return true;
+                        // v1.25：轻点不再收起（收起请点右侧 ▾），避免"点空白就消失"
+                        return true;
                         default:
                             return true;
                     }

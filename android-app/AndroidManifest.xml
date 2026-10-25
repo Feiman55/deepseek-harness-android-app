@@ -21,6 +21,12 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- v1.20.1：麦克风（控制台权限页可授权；引导页不新增页面） -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- v1.26：WebView 内 getUserMedia 的硬门槛。
+         Chromium 的 audio_manager_android 在缺这条时直接报
+         "Requires MODIFY_AUDIO_SETTINGS and RECORD_AUDIO. No audio device will be available"
+         → getUserMedia 抛 NotReadableError("Could not start audio source")。
+         这是 install-time 普通权限，无需运行时授权、也不会出现在权限页。 -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <!-- 读取已安装应用列表（android_apps / 「打开微信」这类工具依赖）。
          说明：本应用 targetSdk=28，而 Android 11+ 的**应用可见性过滤只作用于 targetSdk≥30**，

@@ -950,7 +950,9 @@ public class MainActivity extends Activity {
                         boolean up = false;
                         for (int i = 0; i < 3 && !up; i++) {
                             if (starting) break;                 // 期间开始启动了 → 交给控制台自动跳转
-                            up = healthOk();
+                            // v1.26：用 TCP 端口判断，不用 healthOk() —— 引擎跑复杂任务时
+                            // HTTP 探测会 1.2s 超时 → 误报"未就绪"（维护者实测：引擎明明在跑却被丢进控制台）
+                            up = portListening(enginePort);
                             if (!up) {
                                 try { Thread.sleep(700L); } catch (InterruptedException e) { return; }
                             }
@@ -4563,7 +4565,8 @@ public class MainActivity extends Activity {
 
     /** 处理 /status：引擎/服务运行状态（供悬浮窗与 AI 查询）。 */
     private String handleStatusRequest() {
-        boolean engineOk = isDshEngine(enginePort);
+        // v1.26：对外状态也走统一判据（旧代码用 isDshEngine，引擎忙时会误报 false）
+        boolean engineOk = engineUpSoft();
         StringBuilder sb = new StringBuilder("{\"ok\":true");
         sb.append(",\"enginePort\":").append(enginePort);
         sb.append(",\"engineReady\":").append(engineOk);
@@ -4865,8 +4868,20 @@ public class MainActivity extends Activity {
         boolean granted = checkSelfPermission("android.permission.POST_NOTIFICATIONS")
                 == PackageManager.PERMISSION_GRANTED;
         if (granted) {
-            postNotification(title, text);
-            return "{\"ok\":true}";
+            int nid = postNotification(title, text);
+            // v1.26（实测修正）：可见性不再让插件 grep dumpsys 去猜 —— App 自己查最准。
+            // getActiveNotifications() 是 API 23+ 的权威接口：通知真在栏里才会出现在列表里。
+            boolean visible = false;
+            try {
+                android.app.NotificationManager nm =
+                        (android.app.NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+                if (nm != null) {
+                    for (android.service.notification.StatusBarNotification sbn : nm.getActiveNotifications()) {
+                        if (nid > 0 && sbn.getId() == nid) { visible = true; break; }
+                    }
+                }
+            } catch (Throwable ignored) {}
+            return "{\"ok\":true,\"posted\":true,\"visible\":" + visible + "}";
         }
         return "{\"ok\":false,\"error\":\"通知权限未授予，无法发送通知\"}";
     }
@@ -5049,10 +5064,11 @@ public class MainActivity extends Activity {
     }
 
     /** 发一条 AI 通知（仅需 POST_NOTIFICATIONS，无需 Shizuku/root）。 */
-    private void postNotification(String title, String text) {
+    /** 发一条通知；返回通知 id（失败返回 -1），供 /notify 用 getActiveNotifications 校验可见性。 */
+    private int postNotification(String title, String text) {
         try {
             NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-            if (nm == null) return;
+            if (nm == null) return -1;
             if (Build.VERSION.SDK_INT >= 26) {
                 NotificationChannel ch = new NotificationChannel(NOTIFY_CHANNEL_ID, NOTIFY_CHANNEL_NAME,
                         NotificationManager.IMPORTANCE_DEFAULT);
@@ -5078,8 +5094,10 @@ public class MainActivity extends Activity {
             int id = (int) (System.currentTimeMillis() & 0x7fffffff);
             nm.notify(id, n);
             Log.i(TAG, "AI notification sent: " + title);
+            return id;
         } catch (Throwable t) {
             Log.w(TAG, "post notification failed", t);
+            return -1;
         }
     }
 
@@ -6289,6 +6307,20 @@ public class MainActivity extends Activity {
 
         final Process proc = pb.start();
         nodeProcess = proc;
+        // v1.26：引擎进程退出证据 —— 下次"会话中突然无反应"能立刻判定是"真死"还是"误判"。
+        final long engineStartedAt = System.currentTimeMillis();
+        new Thread(new Runnable() {
+            @Override public void run() {
+                try {
+                    int code = proc.waitFor();
+                    long upS = Math.max(0L, (System.currentTimeMillis() - engineStartedAt) / 1000L);
+                    boolean stillCurrent = (nodeProcess == proc);
+                    Log.w(TAG, "engine died: pid=" + safePid(proc) + " exit=" + code
+                            + " uptime=" + upS + "s current=" + stillCurrent
+                            + (code == 9 || code == 137 ? "（疑似被系统杀掉：SIGKILL/OOM）" : ""));
+                } catch (Throwable ignored) {}
+            }
+        }, "engine-exit-watch").start();
         final File logFile = new File(getFilesDir(), "dsh-web.log");
         // v1.7.1：同时镜像一份引擎日志到外部目录（无需 root/adb 可读），
         // 覆盖「node 反复崩溃但 waitForServer 未抛异常」时不产生 startup-diag.txt 的场景。
@@ -6747,10 +6779,32 @@ public class MainActivity extends Activity {
         }
     }
 
+    /**
+     * 引擎存活统一判据（v1.26）：**所有"引擎是否在跑"的判断都走这里**。
+     *
+     *  ① 端口在监听 → 活着。TCP 400ms，不受引擎忙闲影响；
+     *  ② 端口不通，才用 HTTP 探一次（用来区分"刚启动还没 listen"与"真没起"）。
+     *
+     * 背景（维护者实测两次）：引擎在跑复杂任务时，HTTP 探测会被排队 → 1.2s 超时 →
+     * 旧代码据此判"未运行" → 看门狗重启引擎 / 界面显示未启动。HTTP 超时**绝不允许单独判死**。
+     */
+    private boolean engineUpSoft() {
+        if (portListening(enginePort)) return true;
+        try { return healthOk(); } catch (Throwable ignored) { return false; }
+    }
+
+    /** 取进程 pid（Process.pid() 是 API 26+；编译 SDK 没有它，用反射兜底，拿不到返回 -1）。 */
+    private static long safePid(Process p) {
+        try {
+            Object v = Process.class.getMethod("pid").invoke(p);
+            return (v instanceof Long) ? ((Long) v).longValue() : -1L;
+        } catch (Throwable ignored) { return -1L; }
+    }
+
     /** 真探一次引擎端口（必须在后台线程调用：主线程做网络 IO 会被系统直接抛异常）。 */
     private boolean conProbeEngineNow() {
         boolean up = false;
-        try { up = healthOk(); } catch (Throwable ignored) {}
+        try { up = engineUpSoft(); } catch (Throwable ignored) {}
         engineAliveCached = up;
         engineProbeAt = System.currentTimeMillis();
         // 引擎真的就绪 → 漬零连续失败计数（供安全模式提示用）。
@@ -10580,7 +10634,7 @@ public class MainActivity extends Activity {
 
     /** 只负责起引擎（文件已就绪）：健康探测 → spawnNode → 等就绪。v1.12 从 startEngine 拆出。 */
     private void launchEngine(File payload) {
-        if (healthOk()) {
+        if (engineUpSoft()) {
             starting = false;
             engineAliveCached = true;                        // v1.13：写回缓存 → 控制台立刻显示“引擎运行中”
             engineProbeAt = System.currentTimeMillis();

@@ -1618,6 +1618,20 @@ public class OverlayService extends Service {
     /** 探测引擎是否在跑。
      *  v1.13：0.1.5 起首页需要一次性 token —— 不带 token 返回 401 + 纯文本
      *  “dsh web authentication required…”，带有效 token 返回 303 跳转；两种都说明“引擎在跑”。 */
+    /** TCP 端口是否在监听（400ms）。HTTP 探测超时时用它兜底，避免误报"引擎未运行"。 */
+    private boolean enginePortOpen(int port) {
+        java.net.Socket s = null;
+        try {
+            s = new java.net.Socket();
+            s.connect(new java.net.InetSocketAddress("127.0.0.1", port), 400);
+            return true;
+        } catch (Throwable t) {
+            return false;
+        } finally {
+            try { if (s != null) s.close(); } catch (Throwable ignored) {}
+        }
+    }
+
     private boolean engineAlive(int port) {
         HttpURLConnection c = null;
         try {
@@ -1642,7 +1656,8 @@ public class OverlayService extends Service {
             try { in.close(); } catch (Throwable ignored) {}
             return body.toString("UTF-8").contains("<title>DeepSeek Harness</title>");
         } catch (Throwable t) {
-            return false;
+            // v1.26：HTTP 探测失败（超时/连接被拒）时，端口还在监听就算活着
+            return enginePortOpen(port);
         } finally {
             if (c != null) c.disconnect();
         }
