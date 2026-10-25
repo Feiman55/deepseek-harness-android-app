@@ -7712,6 +7712,7 @@ public class MainActivity extends Activity {
         if (consolePage == PAGE_SESSION_TRASH) { renderConsoleSessionTrash(); return; }   // v1.19.4：回收站
         if (consolePage == PAGE_BROWSER) { renderConsoleBrowser(); return; }   // v1.19.6 · 阶段 C：AI 浏览器
         if (consolePage == PAGE_OVERLAY_MSG) { renderConsoleOverlayMsg(); return; }   // v1.24：悬浮窗消息（气泡文案）
+        if (consolePage == PAGE_VSCREEN) { renderConsoleVscreen(); return; }       // v1.25：虚拟屏
         if (consolePage >= 5) {                       // v1.17.8：layout.pages 的额外页
             ConsoleTheme ct = conTheme;
             int idx = consolePage - 4;
@@ -7842,6 +7843,10 @@ public class MainActivity extends Activity {
         // 悬浮窗（原「悬浮窗消息」：小人气泡的文案：空闲 / 思考 / 调用工具 / 结束）
         items.put("overlaymsg", cNavRow(t("card.overlay", "悬浮窗"),
                 t("desc.overlay", "小人气泡里说什么 · 空闲 / 思考 / 调用工具 / 结束"), "", PAGE_OVERLAY_MSG));
+        // v1.25：虚拟屏用户入口（悬浮窗面板上的开关已移除，这里补回来）
+        items.put("vscreen", cNavRow(t("card.vscreen", "虚拟屏"),
+                t("desc.vscreen", "在后台开一块独立屏跑 App · 需要 root 或 Shizuku"),
+                VsreenBridgeService.publicState(), PAGE_VSCREEN));
 
         // ── 系统 ──
         items.put("group.system", cGrpTitle(t("title.grpSystem", "系统")));
@@ -11917,6 +11922,7 @@ public class MainActivity extends Activity {
      * 负数哨兵理由同上 —— 自定义页从 5 起编号，内置页不占用。
      */
     private static final int PAGE_OVERLAY_MSG = -105;
+    private static final int PAGE_VSCREEN = -106;
     /** 会话列表（null = 还没加载过）。 */
     private SessionAdmin.ListResult conAdminList;
     /** 回收站列表。 */
@@ -12512,6 +12518,63 @@ public class MainActivity extends Activity {
             lp.leftMargin = (int) (8 * getResources().getDisplayMetrics().density);
         }
         row.addView(tv, lp);
+    }
+
+    /**
+     * v1.25（维护者要求）：控制台「功能 → 虚拟屏」页 —— 用户入口（悬浮窗面板上的开关已移除）。
+     * 显示特权通道与虚拟屏状态，提供开启（建屏 + 弹预览窗）与关闭（销毁虚拟屏）。
+     * 样式全部复用控制台既有辅助函数，因此自动跟随深色/浅色主题。
+     */
+    private void renderConsoleVscreen() {
+        LinearLayout col = consoleBody;
+        col.addView(conBackRow(t("card.vscreen", "虚拟屏")));
+        boolean priv = rootAvailable() || shizukuAvailable();
+        LinearLayout box = cCardBox();
+        int pad = dp(14);
+        box.setPadding(pad, pad, pad, pad);
+        box.addView(cText("在后台开一块独立屏跑 App，主屏不受影响；开启后会弹出可拖动缩放的预览窗。",
+                12f, cSub(), false));
+        box.addView(cCardRow("特权通道",
+                rootAvailable() ? "root 可用" : (shizukuAvailable() ? "Shizuku 可用" : "未授权：需要 root 或 Shizuku"),
+                priv ? "可用" : "不可用", false, null));
+        box.addView(cCardRow("虚拟屏状态", "开启后 AI 可在独立屏上操作 App",
+                VsreenBridgeService.publicState(), false, null));
+        LinearLayout btns = new LinearLayout(this);
+        btns.setOrientation(LinearLayout.HORIZONTAL);
+        Button on = cButton("开启虚拟屏", true);
+        on.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                if (!(rootAvailable() || shizukuAvailable())) {
+                    conToast("需要 root 或 Shizuku 才能开虚拟屏");
+                    return;
+                }
+                try {
+                    VsreenBridgeService.showPreviewFromWhale();
+                    conToast("正在开启虚拟屏…");
+                    renderConsole();
+                } catch (Throwable t) {
+                    conToast("开启失败：" + t.getMessage());
+                }
+            }
+        });
+        Button off = cButton("关闭虚拟屏", false);
+        off.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                try {
+                    VsreenBridgeService.destroyVscreenFromWhale();
+                    conToast("已关闭虚拟屏");
+                    renderConsole();
+                } catch (Throwable t) {
+                    conToast("关闭失败：" + t.getMessage());
+                }
+            }
+        });
+        btns.addView(on);
+        btns.addView(off);
+        box.addView(btns);
+        box.addView(cText("提示：App 至少启动过一次；横竖屏在开启时决定，切换方向需先关闭再开启。",
+                11f, cSub(), false));
+        col.addView(box, cTop(cGap(8)));
     }
 
     private void renderConsoleOverlayMsg() {

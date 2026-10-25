@@ -131,15 +131,21 @@ public class VsreenBridgeService extends Service {
      * issue #36：语义从「把已收起的预览窗叫回来」改成「**确保虚拟屏可用**」——
      * 核心没起就拉起、没屏就建屏，成功才显示预览窗。详见 ensureVscreenThenShowPreview()。
      */
+    /** v1.25（控制台「功能 → 虚拟屏」）：给控制台读的状态文本。 */
+    public static volatile String stateText = "未开启";
+    public static String publicState() { return stateText != null ? stateText : "未开启"; }
+
     public static void showPreviewFromWhale() {
         VsreenBridgeService s = instance;
         if (s != null) s.doShowPreviewFromWhale();
+        stateText = "已开启（预览窗已弹出）";
     }
 
     /** 小鲸鱼面板「销毁屏」按钮：销毁虚拟屏并收掉预览窗（替代旧预览窗上的 ✕）。 */
     public static void destroyVscreenFromWhale() {
         VsreenBridgeService s = instance;
         if (s != null) s.destroyVscreen();
+        stateText = "未开启";
     }
 
     /** 控制台「停止引擎」联动：引擎停了虚拟屏一起销毁（用户确认的行为）。 */
