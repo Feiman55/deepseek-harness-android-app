@@ -222,6 +222,8 @@ public class OverlayService extends Service {
     public static volatile long lastProbeAt = 0L;
 
     private WindowManager wm;
+    /** v1.25：rootView 是否已在 WindowManager 上（只用于"丢失后补挂"，从不主动移除）。 */
+    private boolean rootAdded = false;
     private WindowManager.LayoutParams lp;
     private LinearLayout rootView;
     private ImageView iconView;
@@ -1012,6 +1014,17 @@ public class OverlayService extends Service {
                     + " sShowInApp=" + sShowInApp + " userHidden=" + userHidden);
             // 兜底：显示时缩放必须是 1（拖底隐藏动画会把 scale 压到 0.5）
             if (show) { rootView.setScaleX(1f); rootView.setScaleY(1f); }
+                // v1.25（维护者实测：虚拟屏反复开关后悬浮窗可能再也不出现）：
+                // 原设计是"窗口常驻、只切视图可见性"，这条保持不变；
+                // 但如果窗口因异常被摘掉（rootAdded=false），这里补挂一次，避免永久消失。
+                if (show && !rootAdded) {
+                    try {
+                        addToWindow();
+                        android.util.Log.i("DSHOverlay", "overlay window re-added (recovery)");
+                    } catch (Throwable e) {
+                        android.util.Log.e("DSHOverlay", "overlay re-add failed", e);
+                    }
+                }
                 rootView.setVisibility(show ? View.VISIBLE : View.GONE); layoutCompanions();   // v1.21（重构）：小人隐藏时气泡/面板一起收
             }
         } catch (Throwable ignored) {}
@@ -1036,6 +1049,7 @@ public class OverlayService extends Service {
         lp.y = dp(160);
         try {
             wm.addView(rootView, lp);
+            rootAdded = true;
             // v1.21（重构）：气泡与面板各自一个窗口，位置由 layoutCompanions() 从小人算出。
             // 三个窗口互不参与对方的测量 ⇒ 谁出现/消失都不会挤动别人。
             try {
