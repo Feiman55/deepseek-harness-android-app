@@ -1857,10 +1857,16 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
             // 需要确认落字的调用方，自己用 android_screen / android_see 看一眼即可。
             if (!ok) {
                 o.put("ok", false);
-                o.put("error", "系统拒绝了写入动作（ACTION_SET_TEXT / ACTION_PASTE 返回 false）——"
-                        + " 多半是 WebView / 自绘输入框");
-                o.put("hint", "先用 android_tap 点中输入框并确认软键盘弹出再试；"
-                        + "仍失败说明该系统屏蔽了 a11y 注入，需要 Shizuku/root 的 android_input（见 android_shizuku_status）。");
+                // v1.26（实测修正）：不再笼统说"WebView"——
+                // 实测同一 WebView 里 `<input>` 能写、`contenteditable` 不能（Chrome 同样如此）。
+                o.put("method", paste ? "paste(failed)" : "set(failed)");
+                o.put("error", "系统拒绝了写入动作（" + (paste ? "ACTION_PASTE" : "ACTION_SET_TEXT")
+                        + " 返回 false）：目标多半是 contenteditable 富文本（聊天框/编辑器），"
+                        + "这类节点在控件树里常表现为「可输入但不可点击」。");
+                o.put("hint", "① 先用 android_tap 点中输入框，确认软键盘出现（必须有真实键盘焦点）；"
+                        + "② 有 Shizuku/root 时用 shizuku_shell 执行 input keyevent 279（粘贴剪贴板，支持中文）"
+                        + "或 input text <ASCII>（仅英文数字）；"
+                        + "③ 没有特权通道时 a11y 无法写入 contenteditable —— 请让用户手输，或改用带 <input> 表单的界面。");
                 return o.toString();
             }
             o.put("focused", focusedNow);
