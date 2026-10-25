@@ -205,9 +205,46 @@ public class VsreenBridgeService extends Service {
             FrameLayout.LayoutParams barLp = new FrameLayout.LayoutParams(dp(64), dp(6));
             barLp.gravity = Gravity.CENTER_HORIZONTAL | Gravity.CENTER_VERTICAL;
             barZone.addView(bar, barLp);
-            barZone.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
-                try { collapsePreviewToWhale(); } catch (Throwable ignored) {}
-            }});
+            // v1.25（维护者实测）：原来只挂 OnClickListener —— 用户拖动小条时会被判成点击，
+            // 预览窗直接收起（"拖一下就没了"）。改成：
+            //   · 有位移（>touchSlop）→ 拖动窗口位置（与浏览器面板"拖顶部小条搬窗"一致）
+            //   · 基本没动 → 才收起
+            final int[] barDown = new int[2];
+            final boolean[] barDragged = new boolean[1];
+            final float slop = android.view.ViewConfiguration.get(this).getScaledTouchSlop();
+            barZone.setOnTouchListener(new View.OnTouchListener() {
+                @Override public boolean onTouch(View v, MotionEvent e) {
+                    if (previewLp == null) return false;
+                    switch (e.getActionMasked()) {
+                        case MotionEvent.ACTION_DOWN:
+                            barDown[0] = (int) e.getRawX();
+                            barDown[1] = (int) e.getRawY();
+                            barDragged[0] = false;
+                            return true;
+                        case MotionEvent.ACTION_MOVE: {
+                            int dx = (int) e.getRawX() - barDown[0];
+                            int dy = (int) e.getRawY() - barDown[1];
+                            if (!barDragged[0]
+                                    && (Math.abs(dx) > slop || Math.abs(dy) > slop)) barDragged[0] = true;
+                            if (barDragged[0]) {
+                                barDown[0] = (int) e.getRawX();
+                                barDown[1] = (int) e.getRawY();
+                                previewLp.x += dx;
+                                previewLp.y += dy;
+                                try { previewWm.updateViewLayout(previewRootView, previewLp); } catch (Throwable ignored) {}
+                            }
+                            return true;
+                        }
+                        case MotionEvent.ACTION_UP:
+                            if (!barDragged[0]) {
+                                try { collapsePreviewToWhale(); } catch (Throwable ignored) {}
+                            }
+                            return true;
+                        default:
+                            return true;
+                    }
+                }
+            });
             shell.addView(barZone, new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, dp(24)));
 
@@ -383,7 +420,8 @@ public class VsreenBridgeService extends Service {
                 previewDismissedDisplayId = vdDisplayId;   // 别让预览轮询又把它弹回来
                 hidePreviewWindow();
                 OverlayService.pinForVscreen(true);
-                toast("预览已收到小鲸鱼，点小鲸鱼可再打开");
+                // v1.25（维护者要求）：删掉这条 toast —— 本版的虚拟屏入口在控制台「功能 → 虚拟屏」，
+        // 不再经由小鲸鱼面板，提示文案会误导。
             } catch (Throwable ignored) {}
         }});
     }

@@ -7914,7 +7914,9 @@ public class MainActivity extends Activity {
      */
     private static final String[][] SIMPLE_GROUPS = {
         {"", "extract"},
-        {"group.system", "env", "browser", "perm", "plugins", "log", "theme", "overlaymsg"},
+        // v1.25（维护者要求）：功能组独立出来 —— 浏览器 / 悬浮窗 / 虚拟屏，全部移出「系统」
+        {"group.features", "browser", "overlaymsg", "vscreen"},
+        {"group.system", "env", "perm", "plugins", "log", "theme"},
         {"group.diagnose", "selfcheck"},
         // v1.21（用户要求）：会话两行移到最后 —— 它们不是日常高频操作，
         // 原来排在最上面会挡住「启动引擎 / 权限 / 日志」这些常用入口。
@@ -11923,6 +11925,7 @@ public class MainActivity extends Activity {
      */
     private static final int PAGE_OVERLAY_MSG = -105;
     private static final int PAGE_VSCREEN = -106;
+    private static final int REQ_SHIZUKU_VSCREEN = 9021;   // v1.25：虚拟屏页申请 Shizuku 授权
     /** 会话列表（null = 还没加载过）。 */
     private SessionAdmin.ListResult conAdminList;
     /** 回收站列表。 */
@@ -12528,23 +12531,55 @@ public class MainActivity extends Activity {
     private void renderConsoleVscreen() {
         LinearLayout col = consoleBody;
         col.addView(conBackRow(t("card.vscreen", "虚拟屏")));
-        boolean priv = rootAvailable() || shizukuAvailable();
+        boolean hasRoot = rootAvailable();
+        boolean suiOk = shizukuAvailable();
+        boolean suiPing = false;
+        try { suiPing = Shizuku.pingBinder(); } catch (Throwable ignored) {}
+        boolean priv = hasRoot || suiOk || suiPing;
         LinearLayout box = cCardBox();
         int pad = dp(14);
         box.setPadding(pad, pad, pad, pad);
         box.addView(cText("在后台开一块独立屏跑 App，主屏不受影响；开启后会弹出可拖动缩放的预览窗。",
                 12f, cSub(), false));
-        box.addView(cCardRow("特权通道",
-                rootAvailable() ? "root 可用" : (shizukuAvailable() ? "Shizuku 可用" : "未授权：需要 root 或 Shizuku"),
-                priv ? "可用" : "不可用", false, null));
+        // v1.25：状态分四态，避免"已连接但未授权"被笼统显示成"不可用"（模拟器实测就撞到这个）
+        String privDesc;
+        String privRight;
+        if (hasRoot) {
+            privDesc = "root 可用（su）";
+            privRight = "可用";
+        } else if (suiOk) {
+            privDesc = "Shizuku 可用（已授权本应用）";
+            privRight = "可用";
+        } else if (suiPing) {
+            privDesc = "Shizuku 已连接，但本应用还没授权 · 首次调用会弹授权框";
+            privRight = "待授权";
+        } else {
+            privDesc = "未检测到 root 或 Shizuku 服务";
+            privRight = "不可用";
+        }
+        box.addView(cCardRow("特权通道", privDesc, privRight, false, null));
         box.addView(cCardRow("虚拟屏状态", "开启后 AI 可在独立屏上操作 App",
                 VsreenBridgeService.publicState(), false, null));
         LinearLayout btns = new LinearLayout(this);
         btns.setOrientation(LinearLayout.HORIZONTAL);
-        Button on = cButton("开启虚拟屏", true);
+        Button on = cButton("开启", true);
         on.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
-                if (!(rootAvailable() || shizukuAvailable())) {
+                // v1.25：Shizuku 已连接但没授权时，主动申请一次（否则只报"不可用"，用户无从下手）
+                boolean suiOk2;
+                try { suiOk2 = shizukuAvailable(); } catch (Throwable th) { suiOk2 = false; }
+                boolean ping2 = false;
+                try { ping2 = Shizuku.pingBinder(); } catch (Throwable ignored) {}
+                if (!suiOk2 && ping2) {
+                    try {
+                        Shizuku.requestPermission(REQ_SHIZUKU_VSCREEN);
+                        conToast("已向 Shizuku 申请授权，请在弹框里点「允许」后再点「开启」");
+                    } catch (Throwable th) {
+                        conToast("申请 Shizuku 授权失败：" + th.getMessage());
+                    }
+                    return;
+                }
+                if (!(rootAvailable() || suiOk2)) {
                     conToast("需要 root 或 Shizuku 才能开虚拟屏");
                     return;
                 }
@@ -12557,7 +12592,7 @@ public class MainActivity extends Activity {
                 }
             }
         });
-        Button off = cButton("关闭虚拟屏", false);
+        Button off = cButton("关闭", false);
         off.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
                 try {
@@ -12569,8 +12604,9 @@ public class MainActivity extends Activity {
                 }
             }
         });
-        btns.addView(on);
-        btns.addView(off);
+        // 两个按钮等权重 → 一起铺满卡片宽度
+        btns.addView(on, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        btns.addView(off, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         box.addView(btns);
         box.addView(cText("提示：App 至少启动过一次；横竖屏在开启时决定，切换方向需先关闭再开启。",
                 11f, cSub(), false));
