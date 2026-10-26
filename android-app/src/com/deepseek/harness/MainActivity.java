@@ -3673,6 +3673,11 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        // v1.26 修复（维护者实测：卸载后安装，「本应用内显示悬浮窗」关掉后回到 App 仍显示）：
+        // 从桌面切回仍然存活的 Activity 时某些路径只走 onResume（不触发 onStart），
+        // 这里补一次前台同步（幂等）——否则 foregroundWantsHidden 停留在 false。
+        overlayForeground = true;
+        OverlayService.setOverlayVisible(false);
         if (webView != null) webView.onResume();
         rootOk = null; // 从设置页/Shizuku 返回时重新探测 root
         refreshAllStatuses();
@@ -10873,7 +10878,41 @@ public class MainActivity extends Activity {
             boolean bytesHigh = bytes > mfBytes + slack;
             boolean bytesLow  = bytes < mfBytes - slack;
             boolean filesOff  = files != mfFiles;
+            // v1.26 修复（维护者实测：全新安装报「DRIFT 别名缺失 162/163」，
+            // 手动“重新解压”后恢复）。首次解压时个别别名的硬链/软链可能瞬时失败（被跳过或落成副本），
+            // 这里**当场自愈**一次：重跑 applyLinks 并重算别名数，仍缺才报 DRIFT。
             boolean aliasMissing = links > 0 && aliasSeen < links;
+            if (aliasMissing) {
+                Log.w(TAG, "payload integrity: 别名缺失 " + aliasSeen + "/" + links + " → 自愈重跑 applyLinks");
+                try { applyLinks(new File(payloadDir(), "")); } catch (Throwable ignored) {}
+                long seen2 = 0, indep2 = 0;
+                java.util.ArrayDeque<File> q2 = new java.util.ArrayDeque<File>();
+                q2.add(runtimeDir);
+                while (!q2.isEmpty()) {
+                    File f2 = q2.poll();
+                    File[] c2 = f2.listFiles();
+                    if (c2 == null) continue;
+                    for (int i2 = 0; i2 < c2.length; i2++) {
+                        if (c2[i2].isDirectory()) { q2.add(c2[i2]); continue; }
+                        String rel2 = relativize(runtimeDir, c2[i2]);
+                        java.util.HashMap<String, String> am = null;
+                        File ab = null;
+                        String ak = null;
+                        if (rel2.startsWith("lib/")) { am = libAliases; ab = new File(runtimeDir, "lib"); ak = rel2.substring(4); }
+                        else if (rel2.startsWith("bin/")) { am = binAliases; ab = new File(runtimeDir, "bin"); ak = rel2.substring(4); }
+                        if (am != null && am.containsKey(ak)) {
+                            seen2++;
+                            String tgt2 = am.get(ak);
+                            if (tgt2 != null && isIndependentCopy(c2[i2], new File(ab, tgt2))) indep2++;
+                        }
+                    }
+                }
+                aliasSeen = seen2;
+                aliasIndependent = indep2;
+                aliasMissing = links > 0 && aliasSeen < links;
+                Log.w(TAG, "payload integrity: 自愈后 别名=" + aliasSeen + "/" + links
+                        + "（DRIFT=" + aliasMissing + "）");
+            }
             String info = "runtime files=" + files + "/" + mfFiles + " bytes=" + bytes + "/" + mfBytes
                     + " 别名=" + aliasSeen + "/" + (links < 0 ? "?" : links)
                     + (aliasIndependent > 0 ? "（其中 " + aliasIndependent + " 个是独立副本，下次启动自愈）" : "");

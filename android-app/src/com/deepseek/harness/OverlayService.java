@@ -992,7 +992,12 @@ public class OverlayService extends Service {
             String self = getPackageName();
             for (android.app.ActivityManager.RunningAppProcessInfo pi : ps) {
                 if (self.equals(pi.processName)) {
-                    return pi.importance == android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND;
+                    // v1.26 修复（维护者实测：关掉「本应用内显示悬浮窗」后回桌面再回 App，
+                    // 悬浮窗仍显示）。旧判据只认 IMPORTANCE_FOREGROUND(100)，而 App 可见时
+                    // 常见是 IMPORTANCE_VISIBLE(200) 或 FOREGROUND_SERVICE(125) →
+                    // 被误判成"不在前台" → fgHide=false → 窗口留下。
+                    // 正确口径：importance <= IMPORTANCE_VISIBLE 即"用户看得见本应用"。
+                    return pi.importance <= android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE;
                 }
             }
         } catch (Throwable ignored) {}
